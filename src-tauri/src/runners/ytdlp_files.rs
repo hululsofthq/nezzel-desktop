@@ -83,16 +83,23 @@ impl PendingFiles {
     let mut sidecars = Vec::new();
     let mut published_sidecars = std::collections::HashSet::new();
     collect_files(&root, &mut sidecars)?;
-    let primary_paths: std::collections::HashSet<_> = self
+    let canonical_sources: Vec<PathBuf> = self
       .0
       .iter()
       .map(|(path, _, _)| path.canonicalize())
       .collect::<io::Result<_>>()?;
-    for (source, extractor, id) in &self.0 {
+    let primary_paths: std::collections::HashSet<_> = canonical_sources.iter().cloned().collect();
+    let mut published_sources = std::collections::HashSet::new();
+    for ((_, extractor, id), source) in self.0.iter().zip(canonical_sources) {
       if cancelled() {
         return Err(io::ErrorKind::Interrupted.into());
       }
-      let source = source.canonicalize()?;
+      // Entries sharing one output name are skipped as "already downloaded" but still
+      // report that path: one file is one saved item, never copies under other names.
+      // Checked on paths resolved before publishing: a move-based publish removes the source.
+      if !published_sources.insert(source.clone()) {
+        continue;
+      }
       let relative = source
         .strip_prefix(&root)
         .map_err(|_| io::ErrorKind::InvalidData)?;
@@ -684,6 +691,62 @@ mod tests {
       assert!(!saved.join("Title-001.en.vtt").exists());
       assert!(!saved.join("Title-001.jpg").exists());
     }
+  }
+
+  #[test]
+  fn entries_skipped_as_already_downloaded_publish_their_one_file_once() {
+    let root = Staging::new().unwrap();
+    let output = root.path.join("stage/output");
+    let saved = root.path.join("saved");
+    fs::create_dir_all(&output).unwrap();
+    let source = output.join("Post-(720p).mp4");
+    fs::write(&source, b"first entry").unwrap();
+    let mut pending = PendingFiles::default();
+    for id in ["1001", "1002", "1003"] {
+      pending.record(&format!(
+        "NEZZEL_PUBLISH|{}",
+        serde_json::json!([source, "Twitter", id])
+      ));
+    }
+    let PublishOutcome::Files(files) = pending
+      .publish(&output, &saved, "", &root.path.join("receipts"), || false)
+      .unwrap()
+    else {
+      panic!("unexpected filter")
+    };
+    assert_eq!(files.len(), 1);
+    assert_eq!(fs::read_dir(&saved).unwrap().count(), 1);
+  }
+
+  #[test]
+  fn duplicate_reports_survive_a_publish_that_moves_the_source() {
+    let root = Staging::new().unwrap();
+    let output = root.path.join("stage/output");
+    let saved = root.path.join("saved");
+    fs::create_dir_all(&output).unwrap();
+    let source = output.join("Post-(720p).mp4");
+    fs::write(&source, b"first entry").unwrap();
+    let mut pending = PendingFiles::default();
+    for id in ["1001", "1002"] {
+      pending.record(&format!(
+        "NEZZEL_PUBLISH|{}",
+        serde_json::json!([source, "Twitter", id])
+      ));
+    }
+    // Models rename-based publishing (no hard links): the staged source vanishes once saved.
+    let moved = || {
+      if fs::read_dir(&saved).is_ok_and(|mut d| d.next().is_some()) {
+        let _ = fs::remove_file(&source);
+      }
+      false
+    };
+    let PublishOutcome::Files(files) = pending
+      .publish(&output, &saved, "", &root.path.join("receipts"), moved)
+      .unwrap()
+    else {
+      panic!("unexpected filter")
+    };
+    assert_eq!(files.len(), 1);
   }
 
   #[test]

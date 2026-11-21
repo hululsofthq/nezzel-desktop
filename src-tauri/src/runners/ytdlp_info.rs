@@ -528,7 +528,16 @@ async fn run_attempts(
         Some(Outcome::Verified)
       }
       Err(error) => {
+        let filtered = super::ytdlp_args::filters_active(
+          entry
+            .overrides
+            .as_ref()
+            .and_then(|value| value.input_filters.as_ref()),
+        );
+        let error =
+          crate::parsers::ytdlp_info::filtered_empty_code(&stdout, &error, filtered).to_owned();
         let code = match error.as_str() {
+          "rejectedByFilter" => "rejectedByFilter",
           "playlistEmpty" => "playlistEmpty",
           "profileNotSupported" => "profileNotSupported",
           "signInRequired" => "signInRequired",

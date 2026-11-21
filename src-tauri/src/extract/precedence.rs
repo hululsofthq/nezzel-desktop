@@ -41,11 +41,19 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     .iter()
     .filter(|attempt| !is_timeout(attempt))
     .all(|attempt| matches!(attempt.outcome, Outcome::NoMatch | Outcome::Unsupported));
+  // An anonymous sign-in wall outranks gallery's block: the browser login may still get through.
   let network_blocked = attempts.iter().any(|attempt| {
     attempt.stage == StageId::Gallery
       && attempt
         .code
         .is_some_and(|code| code.as_str() == "redditNetworkBlocked")
+  }) && !attempts.iter().any(|attempt| {
+    attempt.stage == StageId::Ytdlp
+      && attempt.auth == AuthUsed::Anonymous
+      && attempt.outcome == Outcome::Login
+      && attempt
+        .code
+        .is_some_and(|code| code.as_str() == "signInRequired")
   });
   let mut best: Option<(Rank, Confidence, &'static str)> = None;
   let authenticated_terminal = attempts.iter().any(|attempt| {
@@ -280,11 +288,20 @@ mod tests {
   }
 
   #[test]
-  fn explicit_reddit_network_block_replaces_earlier_login_advice() {
+  fn anonymous_sign_in_wall_outranks_reddit_network_block_so_login_can_start() {
     let mut blocked = failed("redditNetworkBlocked");
     blocked.stage = StageId::Gallery;
     assert_eq!(
       final_code(&[failed("signInRequired"), blocked]),
+      Some("signInRequired")
+    );
+    // A sign-in signal from another engine does not hide the block.
+    let mut other = failed("signInRequired");
+    other.stage = StageId::Reader(ReaderId::Reddit);
+    assert_eq!(final_code(&[other, blocked]), Some("redditNetworkBlocked"));
+    // No login signal at all: the block stays the answer.
+    assert_eq!(
+      final_code(&[failed("urlNotSupported"), blocked]),
       Some("redditNetworkBlocked")
     );
   }

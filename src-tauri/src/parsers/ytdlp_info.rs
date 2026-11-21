@@ -9,6 +9,16 @@ pub enum InfoType {
   Livestream,
 }
 
+/// yt-dlp prints nothing, or a playlist without entries, for a video its input filters exclude.
+/// With filter arguments on the run, that emptiness is the filter's doing.
+pub fn filtered_empty_code<'a>(stdout: &str, error: &'a str, filters_active: bool) -> &'a str {
+  if filters_active && (stdout.trim().is_empty() || error == "playlistEmpty") {
+    "rejectedByFilter"
+  } else {
+    error
+  }
+}
+
 pub fn parse_ytdlp_info(json: &str, id: String) -> Result<ParsedMedia, String> {
   parse_ytdlp_info_for_url(json, id, None)
 }
@@ -222,6 +232,27 @@ mod tests {
 
   use super::*;
   use serde_json::{json, Value};
+
+  #[test]
+  fn empty_output_under_input_filters_is_a_filter_rejection() {
+    let listed = json!({"_type":"playlist", "entries":[]}).to_string();
+    let listing_error = parse_ytdlp_info_for_url(&listed, "row".into(), None).unwrap_err();
+    assert_eq!(listing_error, "playlistEmpty");
+    let silent_error = parse_ytdlp_info_for_url("", "row".into(), None).unwrap_err();
+    for (stdout, error) in [
+      ("", silent_error.as_str()),
+      ("\n", silent_error.as_str()),
+      (listed.as_str(), listing_error.as_str()),
+    ] {
+      assert_eq!(filtered_empty_code(stdout, error, true), "rejectedByFilter");
+      assert_eq!(filtered_empty_code(stdout, error, false), error);
+    }
+    let video = json!({"id":"a", "title":"A", "url":"https://x.test/a.mp4"}).to_string();
+    assert_eq!(
+      filtered_empty_code(&video, "unableToExtractIdOrInfo", true),
+      "unableToExtractIdOrInfo"
+    );
+  }
 
   fn playlist(source: &str) -> Value {
     json!({"_type":"playlist", "webpage_url":source, "title":"Generating 3D with AI is easy…", "entries":[

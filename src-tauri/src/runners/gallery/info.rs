@@ -302,8 +302,9 @@ pub(super) async fn gallery_info_attempts(
           stage.record_diagnostics(&diagnostics, login.has_session, attempt_start);
         }
         if error == GalleryError::Refused("redditNetworkBlocked") {
-          // The site's explicit network denial is not a login wall; avoid another long fetch.
-          stage.terminal = true;
+          // Anonymous: yt-dlp may still need the browser login, so let the chain reach it.
+          // With cookies already in use a second fetch cannot help; stop there.
+          stage.terminal = reddit_block_is_terminal(login.uses_cookies());
           return None;
         }
         match login
@@ -355,5 +356,20 @@ pub(super) async fn gallery_info_attempts(
         return None;
       }
     }
+  }
+}
+
+/// Anonymous: yt-dlp may still need the browser login, so the chain must reach it.
+/// With cookies already in use a second fetch cannot help.
+fn reddit_block_is_terminal(uses_cookies: bool) -> bool {
+  uses_cookies
+}
+
+#[cfg(test)]
+mod reddit_block_tests {
+  #[test]
+  fn anonymous_reddit_block_is_not_terminal_but_cookie_backed_is() {
+    assert!(!super::reddit_block_is_terminal(false));
+    assert!(super::reddit_block_is_terminal(true));
   }
 }

@@ -1283,7 +1283,7 @@
       },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit blocked this request",
-        "message": "Reddit’s network security blocked this download. Signing in again will not fix this block.",
+        "message": "Reddit refused this download from your network. Open the post on Reddit to view it.",
         "action": "Open the post on Reddit"
       },
       "accessForbidden403": {

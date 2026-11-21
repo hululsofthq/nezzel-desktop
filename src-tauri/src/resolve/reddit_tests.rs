@@ -19,6 +19,10 @@ async fn reddit_normalizes_post_aliases_before_fallback() {
     ("https://sh.reddit.com/comments/abc123/", CANONICAL),
     ("https://redd.it/abc123", CANONICAL),
     ("https://www.reddit.com/gallery/abc123", CANONICAL),
+    (
+      "https://www.reddit.com/r/test/comments/abc123/title/#lightbox",
+      permalink,
+    ),
   ] {
     let transport = FakeTransport(std::sync::Mutex::new(
       [(page, reply(403, None, b""))].into(),
@@ -182,6 +186,139 @@ async fn reddit_challenge_is_answered_once_on_the_same_page_without_cookies() {
 }
 
 #[tokio::test]
+async fn reddit_challenge_is_answered_again_after_a_redirect_to_another_page() {
+  let challenge = |path: &str| {
+    format!(
+      r#"<form method="get" action="{path}"><input name="jsc_token" value="token"><input name="solution" value=""></form><script>const x=await(async e=>e+e)("abcdef12")</script>"#
+    )
+  };
+  let slug = "/r/test/comments/abc123/title/";
+  let photo = b"<shreddit-post id='t3_abc123' post-type='image' content-href='https://i.redd.it/full.jpg'></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [
+      (
+        CANONICAL,
+        reply(200, None, challenge("/comments/abc123/").as_bytes()),
+      ),
+      (
+        "https://www.reddit.com/comments/abc123/?jsc_token=token&solution=abcdef12abcdef12",
+        reply(301, Some(slug), b""),
+      ),
+      (
+        "https://www.reddit.com/r/test/comments/abc123/title/",
+        reply(200, None, challenge(slug).as_bytes()),
+      ),
+      ("https://www.reddit.com/r/test/comments/abc123/title/?jsc_token=token&solution=abcdef12abcdef12", reply(200, None, photo)),
+    ]
+    .into(),
+  ));
+  assert!(matches!(
+    read_site(CANONICAL, &transport).await,
+    Verdict::Verified(Resolution::Attachments { .. })
+  ));
+}
+
+#[tokio::test]
+async fn reddit_collections_carousel_gallery_yields_its_pages() {
+  let body = "<shreddit-post id='t3_abc123' post-type='gallery' post-title='Synthetic ad' author='synthetic' content-href='https://www.reddit.com/gallery/abc123'><collections-carousel post-id='t3_abc123'><ul>\
+    <li slot='page-0'><figure><img src='https://preview.redd.it/one.png?width=640&amp;s=x' srcset='https://preview.redd.it/one.png?width=320&amp;s=a 320w, https://preview.redd.it/one.png?width=1080&amp;s=b 1080w'></figure></li>\
+    <li slot='page-1'><figure><img src='https://preview.redd.it/two.png?width=640&amp;s=y'></figure></li>\
+    </ul></collections-carousel></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(CANONICAL, reply(200, None, body.as_bytes()))].into(),
+  ));
+  let Verdict::Verified(Resolution::Attachments { metadata }) =
+    read_site(CANONICAL, &transport).await
+  else {
+    panic!("collections carousel was not read");
+  };
+  let media: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+  let items = media["attachments"].as_array().unwrap();
+  assert_eq!(items.len(), 2);
+  assert!(
+    items[0]["url"].as_str().unwrap().contains("width=1080"),
+    "{media}"
+  );
+}
+
+#[tokio::test]
+async fn reddit_profile_gallery_served_from_the_cf_preview_cdn_yields_its_pages() {
+  // Some profile-post pages host their carousel thumbnails on cf.preview.redd.it.
+  let body = "<shreddit-post id='t3_abc123' post-type='gallery' post-title='Synthetic' author='synthetic' content-href='https://www.reddit.com/gallery/abc123'><collections-carousel post-id='t3_abc123'><ul>\
+    <li slot='page-0'><figure><img src='https://cf.preview.redd.it/one.png?width=640&amp;crop=smart&amp;s=x' srcset='https://cf.preview.redd.it/one.png?width=320&amp;s=a 320w, https://cf.preview.redd.it/one.png?width=1080&amp;s=b 1080w'></figure></li>\
+    <li slot='page-1'><figure><img src='https://cf.preview.redd.it/two.png?width=640&amp;s=y'></figure></li>\
+    </ul></collections-carousel></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(CANONICAL, reply(200, None, body.as_bytes()))].into(),
+  ));
+  let Verdict::Verified(Resolution::Attachments { metadata }) =
+    read_site(CANONICAL, &transport).await
+  else {
+    panic!("cf.preview carousel was not read");
+  };
+  let media: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+  assert_eq!(media["attachments"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn reddit_devvit_custom_post_is_no_media_only_with_its_own_devvit_surface() {
+  for (inner, outside, expected) in [
+    ("<devvit2-custom-post></devvit2-custom-post>", "", true),
+    ("<devvit2-surface></devvit2-surface>", "", true),
+    ("", "", false),
+    // A devvit element that belongs to another post proves nothing about this one.
+    (
+      "",
+      "<shreddit-post id='t3_other'><devvit2-surface></devvit2-surface></shreddit-post>",
+      false,
+    ),
+  ] {
+    let body = format!(
+      "<shreddit-post id='t3_abc123' post-type='customPost'>{inner}</shreddit-post>{outside}"
+    );
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(CANONICAL, reply(200, None, body.as_bytes()))].into(),
+    ));
+    let result = read_site(CANONICAL, &transport).await.resolution(CANONICAL);
+    assert_eq!(
+      result,
+      if expected {
+        Resolution::Unsupported {
+          reason: Reason::NoMedia,
+        }
+      } else {
+        Resolution::Passthrough(CANONICAL.into())
+      },
+      "{body}"
+    );
+  }
+}
+
+#[tokio::test]
+async fn reddit_user_profile_share_follows_its_redirect_to_the_post() {
+  let source = "https://www.reddit.com/u/someone/s/Share123";
+  let location = "https://www.reddit.com/user/someone/comments/abc123/title/?action_bar_refresh_eligible=1&campaignId=1000000000000000001&impressionid=2000000000000000002&p=1&share_id=tracking&utm_content=share_button&utm_medium=web3x&utm_name=web3xcss&utm_source=share&utm_term=1";
+  let photo = b"<shreddit-post id='t3_abc123' post-type='image' content-href='https://i.redd.it/full.jpg'></shreddit-post>";
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [
+      (
+        "https://www.reddit.com/u/someone/s/Share123/",
+        reply(301, Some(location), b""),
+      ),
+      (
+        "https://www.reddit.com/user/someone/comments/abc123/title/",
+        reply(200, None, photo),
+      ),
+    ]
+    .into(),
+  ));
+  assert!(matches!(
+    read_site(source, &transport).await,
+    Verdict::Verified(Resolution::Attachments { .. })
+  ));
+}
+
+#[tokio::test]
 async fn reddit_video_shortlink_binds_its_media_id_after_the_post_redirect() {
   let video = "https://www.reddit.com/video/abcdefgh1234/";
   let cases: serde_json::Value =
@@ -332,17 +469,21 @@ fn reddit_identities_reject_unsafe_and_non_post_urls() {
     "https://user@www.reddit.com/comments/abc123/",
     "https://www.reddit.com:444/comments/abc123/",
     "https://www.reddit.com.evil.example/comments/abc123/",
-    "https://www.reddit.com/comments/abc123/#fragment",
     "https://www.reddit.com/r/test/",
     "https://www.reddit.com/user/test/",
   ] {
     assert!(!crate::resolve::reddit::is_post_url(source), "{source}");
   }
+  // The fragment never reaches the server; share links end in it.
+  assert!(crate::resolve::reddit::is_post_url(
+    "https://www.reddit.com/r/test/comments/abc123/title/#lightbox"
+  ));
 }
 
 #[tokio::test]
 async fn reddit_only_bound_link_and_text_posts_prove_no_media() {
   for (kind, id, href, expected) in [
+    ("customPost", "abc123", "", false),
     ("link", "abc123", "https://www.nytimes.com/article", true),
     ("link", "abc123", "https://www.reddit.com/r/games", false),
     (

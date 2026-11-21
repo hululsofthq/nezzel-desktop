@@ -151,6 +151,8 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "imageSourceUnavailable" => (Outcome::NoMedia, "imageSourceUnavailable"),
     "noMediaFound" => (Outcome::NoMedia, "noMediaFound"),
     "playlistEmpty" => (Outcome::NoMedia, "playlistEmpty"),
+    // Not permanent: the user can edit the filters and retry.
+    "rejectedByFilter" => (Outcome::Unknown, "rejectedByFilter"),
     "telegramAppOnly" => (Outcome::Unsupported, "telegramAppOnly"),
     "urlNotSupported" => (Outcome::Unsupported, "urlNotSupported"),
     "urlUnsupported" => (Outcome::Unsupported, "urlUnsupported"),

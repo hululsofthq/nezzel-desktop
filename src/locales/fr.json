@@ -1182,7 +1182,7 @@
       },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit a bloqué cette requête",
-        "message": "La sécurité réseau de Reddit a bloqué ce téléchargement. Se reconnecter ne lèvera pas ce blocage.",
+        "message": "Reddit a refusé ce téléchargement depuis votre réseau. Ouvrez la publication sur Reddit pour la voir.",
         "action": "Ouvrir la publication sur Reddit"
       },
       "accessForbidden403": {

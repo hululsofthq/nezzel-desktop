@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- A post with several videos (for example an X post with ten clips) saves each video; before, the first video was saved once and copied under the other names.
+- Reddit: posts with several photos, links ending in "#lightbox" and profile posts are saved instead of ending in "Reddit blocked this request". A post that has nothing to save says so.
+- Reddit: when Reddit asks for a login, Nezzel now tries your browser's Reddit login before giving up, and the "blocked" message no longer says that signing in cannot help.
+- Picking videos from a playlist while a download filter (date, size) excludes them now says "Skipped by your link filters" with a button to edit the filters, instead of "This page has no videos to save".
+
 ## 0.1.2
 
 - Windows: updating from inside the app no longer stops at a language question, which could open behind other windows and leave the update waiting. The setup now follows your system language.

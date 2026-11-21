@@ -36,7 +36,7 @@ struct Identity {
 }
 impl Identity {
   fn parse(raw: &str) -> Option<Self> {
-    let input = http::https_url(raw).ok()?;
+    let input = without_fragment(raw)?;
     let host = input.host_str()?;
     if !is_host(host) {
       return None;
@@ -120,13 +120,19 @@ fn owner(value: &str) -> bool {
       .bytes()
       .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
+/// Share links end in `#lightbox`; the fragment never reaches the server, so drop it before validating.
+fn without_fragment(raw: &str) -> Option<Url> {
+  let mut url = Url::parse(raw.trim()).ok()?;
+  url.set_fragment(None);
+  http::https_url(url.as_str()).ok()
+}
 pub(crate) fn is_post_url(raw: &str) -> bool {
   Identity::parse(raw).is_some() || media_target(raw).is_some()
 }
 
 /// Reddit's image viewer is a wrapper, not a media extractor. Never follow arbitrary targets.
 pub(crate) fn media_target(raw: &str) -> Option<Url> {
-  let page = http::https_url(raw).ok()?;
+  let page = without_fragment(raw)?;
   if !matches!(
     page.host_str(),
     Some(
@@ -184,7 +190,7 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
   let mut bound_post = requested.post_id.clone();
   let mut seen = HashSet::new();
   let mut redirects = 0;
-  let mut answered = false;
+  let mut answered: Option<String> = None;
   loop {
     if !seen.insert(url.to_string()) {
       break;
@@ -229,9 +235,9 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
     let Ok(body) = std::str::from_utf8(&response.body) else {
       break;
     };
-    if !answered {
+    if answered.as_deref() != Some(url.path()) {
       if let Some(answer) = challenge(body, &url) {
-        answered = true;
+        answered = Some(url.path().to_owned());
         url = answer;
         continue;
       }
@@ -440,6 +446,18 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
         thumbnail: image_url(player.attr("poster")).map(|u| u.to_string()),
       })
     }
+    // Devvit apps render their own surface; no media to save. Without the element, fall back.
+    "customPost"
+      if doc.0.iter().enumerate().any(|(i, n)| {
+        owned(i)
+          && matches!(
+            n.tag.name.as_ref(),
+            "devvit2-custom-post" | "devvit2-surface"
+          )
+      }) =>
+    {
+      Some(Post::NoMedia)
+    }
     "text" => {
       let images: Vec<_> = doc
         .0
@@ -523,9 +541,12 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
           owned(*i)
             && n.tag.name == "li"
             && n.attr("slot").starts_with("page-")
-            && doc
-              .ancestors(*i)
-              .any(|p| doc.0[p].tag.name == "gallery-carousel")
+            && doc.ancestors(*i).any(|p| {
+              matches!(
+                doc.0[p].tag.name.as_ref(),
+                "gallery-carousel" | "collections-carousel"
+              )
+            })
         })
         .map(|(i, _)| i)
         .collect();
@@ -588,7 +609,7 @@ fn image_url(raw: &str) -> Option<Url> {
   let url = http::https_url(raw).ok()?;
   (matches!(
     url.host_str(),
-    Some("i.redd.it" | "preview.redd.it" | "external-preview.redd.it")
+    Some("i.redd.it" | "preview.redd.it" | "cf.preview.redd.it" | "external-preview.redd.it")
   ) && !url.query_pairs().any(|(k, _)| k == "blur"))
   .then_some(url)
 }

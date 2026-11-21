@@ -25,6 +25,12 @@ pub(super) fn download_engine(entry: &DownloadEntry) -> DownloadEngine {
   match entry.fetch_engine {
     Some(FetchEngine::Gallery) => DownloadEngine::Gallery,
     Some(FetchEngine::Files) => DownloadEngine::Files,
+    // Entries of one post share its page URL and the app's rendered file name: a single
+    // yt-dlp run saves the first and skips the rest. Save each selected entry by itself.
+    // A restored row keeps the selection but not the entries (their URLs expire): re-probe.
+    Some(FetchEngine::Ytdlp) if entry.attachment_ids.is_some() && entry.attachments.len() != 1 => {
+      DownloadEngine::Gallery
+    }
     Some(FetchEngine::Ytdlp) => DownloadEngine::Ytdlp,
     Some(FetchEngine::Reader) | None => {
       if matches!(entry.media_kind, Some(MediaKind::File)) {
@@ -41,10 +47,10 @@ pub(super) fn download_engine(entry: &DownloadEntry) -> DownloadEngine {
 pub(super) fn probe_with_gallery(entry: &DownloadEntry) -> bool {
   entry.fetch_engine.is_none()
     || (entry.attachments.is_empty()
-      && matches!(
+      && (matches!(
         entry.fetch_engine,
         Some(FetchEngine::Gallery | FetchEngine::Reader)
-      ))
+      ) || (entry.fetch_engine == Some(FetchEngine::Ytdlp) && entry.attachment_ids.is_some())))
 }
 
 pub(super) fn retry_gallery_login(error: &GalleryError) -> bool {
@@ -272,6 +278,84 @@ mod tests {
         matches!(engine, "gallery" | "reader"),
         "empty manifest: {engine}"
       );
+    }
+  }
+
+  #[test]
+  fn ytdlp_read_post_with_several_videos_saves_each_selected_entry_by_itself() {
+    // Shape of `yt-dlp -J --flat-playlist` on an X post with several videos: one
+    // page URL and title for all entries, each with its own id and CDN file.
+    let source = "https://x.com/someone/status/900";
+    let entry = |id: &str| {
+      json!({"id":id,"title":"Post","url":format!("https://video.example/{id}/vid/720x720/{id}.mp4?tag=1"),
+        "ext":"mp4","height":720,"webpage_url":source,"display_id":"900"})
+    };
+    let info = json!({"_type":"playlist","id":"900","title":"Post","webpage_url":source,
+      "entries":[entry("901"), entry("902"), entry("903")]});
+    let media = crate::parsers::ytdlp_info::parse_ytdlp_info_for_url(
+      &info.to_string(),
+      "row".into(),
+      Some(source),
+    )
+    .unwrap();
+    let mut payload = serde_json::to_value(media).unwrap();
+    payload["fetchEngine"] = json!("ytdlp");
+    payload["format"] = json!({"trackType":"both"});
+    payload["templateContext"] = json!({"values":{"title":"Post"}});
+    for (selected, engine) in [
+      (json!(["901", "902", "903"]), DownloadEngine::Gallery),
+      (json!(["902"]), DownloadEngine::Gallery),
+      (serde_json::Value::Null, DownloadEngine::Ytdlp),
+    ] {
+      payload["attachmentIds"] = selected.clone();
+      let entry =
+        DownloadEntry::from((serde_json::from_value(payload.clone()).unwrap(), "g".into()));
+      assert_eq!(download_engine(&entry), engine, "{selected}");
+    }
+    // After an app restart the saved row has the selection but no entries.
+    payload["attachments"] = json!([]);
+    for selected in [json!(["901", "902"]), json!(["902"])] {
+      payload["attachmentIds"] = selected;
+      let entry =
+        DownloadEntry::from((serde_json::from_value(payload.clone()).unwrap(), "g".into()));
+      assert_eq!(download_engine(&entry), DownloadEngine::Gallery);
+      assert!(probe_with_gallery(&entry));
+    }
+    let info_payload = serde_json::to_value(
+      crate::parsers::ytdlp_info::parse_ytdlp_info_for_url(
+        &info.to_string(),
+        "row".into(),
+        Some(source),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+    payload["attachments"] = info_payload["attachments"].clone();
+    payload["attachmentIds"] = json!(["901", "902", "903"]);
+    let entry = DownloadEntry::from((serde_json::from_value(payload).unwrap(), "g".into()));
+    let post = crate::parsers::gallery::GalleryPost::from_attachments(
+      entry.attachments.clone(),
+      &entry.url,
+      Some("Post".into()),
+      None,
+    )
+    .unwrap();
+    let children: Vec<_> = post
+      .assets
+      .iter()
+      .map(|asset| super::super::download::video_request(&entry, &post, asset, None).unwrap())
+      .collect();
+    let targets: std::collections::HashSet<_> = children
+      .iter()
+      .map(|child| child.resolved.as_ref().unwrap().url.clone())
+      .collect();
+    let titles: std::collections::HashSet<_> = children
+      .iter()
+      .map(|child| child.template_context.values["title"].clone())
+      .collect();
+    assert_eq!((targets.len(), titles.len()), (3, 3));
+    for child in &children {
+      assert_eq!(download_engine(child), DownloadEngine::Ytdlp);
     }
   }
 
