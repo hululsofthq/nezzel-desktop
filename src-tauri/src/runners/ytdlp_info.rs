@@ -254,7 +254,7 @@ async fn run_attempts(
       video_track: None,
     });
     let runner = YtdlpRunner::new(app)
-      .with_format_args(&format, entry.overrides.as_ref())
+      .with_format_args(&entry.url, &format, entry.overrides.as_ref())
       .with_input_args(entry.overrides.as_ref())
       .with_input_filter_args(entry.overrides.as_ref())
       .with_auth_args(

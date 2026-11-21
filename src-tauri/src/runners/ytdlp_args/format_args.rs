@@ -20,6 +20,29 @@ pub fn build_format_args(
   }
 }
 
+/// `build_format_args` plus rules for the link's site. Bluesky posts list the uploaded original as
+/// `blob` with no codec details, so the codec sort ranks it below the HLS copies (720p at most):
+/// pick it first whenever it fits the chosen height.
+pub fn build_format_args_for(
+  url: &str,
+  format_options: &FormatOptions,
+  output_settings: &OutputSettings,
+) -> Vec<String> {
+  let mut args = build_format_args(format_options, output_settings);
+  let bluesky_post = reqwest::Url::parse(url).is_ok_and(|url| {
+    url.host_str().and_then(crate::sites::site_by_domain) == Some(crate::sites::SiteId::Bluesky)
+      && url.path().starts_with("/profile/")
+      && url.path().contains("/post/")
+  });
+  if bluesky_post && !matches!(format_options.track_type, TrackType::Audio) {
+    if let Some(i) = args.iter().position(|arg| arg == "-f") {
+      let blob = SelectorFilter::from_format_options(format_options).apply_height_and_fps("blob");
+      args[i + 1] = format!("{blob}/{}", args[i + 1]);
+    }
+  }
+  args
+}
+
 fn build_audio_format_args(
   format_options: &FormatOptions,
   output_settings: &OutputSettings,

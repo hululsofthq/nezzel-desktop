@@ -46,32 +46,7 @@ impl GalleryRunner {
     }
     let input_path = stage.join("images.txt");
     std::fs::write(&input_path, input).map_err(|_| GalleryError::Invalid)?;
-    let mut args = self.args.clone();
-    args.extend([
-      "-o".into(),
-      format!(
-        "downloader.http.headers={}",
-        json!({"Referer": post.source})
-      ),
-      "-o".into(),
-      "downloader.http.filesize-max=134217728".into(),
-      "--quiet".into(),
-      "--range".into(),
-      "1".into(),
-      "--child-filter".into(),
-      "False".into(),
-      "--directory".into(),
-      stage.to_string_lossy().into_owned(),
-      "--filename".into(),
-      "asset.{extension}".into(),
-      "-o".into(),
-      "extractor.metadata-url=nezzel_url".into(),
-      "--write-metadata".into(),
-      "--postprocessor-option".into(),
-      "filename=receipt.json".into(),
-      "--input-file".into(),
-      input_path.to_string_lossy().into_owned(),
-    ]);
+    let args = transfer_args(&self.args, &post.source, stage, &input_path);
     if let Some(cookies) = &self._cookies {
       cookies
         .check_live_consent()
@@ -103,6 +78,46 @@ impl GalleryRunner {
         .collect(),
     )
   }
+}
+
+/// One gallery-dl process transfers every selected image of a post.
+fn transfer_args(base: &[String], referer: &str, stage: &Path, input: &Path) -> Vec<String> {
+  let mut args = base.to_vec();
+  args.extend([
+    "-o".into(),
+    format!("downloader.http.headers={}", json!({"Referer": referer})),
+    "-o".into(),
+    "downloader.http.filesize-max=134217728".into(),
+    // CDNs such as Flickr's refuse bursts with 429: one retry after 15 s (also retries 5xx and
+    // timeouts; 2 x 20 s timeout + 1 s stays under the 60 s stall watch). The later root
+    // `--retries` overrides the shared `--retries 0`.
+    "--retries".into(),
+    "1".into(),
+    "-o".into(),
+    "downloader.http.retry-codes=[429]".into(),
+    "-o".into(),
+    "downloader.http.sleep-429=15".into(),
+    // Warnings, not just errors, so a final 429 reaches `stderr_failure`; no "[n/N] url" lines.
+    "--warning".into(),
+    "-o".into(),
+    "output.progress=false".into(),
+    "--range".into(),
+    "1".into(),
+    "--child-filter".into(),
+    "False".into(),
+    "--directory".into(),
+    stage.to_string_lossy().into_owned(),
+    "--filename".into(),
+    "asset.{extension}".into(),
+    "-o".into(),
+    "extractor.metadata-url=nezzel_url".into(),
+    "--write-metadata".into(),
+    "--postprocessor-option".into(),
+    "filename=receipt.json".into(),
+    "--input-file".into(),
+    input.to_string_lossy().into_owned(),
+  ]);
+  args
 }
 
 pub(super) fn verified_image(
@@ -225,6 +240,89 @@ pub(super) fn image_destination(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Real `-v` stderr of a Flickr batch (#68; 2 of 30 originals refused with 429), trimmed.
+  const FLICKR_429_VERBOSE: &str = "\
+[gallery-dl][debug] Starting DownloadJob for 'https://nezzel.invalid/attachment.jpg'
+[directlink][debug] Using DirectlinkExtractor for 'https://nezzel.invalid/attachment.jpg'
+[directlink][debug] Active postprocessor modules: [MetadataPP]
+[urllib3.connectionpool][debug] https://live.staticflickr.com:443 \"GET /65535/55504534895_5878517e78_o.jpg HTTP/1.1\" 429 None
+[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/55504534895_5878517e78_o.jpg'
+[download][error] Failed to download asset.jpg
+[28/30] https://nezzel.invalid/attachment.jpg
+[gallery-dl][debug] Starting DownloadJob for 'https://nezzel.invalid/attachment.jpg'
+[urllib3.connectionpool][debug] Resetting dropped connection: live.staticflickr.com
+[urllib3.connectionpool][debug] https://live.staticflickr.com:443 \"GET /65535/55504256113_302e6cb0a4_o.jpg HTTP/1.1\" 429 None
+[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/55504256113_302e6cb0a4_o.jpg'
+[download][error] Failed to download asset.jpg
+[29/30] https://nezzel.invalid/attachment.jpg";
+
+  /// gallery-dl prints a `[logger][level]` line only at or above the level its argv asks for.
+  fn printed_at_level(args: &[String], stderr: &str) -> String {
+    let rank = |level: &str| {
+      ["debug", "info", "warning", "error"]
+        .iter()
+        .position(|l| *l == level)
+    };
+    let min = args
+      .iter()
+      .rev()
+      .find_map(|arg| match arg.as_str() {
+        "-q" | "--quiet" => Some(3),
+        "-w" | "--warning" => Some(2),
+        "-v" | "--verbose" => Some(0),
+        _ => None,
+      })
+      .unwrap_or(1);
+    stderr
+      .lines()
+      .filter(|line| {
+        line
+          .strip_prefix('[')
+          .and_then(|line| line.split_once("]["))
+          .and_then(|(_, rest)| rest.split_once(']'))
+          .and_then(|(level, _)| rank(level))
+          .is_some_and(|level| level >= min)
+      })
+      .collect::<Vec<_>>()
+      .join("\n")
+  }
+
+  #[test]
+  fn image_step_retries_cdn_429s_and_keeps_the_warning_that_names_them() {
+    let base = super::super::runner::arguments(&[], Path::new("/config.json"));
+    let args = transfer_args(
+      &base,
+      "https://www.flickr.com/photos/gsfc/",
+      Path::new("/stage"),
+      Path::new("/stage/images.txt"),
+    );
+    assert_eq!(
+      stderr_failure(&printed_at_level(&args, FLICKR_429_VERBOSE), true),
+      GalleryError::Refused("rateLimited429")
+    );
+    let at = |pair: [&str; 2]| {
+      args
+        .windows(2)
+        .rposition(|w| w[0] == pair[0] && w[1] == pair[1])
+    };
+    // `--retries` is a root option and gallery-dl's root value beats downloader.http.*, so the
+    // image step's later `--retries 1` must follow the shared `--retries 0`.
+    assert!(at(["--retries", "1"]) > at(["--retries", "0"]), "{args:?}");
+    assert!(
+      at(["-o", "downloader.http.retry-codes=[429]"]).is_some(),
+      "{args:?}"
+    );
+    assert!(
+      at(["-o", "downloader.http.sleep-429=15"]).is_some(),
+      "{args:?}"
+    );
+    assert!(at(["-o", "output.progress=false"]).is_some(), "{args:?}");
+    assert!(
+      !args.iter().any(|arg| arg == "--quiet" || arg == "-q"),
+      "{args:?}"
+    );
+  }
 
   #[test]
   fn image_names_fit_200_bytes_with_quality_and_carousel_suffix() {

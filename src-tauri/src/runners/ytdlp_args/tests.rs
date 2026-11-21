@@ -1,5 +1,6 @@
+use super::format_args::build_format_args;
 use super::{
-  build_format_args, build_input_filter_args, build_location_args, build_output_args,
+  build_format_args_for, build_input_filter_args, build_location_args, build_output_args,
   path_preferences_for,
 };
 use crate::models::download::{
@@ -266,6 +267,51 @@ fn both_format_args_uses_both_selector_and_mp4_bias() {
   .collect();
 
   assert_eq!(args, expected);
+  // Site rules leave every other site's selection as it was.
+  for url in [
+    "https://www.youtube.com/watch?v=abc",
+    "https://x.com/user/status/1",
+    "https://bsky.app/profile/nytimes.com",
+    "https://bsky.app/hashtag/post/3n2r7kouees2u",
+  ] {
+    assert_eq!(
+      build_format_args_for(url, &format_options, &settings),
+      expected
+    );
+  }
+}
+
+#[test]
+fn bluesky_post_prefers_the_original_upload_when_it_fits_the_pick() {
+  let post = "https://bsky.app/profile/nytimes.com/post/3n2r7kouees2u";
+  let settings = OutputSettings::default();
+  let selector = |format_options: &FormatOptions| {
+    let args = build_format_args_for(post, format_options, &settings);
+    assert_eq!(
+      args[args.len() - 2..],
+      build_format_args(format_options, &settings)[args.len() - 2..],
+      "the sort stays the same"
+    );
+    args[args.iter().position(|arg| arg == "-f").unwrap() + 1].clone()
+  };
+
+  // Best (no quality list for a post read through gallery-dl): the original comes first.
+  assert_eq!(
+    selector(&make_both_format_options(None, None)),
+    "blob/bv*+ba/b/bv*+ba/b/bv*+ba/b/bv*+ba/b"
+  );
+  // A picked height keeps its bound: a 1080x1920 original fits 1920, never "Smaller" (720).
+  assert!(selector(&make_both_format_options(Some(1920), None))
+    .starts_with("blob[height<=1920]/bv*[height<=1920]+ba/"));
+  assert!(selector(&make_both_format_options(Some(720), None))
+    .starts_with("blob[height<=720]/bv*[height<=720]+ba/"));
+  assert!(selector(&make_video_format_options(None, None)).starts_with("blob/bv/"));
+  // Audio only is untouched.
+  let audio = make_audio_format_options(None);
+  assert_eq!(
+    build_format_args_for(post, &audio, &settings),
+    build_format_args(&audio, &settings)
+  );
 }
 
 #[test]

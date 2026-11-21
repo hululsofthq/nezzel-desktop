@@ -3,7 +3,7 @@ mod input_filter_args;
 mod location_args;
 mod output_args;
 
-pub use format_args::build_format_args;
+pub use format_args::build_format_args_for;
 pub use input_filter_args::build_input_filter_args;
 pub use location_args::{
   build_location_args, default_download_dir, downloads_dir, filename_metadata_args,

@@ -1396,6 +1396,33 @@ mod tests {
       ),
       GalleryError::Refused("imageSourceUnavailable")
     );
+    // Real `--warning` stderr of the image step with one 429 retry (gallery-dl 1.32.19).
+    let retried = "\
+[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/1_o.jpg' (1/2)
+[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/2_o.jpg' (1/2)
+[downloader.http][warning] '429 Too Many Requests' for 'https://live.staticflickr.com/65535/2_o.jpg' (2/2)
+[download][error] Failed to download asset.jpg
+[downloader.http][warning] '404 Not Found' for 'https://live.staticflickr.com/65535/3_o.jpg'
+[download][error] Failed to download asset.jpg";
+    assert_eq!(
+      stderr_failure(retried, true),
+      GalleryError::Refused("rateLimited429")
+    );
+  }
+
+  #[test]
+  fn benign_image_step_warnings_leave_a_failed_item_unavailable() {
+    // `--warning` also prints these; only a 429 warning may refine the failure.
+    let stderr = "\
+[downloader.http][warning] Unknown MIME type 'binary/octet-stream'
+[downloader.http][warning] File size larger than allowed maximum (134217729 > 134217728)
+[downloader.http][warning] HTTP redirect to 'https://cdn.example.com/refused/connection/1.jpg'
+[downloader.http][warning] '404 Not Found' for 'https://i.redd.it/could-not-resolve-host.jpg'
+[download][error] Failed to download asset.jpg";
+    assert_eq!(
+      stderr_failure(stderr, true),
+      GalleryError::Refused("imageSourceUnavailable")
+    );
   }
 
   #[test]

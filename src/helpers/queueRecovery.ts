@@ -29,6 +29,8 @@ export function encodeQueue(rows: SavedDownload[]): string {
   return JSON.stringify({ version: 1, rows: rows.map(row => ({
     group: {
       id: row.group.id, url: row.group.url, title: row.group.title, mediaKind: row.group.mediaKind,
+      // The row's picture after a restart; the library keeps the same remote link for finished/failed rows.
+      thumbnail: safeLink(row.group.thumbnail),
       total: row.group.total, processed: row.group.processed, errored: row.group.errored,
       isCombined: row.group.isCombined, filesize: row.group.filesize, audioCodecs: [], formats: [],
       playlistId: row.group.playlistId, playlistTitle: row.group.playlistTitle,
@@ -38,7 +40,7 @@ export function encodeQueue(rows: SavedDownload[]): string {
       uploader: row.group.uploader, uploaderId: row.group.uploaderId,
       attachments: row.group.attachments?.map(({ id, kind }) => ({ id, kind })),
       items: Object.fromEntries(Object.entries(row.group.items).map(([key, item]) => [key, {
-        id: item.id, groupId: item.groupId, url: item.url, title: item.title, isLeader: item.isLeader,
+        id: item.id, groupId: item.groupId, url: item.url, title: item.title, isLeader: item.isLeader, thumbnail: safeLink(item.thumbnail),
         fetchEngine: item.fetchEngine, mediaKind: item.mediaKind, filesize: item.filesize,
         playlistChild: item.playlistChild, playlistId: item.playlistId, playlistCount: item.playlistCount, playlistIndex: item.playlistIndex,
         uploader: item.uploader, audioCodecs: [], formats: [], entries: item.entries ? [] : undefined,

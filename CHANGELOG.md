@@ -9,6 +9,9 @@
 - An Instagram photo post that needs a login now says "sign in" instead of "no media found".
 - Bluesky profiles: videos are saved as .mp4 files in their original quality, and saving only a part of a video works.
 - Saving only a part of a video: when the site answers "not found" or a server error, the message says so instead of a generic failure.
+- Bluesky posts saved at best quality keep the original upload (1080p where the post has it) instead of the 720p copy.
+- Photo albums: a photo the site refuses with "too many requests" is tried once more after a short wait, and if it still fails the message says so instead of "the other items were saved" (seen on large Flickr albums).
+- A cancelled download keeps its picture in the list after a restart.
 
 ## 0.1.1
 

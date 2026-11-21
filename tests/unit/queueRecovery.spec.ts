@@ -213,4 +213,16 @@ describe('saved download queue', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(readQueue()).toEqual([]);
   });
+  it('a cancelled row keeps its thumbnail across a restart, like a finished or failed row', () => {
+    mockIPC(() => undefined);
+    const row = saved();
+    row.cancelled = true;
+    row.group.thumbnail = 'https://i.ytimg.com/vi/x/hq.jpg';
+    row.group.items.item.thumbnail = 'https://i.ytimg.com/vi/x/hq.jpg';
+    writeQueue([row]);
+    useMediaStore();
+    expect(useMediaGroupStore().findGroupById('saved')?.thumbnail).toBe('https://i.ytimg.com/vi/x/hq.jpg');
+    row.group.thumbnail = 'file:///private/thumb.jpg';
+    expect(decodeQueue(encodeQueue([row]))[0].group.thumbnail).toBeUndefined();
+  });
 });

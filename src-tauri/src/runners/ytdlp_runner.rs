@@ -5,7 +5,7 @@ use crate::models::TrackType;
 use crate::runners::override_resolver::resolve_with_patch;
 use crate::runners::template_context::TemplateContext;
 use crate::runners::ytdlp_args::{
-  build_format_args, build_input_filter_args, build_location_args, build_output_args,
+  build_format_args_for, build_input_filter_args, build_location_args, build_output_args,
   default_download_dir, output_base_dir, path_preferences_for,
 };
 use crate::runners::ytdlp_process::{
@@ -217,6 +217,7 @@ impl<'a> YtdlpRunner<'a> {
 
   pub fn with_format_args(
     mut self,
+    url: &str,
     format_options: &FormatOptions,
     overrides: Option<&DownloadOverrides>,
   ) -> Self {
@@ -226,7 +227,7 @@ impl<'a> YtdlpRunner<'a> {
     );
     self
       .args
-      .extend(build_format_args(format_options, &output_settings));
+      .extend(build_format_args_for(url, format_options, &output_settings));
     self
   }
 

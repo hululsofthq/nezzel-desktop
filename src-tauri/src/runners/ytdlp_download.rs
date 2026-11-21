@@ -1103,7 +1103,7 @@ async fn run_download_attempts(
     };
     if aria.is_some() {
       let probe = YtdlpRunner::new(&app)
-        .with_format_args(&entry.format, entry.overrides.as_ref())
+        .with_format_args(&entry.url, &entry.format, entry.overrides.as_ref())
         .with_input_args(entry.overrides.as_ref())
         .with_args(selected_video_args(&entry))
         .with_args(super::reliability::playlist_args(playlist_child))
@@ -1297,7 +1297,7 @@ async fn run_download_attempts(
       .with_args(super::reliability::playlist_args(playlist_child))
       .with_subtitle_args(entry.overrides.as_ref(), entry.subtitle_inventory.as_ref())
       .with_sponsorblock_args(entry.overrides.as_ref())
-      .with_format_args(&entry.format, entry.overrides.as_ref())
+      .with_format_args(&entry.url, &entry.format, entry.overrides.as_ref())
       .with_input_filter_args(entry.overrides.as_ref())
       .with_input_args(entry.overrides.as_ref())
       .with_args(transfer_args(
