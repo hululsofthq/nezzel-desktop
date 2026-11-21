@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, afterEach } from 'vitest';
 import { loadLocaleMessages } from './src/i18n';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { installTauriMock } from './tests/utils/tauriMock';
-import { createPinia, setActivePinia } from 'pinia';
+import { createPinia, disposePinia, setActivePinia } from 'pinia';
 import { InvokeArgs } from '@tauri-apps/api/core';
 import { mediaHandlers } from './tests/utils/mocks/mediaHandlers';
 import { MockData } from './tests/e2e/utils/mockData';
@@ -12,13 +12,17 @@ beforeAll(async () => {
   await Promise.all([loadLocaleMessages('ar'), loadLocaleMessages('fr')]);
 });
 
+let testPinia: ReturnType<typeof createPinia>;
 beforeEach(() => {
   clearMocks();
   installTauriMock({ ...mediaHandlers });
-  setActivePinia(createPinia());
+  testPinia = createPinia();
+  setActivePinia(testPinia);
 });
 
 afterEach(() => {
+  // Cancel store-scoped timers/listeners before another test installs its Pinia.
+  disposePinia(testPinia);
   clearMocks();
 });
 

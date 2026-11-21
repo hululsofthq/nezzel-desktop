@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { nextTick } from 'vue';
 import { createPinia, disposePinia, getActivePinia, setActivePinia } from 'pinia';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
@@ -18,6 +18,36 @@ function saved(): SavedDownload {
     overrides: { output: { downloadDir: '/downloads' }, auth: { password: 'secret', cookieFile: '/private/cookies' }, network: { proxy: 'https://user:pass@proxy' } },
   };
 }
+
+it('disposes queue persistence timers and listeners when the test finishes', async () => {
+  vi.useFakeTimers();
+  localStorage.clear();
+  mockIPC(() => undefined);
+  const writes = vi.spyOn(Storage.prototype, 'setItem');
+  // onTestFinished runs after the shared afterEach has disposed this test's Pinia.
+  onTestFinished(async () => {
+    const nextPinia = createPinia();
+    setActivePinia(nextPinia);
+    try {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(getActivePinia()).toBe(nextPinia);
+      expect(writes).not.toHaveBeenCalled();
+      window.dispatchEvent(new Event('beforeunload'));
+      expect(writes).not.toHaveBeenCalled();
+    } finally {
+      disposePinia(nextPinia);
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      localStorage.clear();
+    }
+  });
+  useMediaStore();
+  const row = saved();
+  useMediaGroupStore().createGroup(row.group);
+  useMediaOptionsStore().setOptions('saved', row.options);
+  useMediaStateStore().setState('item', MediaState.downloading);
+  await nextTick();
+});
 
 describe('saved download queue', () => {
   beforeEach(() => {
