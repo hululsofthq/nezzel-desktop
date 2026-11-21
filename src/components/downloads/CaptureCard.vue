@@ -140,6 +140,8 @@ function resetInteraction(derive = false) {
   if (!derive && active instanceof HTMLElement && panel.value?.contains(active)) active.blur();
   pointerInside.value = false;
   focusInside.value = false;
+  // The idle reset closes the list without closeFormats(): shrink the window too, or it keeps an empty area.
+  if (formatsOpen.value) void nextTick(fitCard);
   formatsOpen.value = false;
   // Closing the old menu may remove its focused row. Derive from the settled DOM, not that row.
   if (derive) void nextTick(() => {

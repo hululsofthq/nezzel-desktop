@@ -130,8 +130,9 @@ struct Assignment {
   index: usize,
   body: Option<Response>,
 }
+// Field order matters: release the part lock before releasing the session lease.
 struct Shared {
-  file: Arc<File>,
+  file: Arc<state::LockedPart>,
   state_key: Arc<StateKey>,
   board: Mutex<Board>,
   pause: tokio::sync::Mutex<Instant>,
@@ -571,7 +572,7 @@ impl Engine {
         }
         let size = state.size;
         target.state = Some(state);
-        let file = target.part.try_clone()?;
+        let file = target.part.clone();
         let dir = target
           .final_path
           .parent()
@@ -599,7 +600,7 @@ impl Engine {
       let now = Instant::now();
       let shared = Arc::new(Shared {
         _lease: lease.clone(),
-        file: Arc::new(target.part.try_clone()?),
+        file: target.part.clone(),
         state_key: state_key.clone(),
         board: Mutex::new(Board {
           state,
@@ -1308,7 +1309,8 @@ mod io_tests {
       &key,
     )
     .unwrap();
-    let lease = Arc::new(tokio::sync::Mutex::new(())).lock_owned().await;
+    let gate = Arc::new(tokio::sync::Mutex::new(()));
+    let lease = gate.clone().lock_owned().await;
     let state = State::new(
       state::identity("https://files.example/io.zip"),
       "io.zip".into(),
@@ -1318,7 +1320,7 @@ mod io_tests {
       plan::segments(Some(4), 1, false),
     );
     let shared = Arc::new(Shared {
-      file: Arc::new(target.part.try_clone().unwrap()),
+      file: target.part.clone(),
       state_key: key.clone(),
       board: Mutex::new(Board {
         state,
@@ -1365,8 +1367,40 @@ mod io_tests {
     assert_eq!(checkpoint.await.unwrap(), 4);
     assert_eq!(State::load(&target.state_path, &key).unwrap().bytes(), 4);
     assert_eq!(std::fs::read(&target.part_path).unwrap(), b"data");
+
+    // Aborting the async owner cannot unlock a still-running blocking write.
+    shared.board.lock().unwrap().state.segments[0].done = 0;
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let worker_shared = shared.clone();
+    let writer = tokio::spawn(async move {
+      write_using(
+        &worker_shared,
+        0,
+        b"next".to_vec(),
+        move |file, data, offset| {
+          let _ = entered_tx.send(());
+          release_rx.recv().map_err(|_| Error::Io)?;
+          positional_write(file, data, offset)
+        },
+      )
+      .await
+    });
+    entered_rx.await.unwrap();
+    writer.abort();
+    assert!(writer.await.unwrap_err().is_cancelled());
+    let part_path = target.part_path.clone();
     drop(shared);
     drop(target);
+    let identity = state::identity("https://files.example/io.zip");
+    let during_write = state::resume(&dir, &identity, &key);
+    release_tx.send(()).unwrap();
+    // Shared drops the part before its lease; acquiring it proves the write has exited.
+    let _released = gate.lock().await;
+    assert!(matches!(during_write, Err(Error::Busy)));
+    let resumed = state::resume(&dir, &identity, &key).unwrap().unwrap();
+    assert_eq!(std::fs::read(part_path).unwrap(), b"next");
+    drop(resumed);
     std::fs::remove_dir_all(dir).unwrap();
   }
 }

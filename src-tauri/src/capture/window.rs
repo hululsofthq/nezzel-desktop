@@ -439,7 +439,7 @@ impl CardTimer {
 
 /// Untouched: at least 8 s, 5 s after the read, capped at the read limit. Unfinished reads and
 /// keep-open have no deadline. Open engagement spans provisionally end at the lease expiry;
-/// heartbeats move that expiry forward. Every release pauses the budget and grants at least 4 s.
+/// heartbeats move that expiry forward. Every release pauses the budget and grants 4 to 8 s.
 fn card_hide_due(
   read_after: Option<Duration>,
   spans: &[CardHold],
@@ -457,7 +457,11 @@ fn card_hide_due(
     let end = span
       .end
       .or_else(|| span.last_ping.map(|ping| ping + CARD_HOLD_LEASE))?;
-    due = end + due.saturating_sub(span.start).max(Duration::from_secs(4));
+    // 4..8 s after a release: a slow read's unused budget must not keep a card the user left.
+    due = end
+      + due
+        .saturating_sub(span.start)
+        .clamp(Duration::from_secs(4), Duration::from_secs(8));
   }
   Some(due)
 }
@@ -711,7 +715,14 @@ mod tests {
         Some(s(20)),
         vec![(s(7), Some(s(30)))],
         false,
-        Some(s(48)),
+        Some(s(38)),
+      ),
+      (
+        "cold read, left after a long hold",
+        Some(s(50)),
+        vec![(s(2), Some(s(62)))],
+        false,
+        Some(s(70)),
       ),
       (
         "reading on release",
@@ -730,7 +741,7 @@ mod tests {
           last_ping: Some(start),
         })
         .collect();
-      let read_limit = if name == "cold read" {
+      let read_limit = if name.starts_with("cold read") {
         s(60)
       } else {
         super::super::read::READ_LIMIT

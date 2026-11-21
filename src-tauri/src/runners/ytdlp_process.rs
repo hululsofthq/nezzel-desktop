@@ -264,20 +264,41 @@ const CA_BUNDLES: [&str; 5] = [
 
 /// The bundled ffmpeg links OpenSSL statically and knows no certificate store on this machine, so every
 /// transfer it fetches itself (clips, live and some HLS streams) failed with "certificate verify failed".
-/// Point it at the system roots unless the user already chose a file.
+/// Prefer the tool's certifi roots so curl_cffi and inherited ffmpeg requests both work;
+/// fall back to system roots unless the user already chose a file.
 #[cfg(unix)]
-fn ca_bundle(already_set: bool, exists: impl Fn(&str) -> bool) -> Option<&'static str> {
+fn ca_bundle(
+  already_set: bool,
+  program: &std::path::Path,
+  exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
   if already_set {
     return None;
   }
-  CA_BUNDLES.into_iter().find(|path| exists(path))
+  // macOS only: its /etc/ssl/cert.pem fails some chains; Linux system bundles carry admin-added CAs.
+  if cfg!(target_os = "macos") {
+    if let Some(bundle) = program
+      .parent()
+      .map(|dir| dir.join("_internal/certifi/cacert.pem"))
+    {
+      if exists(&bundle) {
+        return Some(bundle);
+      }
+    }
+  }
+  CA_BUNDLES
+    .into_iter()
+    .map(std::path::PathBuf::from)
+    .find(|path| exists(path))
 }
 
 pub fn configure_command(command: &mut Command) -> io::Result<()> {
   #[cfg(unix)]
   {
     let set = std::env::var_os("SSL_CERT_FILE").is_some_and(|value| !value.is_empty());
-    if let Some(bundle) = ca_bundle(set, |path| std::path::Path::new(path).is_file()) {
+    if let Some(bundle) = ca_bundle(set, std::path::Path::new(command.get_program()), |path| {
+      path.is_file()
+    }) {
       command.env("SSL_CERT_FILE", bundle);
     }
     unsafe {
@@ -442,15 +463,42 @@ fn create_job_for_child(child: &std::process::Child) -> io::Result<JobHandle> {
 mod tests {
   #[cfg(unix)]
   #[test]
-  fn ffmpeg_gets_the_system_roots_unless_the_user_chose_a_file() {
-    let fedora = |path: &str| path == "/etc/pki/tls/certs/ca-bundle.crt";
-    assert_eq!(
-      super::ca_bundle(false, fedora),
-      Some("/etc/pki/tls/certs/ca-bundle.crt")
-    );
-    assert_eq!(super::ca_bundle(false, |_| true), Some("/etc/ssl/cert.pem"));
-    assert_eq!(super::ca_bundle(true, |_| true), None);
-    assert_eq!(super::ca_bundle(false, |_| false), None);
+  fn ca_bundle_prefers_certifi_then_system_roots_unless_user_set() {
+    use std::path::Path;
+    let certifi = "/tools/yt-dlp/_internal/certifi/cacert.pem";
+    for (already_set, available, expected) in [
+      (true, vec![certifi, super::CA_BUNDLES[0]], None),
+      (
+        false,
+        vec![certifi, super::CA_BUNDLES[0]],
+        Some(if cfg!(target_os = "macos") {
+          certifi
+        } else {
+          super::CA_BUNDLES[0]
+        }),
+      ),
+      (
+        false,
+        super::CA_BUNDLES.to_vec(),
+        Some(super::CA_BUNDLES[0]),
+      ),
+      (
+        false,
+        vec![super::CA_BUNDLES[2]],
+        Some(super::CA_BUNDLES[2]),
+      ),
+      (false, vec![], None),
+    ] {
+      assert_eq!(
+        super::ca_bundle(already_set, Path::new("/tools/yt-dlp/yt-dlp"), |path| {
+          available
+            .iter()
+            .any(|candidate| path == Path::new(candidate))
+        }),
+        expected.map(std::path::PathBuf::from),
+        "already_set={already_set}, available={available:?}"
+      );
+    }
   }
 
   use super::*;

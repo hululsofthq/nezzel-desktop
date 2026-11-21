@@ -881,6 +881,32 @@ if [ -f "$(dirname "$0")/skip" ]; then echo 'ERROR: HTTP Error 404: Not Found' >
   }
 
   #[test]
+  fn bluesky_profile_video_keeps_the_original_blob_and_names_it_mp4() {
+    let source = "https://bsky.app/profile/example.test";
+    let blob = "https://pds.example/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aabc&cid=bafyclip";
+    let attachment =
+      serde_json::from_value(json!({"id": "video", "kind": "video", "url": blob})).unwrap();
+    let post = GalleryPost::from_attachments(vec![attachment], source, None, None).unwrap();
+    let item = serde_json::from_value(
+      json!({"id":"id","url":source,"format":{"trackType":"both"},"templateContext":{"values":{}}}),
+    )
+    .unwrap();
+    let entry = DownloadEntry::from((item, "group".into()));
+    let child = video_request(&entry, &post, &post.assets[0], None).unwrap();
+    assert_eq!(child.resolved.as_ref().unwrap().url, blob);
+    assert_eq!(
+      crate::runners::ytdlp_download::selected_video_args(&child),
+      [
+        "--no-playlist",
+        "--replace-in-metadata",
+        "video:ext",
+        "(?i)^getblob$",
+        "mp4"
+      ]
+    );
+  }
+
+  #[test]
   fn selected_video_retry_keeps_the_original_manifest_and_uses_its_source_position() {
     let source = "https://x.com/user/status/123/photo/1";
     let post = crate::parsers::gallery::parse_gallery(br#"[[3,"https://cdn.example/a.jpg",{"extension":"jpg","num":1}],[3,"https://cdn.example/v.mp4",{"extension":"mp4","num":2}]]"#, source).unwrap();

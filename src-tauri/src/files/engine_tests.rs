@@ -203,21 +203,6 @@ impl Server {
     }
   }
 }
-/// A part file's OS lock is released when its last descriptor closes. Other tests fork helper
-/// processes while this one has the file open, and until that child execs it holds a copy of
-/// the descriptor, so a reopen right after a cancel can see Busy for a few milliseconds.
-/// Poll for the lock to clear instead of failing on that window; any other error returns as is.
-async fn settled<T, F: std::future::Future<Output = super::Result<T>>>(
-  mut op: impl FnMut() -> F,
-) -> super::Result<T> {
-  for _ in 0..500 {
-    match op().await {
-      Err(super::Error::Busy) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
-      result => return result,
-    }
-  }
-  op().await
-}
 struct Dir(std::path::PathBuf);
 impl Dir {
   fn new() -> Self {
@@ -321,13 +306,10 @@ async fn resume_cases(tcp: bool) {
       fail.store(true, Ordering::SeqCst);
     }
     server.requests.lock().unwrap().clear();
-    let result = settled(|| async {
-      engine
-        .download(&server.url, &dir.0, "kill", None, rx.clone(), &mut |_| {})
-        .await
-    })
-    .await
-    .unwrap();
+    let result = engine
+      .download(&server.url, &dir.0, "kill", None, rx.clone(), &mut |_| {})
+      .await
+      .unwrap();
     let expected = if changed {
       server.data.iter().map(|b| b ^ 0x5a).collect()
     } else {
@@ -395,13 +377,10 @@ async fn cancellation_checkpoints_and_final_collision_never_overwrites() {
     .filter_map(Result::ok)
     .all(|e| !e.path().to_string_lossy().ends_with(state::PART_SUFFIX)));
   tx.send(true).unwrap();
-  let path = settled(|| async {
-    engine
-      .download(&s.url, &dir.0, "cancel", None, rx.clone(), &mut |_| {})
-      .await
-  })
-  .await
-  .unwrap();
+  let path = engine
+    .download(&s.url, &dir.0, "cancel", None, rx.clone(), &mut |_| {})
+    .await
+    .unwrap();
   assert_eq!(path.file_name().unwrap(), "fixture (1).bin");
   assert_eq!(
     std::fs::read(dir.0.join("fixture.bin")).unwrap(),
@@ -912,13 +891,10 @@ async fn shared_ranges_and_resume_use_resolved_endpoint_with_original_identity()
   assert!(matches!(first, Err(super::Error::Cancelled)));
   changed.store(true, Ordering::SeqCst);
   let (_tx, rx) = watch::channel(true);
-  let path = settled(|| async {
-    engine
-      .download(SHARE, &dir, "owner", None, rx.clone(), &mut |_| {})
-      .await
-  })
-  .await
-  .unwrap();
+  let path = engine
+    .download(SHARE, &dir, "owner", None, rx.clone(), &mut |_| {})
+    .await
+    .unwrap();
   assert_eq!(std::fs::read(path).unwrap(), *data);
   assert!(ranges.load(Ordering::SeqCst) >= 2);
   assert_eq!(resolves.load(Ordering::SeqCst), 2);
@@ -992,28 +968,22 @@ async fn changing_google_export_format_does_not_reuse_the_other_formats_partial(
   assert!(matches!(result, Err(super::Error::Cancelled)));
   // This is the same record constructor and cleanup used by the runner's registry.
   let partial = super::runner::Partial::new(office.clone(), dir.0.clone(), url, "owner");
-  settled(|| partial.clone().discard()).await.unwrap();
+  partial.discard().await.unwrap();
   assert!(!dir.0.join("sample.docx.nezzel-part").exists());
   assert!(dir.0.join("sample.pdf.nezzel-part").exists());
   let (_tx, rx) = watch::channel(true);
   let office = engine.clone().with_export(super::hosts::Export::Office);
-  let path = settled(|| async {
-    office
-      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
-      .await
-  })
-  .await
-  .unwrap();
+  let path = office
+    .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+    .await
+    .unwrap();
   assert_eq!(path.file_name().unwrap(), "sample.docx");
   assert_eq!(&std::fs::read(path).unwrap()[..8], b"PK\x03\x04test");
   let (_tx, rx) = watch::channel(true);
-  let path = settled(|| async {
-    engine
-      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
-      .await
-  })
-  .await
-  .unwrap();
+  let path = engine
+    .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+    .await
+    .unwrap();
   assert_eq!(path.file_name().unwrap(), "sample.pdf");
   assert_eq!(pdf_gets.load(Ordering::SeqCst), 2);
 }
@@ -1433,13 +1403,10 @@ async fn yandex_resume_renews_signed_endpoint_and_keeps_name_and_bytes() {
     Err(super::Error::Cancelled)
   ));
   let (_tx, rx) = watch::channel(true);
-  let path = settled(|| async {
-    engine
-      .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
-      .await
-  })
-  .await
-  .unwrap();
+  let path = engine
+    .download(url, &dir.0, "owner", None, rx.clone(), &mut |_| {})
+    .await
+    .unwrap();
   assert_eq!(path.file_name().unwrap(), "original.bin");
   assert_eq!(std::fs::read(path).unwrap(), *data);
   assert_eq!(resolutions.load(Ordering::SeqCst), 2);
@@ -1475,4 +1442,58 @@ async fn podcast_and_legal_responses_are_not_saved_as_files() {
     .unwrap();
     assert_eq!(result.err().unwrap().code(), code);
   }
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelled_part_unlocks_while_fork_child_is_before_exec() {
+  use std::{
+    io::{Read, Write},
+    os::{fd::AsRawFd, unix::net::UnixStream},
+  };
+  let dir = Dir::new();
+  let key = super::auth::StateKey::ephemeral();
+  let id = state::identity("https://files.example/fork.bin");
+  let target = state::target(&dir.0, &id, "fork.bin", &key).unwrap();
+  target.part.set_len(8).unwrap();
+  state::State::new(
+    id,
+    "fork.bin".into(),
+    Some(8),
+    true,
+    super::plan::Validator::default(),
+    super::plan::segments(Some(8), 1, false),
+  )
+  .save(&target.state_path, &target.part, &key)
+  .unwrap();
+  let contender = state::regular(&target.part_path, true).unwrap();
+  let (mut parent, child) = UnixStream::pair().unwrap();
+  let child_fd = child.as_raw_fd();
+  let pid = unsafe { libc::fork() };
+  assert!(pid >= 0);
+  if pid == 0 {
+    // Only async-signal-safe syscalls between fork and _exit: no Rust cleanup in the child.
+    unsafe {
+      let ready = [1u8];
+      libc::write(child_fd, ready.as_ptr().cast(), 1);
+      let mut release = [0u8];
+      libc::read(child_fd, release.as_mut_ptr().cast(), 1);
+      libc::_exit(0);
+    }
+  }
+  drop(child);
+  let mut ready = [0];
+  parent.read_exact(&mut ready).unwrap();
+  drop(target);
+  let immediate = contender.try_lock();
+  parent.write_all(&[1]).unwrap();
+  let mut status = 0;
+  assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+  assert_eq!(status, 0);
+  let after_exit = contender.try_lock();
+  assert!(after_exit.is_ok());
+  assert!(
+    immediate.is_ok(),
+    "child must not retain the cancelled transfer's lock"
+  );
 }

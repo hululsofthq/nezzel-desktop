@@ -475,6 +475,11 @@ fn download_failure_diagnostics(
                 .iter()
                 .position(|event| event.code == "accessForbidden403")
             })
+            .or_else(|| {
+              events
+                .iter()
+                .position(|event| matches!(event.code.as_str(), "notFound404" | "server5xx"))
+            })
         })
     });
   if let Some(index) = cause {
@@ -673,6 +678,14 @@ pub(super) fn selected_video_args(entry: &DownloadEntry) -> Vec<String> {
       // These are already selected CDN files. The Imgur page extractor can give
       // every album child the same title, causing subsequent files to be skipped.
       args.push("--force-generic-extractor".into());
+    }
+    if entry.resolved.as_ref().is_some_and(|input| {
+      reqwest::Url::parse(&input.url)
+        .is_ok_and(|url| url.path() == "/xrpc/com.atproto.sync.getBlob")
+    }) {
+      // Bluesky's original upload: yt-dlp takes "getBlob" from the path as the file type, which
+      // names the file .getBlob.mp4 and breaks section downloads (ffmpeg has no such muxer).
+      args.extend(["--replace-in-metadata", "video:ext", "(?i)^getblob$", "mp4"].map(String::from));
     }
     args
   } else {
@@ -2376,6 +2389,8 @@ mod tests {
     // Streaming downloads parse each line independently before publishing the batch.
     for (line, code) in [
       ("[in#0] Unable to open key file skd://drm", "drmProtected"),
+      ("[https @ 0x1] HTTP error 502 Bad Gateway", "server5xx"),
+      ("[https @ 0x1] HTTP error 404 Not Found", "notFound404"),
       (
         "[https @ 0x123] HTTP error 403 Forbidden",
         "accessForbidden403",

@@ -646,7 +646,7 @@ impl YtdlpErrorParser {
           self
             .matcher
             .match_code(&DiagnosticLevel::Error, None, trimmed),
-          "drmProtected" | "accessForbidden403"
+          "drmProtected" | "accessForbidden403" | "notFound404" | "server5xx"
         )
       {
         // ffmpeg reports DRM and CDN refusals before yt-dlp's generic exit-code error.

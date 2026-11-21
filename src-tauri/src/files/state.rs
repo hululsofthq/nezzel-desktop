@@ -12,6 +12,7 @@ use std::{
   fs::{File, OpenOptions},
   io::{Read, Write},
   path::{Path, PathBuf},
+  sync::Arc,
 };
 pub(crate) const STATE_SUFFIX: &str = ".nezzel-state";
 pub(crate) const PART_SUFFIX: &str = ".nezzel-part";
@@ -197,11 +198,34 @@ pub(crate) fn sync_directory(dir: &Path) -> Result<()> {
   let _ = dir;
   Ok(())
 }
+/// Share the lock with every blocking writer, then unlock explicitly: closing the last
+/// parent descriptor alone leaves a fork child's copy locked until that child execs.
+pub(crate) struct LockedPart(File);
+impl LockedPart {
+  fn lock(file: File) -> Result<Arc<Self>> {
+    file.try_lock().map_err(|e| match e {
+      std::fs::TryLockError::WouldBlock => Error::Busy,
+      _ => Error::Io,
+    })?;
+    Ok(Arc::new(Self(file)))
+  }
+}
+impl std::ops::Deref for LockedPart {
+  type Target = File;
+  fn deref(&self) -> &File {
+    &self.0
+  }
+}
+impl Drop for LockedPart {
+  fn drop(&mut self) {
+    let _ = self.0.unlock();
+  }
+}
 pub(crate) struct Target {
   pub final_path: PathBuf,
   pub state_path: PathBuf,
   pub part_path: PathBuf,
-  pub part: File,
+  pub part: Arc<LockedPart>,
   pub state: Option<State>,
 }
 impl Drop for Target {
@@ -242,14 +266,14 @@ pub(crate) fn resume(dir: &Path, identity: &str, key: &StateKey) -> Result<Optio
         continue;
       }
     };
-    match part.try_lock() {
-      Ok(()) => {}
-      Err(std::fs::TryLockError::WouldBlock) => return Err(Error::Busy),
+    let part = match LockedPart::lock(part) {
+      Ok(part) => part,
+      Err(Error::Busy) => return Err(Error::Busy),
       Err(_) => {
         std::fs::remove_file(&path)?;
         continue;
       }
-    }
+    };
     if state
       .segments
       .iter()
@@ -294,10 +318,7 @@ pub(crate) fn target(dir: &Path, identity: &str, name: &str, key: &StateKey) -> 
     }
     match opts.open(&part_path) {
       Ok(part) => {
-        part.try_lock().map_err(|e| match e {
-          std::fs::TryLockError::WouldBlock => Error::Busy,
-          _ => Error::Io,
-        })?;
+        let part = LockedPart::lock(part)?;
         return Ok(Target {
           final_path,
           state_path,
@@ -522,10 +543,7 @@ pub(crate) fn discard(dir: &Path, identity: &str, owner: &str, key: &StateKey) -
     let part_path = sibling(&dir.join(name), PART_SUFFIX);
     match regular(&part_path, true) {
       Ok(part) => {
-        part.try_lock().map_err(|e| match e {
-          std::fs::TryLockError::WouldBlock => Error::Busy,
-          _ => Error::Io,
-        })?;
+        let part = LockedPart::lock(part)?;
         remove_owned(&part, &part_path)?;
       }
       Err(_) if part_path.symlink_metadata().is_err() => {}

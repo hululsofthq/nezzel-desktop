@@ -647,6 +647,7 @@ impl BinariesManager {
       if compare_versions(&tag, &old).ok_or("invalid installed yt-dlp version")?
         != Ordering::Greater
       {
+        tracing::info!("yt-dlp up to date");
         return Ok(true);
       }
       let sums = client
@@ -675,6 +676,7 @@ impl BinariesManager {
       manifest.verified_remote,
       info.rollback,
     )? {
+      tracing::info!("yt-dlp up to date");
       return Ok(true);
     }
     let tag = &info.version;

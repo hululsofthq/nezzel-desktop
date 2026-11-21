@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+- Windows: updating from inside the app no longer stops at a language question, which could open behind other windows and leave the update waiting. The setup now follows your system language.
+- The copied-link card closes a few seconds after you leave it; on the first link after starting Nezzel it could stay for about a minute. It also no longer keeps an empty area after its formats list closes by itself.
+- Resuming or removing a file download right after cancelling it no longer fails with "This file is already downloading".
+- macOS: sites that Nezzel must contact the way a browser does work again (9gag failed with an unknown error).
+- An Instagram photo post that needs a login now says "sign in" instead of "no media found".
+- Bluesky profiles: videos are saved as .mp4 files in their original quality, and saving only a part of a video works.
+- Saving only a part of a video: when the site answers "not found" or a server error, the message says so instead of a generic failure.
+
 ## 0.1.1
 
 - Windows: a first download that Windows blocked while it was still checking the new file ("Access is denied") is now retried once by itself; if it still cannot be moved, the message says so instead of a plain "Couldn't download".

@@ -313,6 +313,18 @@ mod tests {
       final_code(&[failed("photosOnly"), gallery]),
       Some("noMediaFound")
     );
+    let login = crate::parsers::gallery::failure(
+      "[instagram][error] HttpError: '401 Unauthorized' for 'https://www.instagram.com/api/v1/media/1/info/'",
+    );
+    let diagnostic = crate::runners::gallery::error_diagnostic("group", "item", &login, false);
+    let login_attempt = Attempt {
+      stage: StageId::Gallery,
+      ..failed(&diagnostic.code)
+    };
+    assert_eq!(
+      final_code(&[failed("photosOnly"), login_attempt]),
+      Some("signInRequired")
+    );
     gallery = Attempt {
       stage: StageId::Gallery,
       ..failed("notFound404")

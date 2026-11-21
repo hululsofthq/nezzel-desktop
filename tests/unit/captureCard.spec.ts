@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CaptureCard from '../../src/components/downloads/CaptureCard.vue';
 import { emptyDetails, type CaptureOffer } from '../../src/captureTypes';
 import { i18n } from '../../src/i18n';
+import { CAPTURE_CARD_SIZE } from '../../src/generated/contract';
 
 const invoke = vi.hoisted(() => vi.fn((_cmd: string, _args?: unknown): Promise<boolean> => Promise.resolve(true)));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
@@ -89,6 +90,17 @@ describe('copied-link card engagement', () => {
     expect(reports().at(-1)).toEqual({ id: 1, engaged: true });
     await vi.advanceTimersByTimeAsync(6000);
     expect(reports().at(-1)).toEqual({ id: 1, engaged: false });
+  });
+
+  it('shrinks the window when the idle reset closes an open formats list', async () => {
+    const fits = () => invoke.mock.calls.filter(([cmd, args]) => cmd === 'capture_fit' && args && typeof args === 'object' && 'height' in args);
+    await card.get('[data-testid=capture-formats-toggle]').trigger('click');
+    await nextTick();
+    const opened = fits().length;
+    await vi.advanceTimersByTimeAsync(36_000);
+    expect(card.get('[data-testid=capture-formats-toggle]').attributes('aria-expanded')).toBe('false');
+    expect(fits().length).toBe(opened + 1);
+    expect(fits().at(-1)?.[1]).toEqual({ height: CAPTURE_CARD_SIZE.height });
   });
 
   it('renews engagement every three seconds and checks native hover after leave', async () => {

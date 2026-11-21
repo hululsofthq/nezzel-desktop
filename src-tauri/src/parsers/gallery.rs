@@ -232,6 +232,8 @@ pub fn failure(message: &str) -> GalleryError {
     GalleryError::Refused("notFound404")
   } else if lower.contains("noextractorerror") || lower.contains("unsupported url") {
     GalleryError::Unsupported
+  } else if lower.contains("401 unauthorized") {
+    GalleryError::Login
   } else {
     GalleryError::Refused("imageSourceUnavailable")
   }
@@ -829,6 +831,7 @@ mod tests {
     for line in [
       "[twitter][error] AuthRequired: authenticated cookies needed to access this timeline",
       "[twitter][error] authenticated cookies needed",
+      "[instagram][error] HttpError: '401 Unauthorized' for 'https://www.instagram.com/api/v1/media/1/info/'",
     ] {
       assert_eq!(stderr_failure(line, false), GalleryError::Login);
     }
