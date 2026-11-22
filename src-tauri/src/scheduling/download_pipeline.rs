@@ -54,6 +54,18 @@ pub struct DownloadEntry {
   pub login_was_accepted: bool,
   /// The group run that queued this entry (set by `DownloadRequest::Batch`).
   pub generation: u64,
+  /// Set only by the Instagram yt-dlp → gallery-dl hand-off: carousel items yt-dlp already saved.
+  pub kept_carousel: Option<KeptCarousel>,
+}
+
+/// Carousel items saved before gallery-dl took over the post. Identity of an item is its
+/// 1-based position in the post (yt-dlp "item N of M" = gallery-dl `num`); the post is the entry URL.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeptCarousel {
+  pub count: usize,
+  pub positions: Vec<usize>,
+  /// The sign-in for the remaining items failed: finish the row with what was saved.
+  pub login_failed: bool,
 }
 
 impl From<(DownloadItem, String)> for DownloadEntry {
@@ -85,6 +97,7 @@ impl From<(DownloadItem, String)> for DownloadEntry {
       login_browser,
       login_was_accepted,
       generation: 0,
+      kept_carousel: None,
     }
   }
 }

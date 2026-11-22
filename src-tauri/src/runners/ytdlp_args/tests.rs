@@ -1312,3 +1312,85 @@ fn filename_metadata_replaces_generic_social_titles_and_preserves_real_titles() 
     );
   }
 }
+
+/// Where a download lands, relative to the download folder, for each layout and group shape.
+#[test]
+fn group_folder_table() {
+  let long = "ب".repeat(200);
+  let cases = [
+    // (name, (files, title) of the group, layout, expected folder)
+    ("single file stays flat", None, "", ""),
+    ("playlist of 3", Some(("3", "My List")), "", "My List"),
+    ("album of 2 photos", Some(("2", "Trip")), "", "Trip"),
+    (
+      "multi-video post",
+      Some(("10", "Post by x")),
+      "",
+      "Post by x",
+    ),
+    ("group of 1 stays flat", Some(("1", "Solo")), "", ""),
+    (
+      "no title falls back to the one given",
+      Some(("2", "uploader - id1")),
+      "",
+      "uploader - id1",
+    ),
+    ("empty title", Some(("2", "")), "", "download"),
+    (
+      "unsafe title",
+      Some(("2", "a/b\\c:d?%(title)s.. ")),
+      "",
+      "a_b_c_d__(title)s",
+    ),
+    ("reserved name", Some(("2", "CON")), "", "_CON"),
+    (
+      "arabic kept",
+      Some(("2", "رحلة إلى نواكشوط")),
+      "",
+      "رحلة إلى نواكشوط",
+    ),
+    ("setting off", Some(("3", "My List")), ".", ""),
+    (
+      "chosen layout unchanged",
+      Some(("3", "My List")),
+      "%(uploader)s",
+      "%(uploader)s",
+    ),
+  ];
+  for (name, group, layout, expected) in cases {
+    let mut values = HashMap::new();
+    if let Some((files, title)) = group {
+      values.insert("nezzel_group_files".to_string(), files.to_string());
+      values.insert("nezzel_group_title".to_string(), title.to_string());
+    }
+    let ctx = TemplateContext { values };
+    let prefs = PathPreferences {
+      video_directory_template: layout.into(),
+      ..PathPreferences::default()
+    };
+    let args = build_location_args(
+      &TrackType::Video,
+      &ctx,
+      &OutputSettings::default(),
+      &prefs,
+      PathBuf::from("/dl"),
+    );
+    let relative = PathBuf::from(&args[1])
+      .parent()
+      .unwrap()
+      .strip_prefix("/dl")
+      .unwrap()
+      .to_path_buf();
+    assert_eq!(relative, PathBuf::from(expected), "{name}");
+  }
+
+  // Very long title: capped, never ends in a broken character, whole name stays one folder.
+  let mut values = HashMap::new();
+  values.insert("nezzel_group_files".to_string(), "2".to_string());
+  values.insert("nezzel_group_title".to_string(), long);
+  let name = super::location_args::group_dir_name(&TemplateContext { values }).unwrap();
+  assert!(
+    name.len() <= 100 && name.chars().all(|c| c == 'ب'),
+    "{name}"
+  );
+}

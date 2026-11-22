@@ -48,6 +48,7 @@ pub(super) fn video_request(
   video.login_browser = browser;
   video.resume_parent = Some(Box::new(entry.clone()));
   video.resolved = None;
+  video.kept_carousel = None;
   let listing = !crate::parsers::post::single_post_url(&post.source);
   if listing {
     let host = reqwest::Url::parse(&post.source).ok();
@@ -243,6 +244,7 @@ pub(super) async fn download_attempt(
     image_post(post)?.ok_or(GalleryError::Unsupported)?
   };
   let selected = post.selected(entry.attachment_ids.as_deref())?;
+  let (selected, kept) = skip_kept(entry, &post, selected);
   if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
     records.allow_root(
       &entry.group_id,
@@ -252,6 +254,8 @@ pub(super) async fn download_attempt(
   let root = YtdlpRunner::new(app).output_root(&TrackType::Video, entry.overrides.as_ref());
   // Images are finalized within this attempt; unlike video partials they are not resumable.
   let staging = crate::runners::gallery_files::Staging::in_root(&root)?;
+  let group_dir =
+    YtdlpRunner::new(app).default_group_dir(&TrackType::Video, &entry.template_context);
   let mut images = Vec::new();
   let mut skipped = 0;
   let mut last_failure = GalleryError::Refused("imageSourceUnavailable");
@@ -286,15 +290,29 @@ pub(super) async fn download_attempt(
       }
     };
     let destination = filename(app, entry, asset, &bytes, post.assets.len() > 1, &post).await?;
+    let destination =
+      super::images::flat_copy_before_group_folders(&destination, group_dir.as_deref(), &bytes)
+        .unwrap_or(destination);
     images.push((source, destination));
   }
+  // Only a group folder this attempt created may be removed again on cancel.
+  let mut made_group_dir = false;
   for (index, (source, destination)) in images.iter().enumerate() {
     crate::scheduling::disk_space::check(
       destination,
       std::fs::metadata(source).ok().map(|m| m.len()),
     )
     .map_err(GalleryError::Refused)?;
-    finalize(source, destination, || !is_group_running(&entry.group_id))?;
+    if let Some(dir) = destination.parent().filter(|_| group_dir.is_some()) {
+      made_group_dir |= !dir.exists();
+    }
+    if let Err(error) = finalize(source, destination, || !is_group_running(&entry.group_id)) {
+      if error == GalleryError::Cancelled {
+        // A cancelled group leaves no empty group folder behind (remove_dir only takes empty ones).
+        remove_created_group_dir(destination, group_dir.as_deref(), made_group_dir);
+      }
+      return Err(error);
+    }
     if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
       records.record_item(&entry.group_id, &entry.id, &destination.to_string_lossy());
     }
@@ -325,7 +343,7 @@ pub(super) async fn download_attempt(
       },
     );
   }
-  let mut saved = images.len();
+  let mut saved = images.len() + kept;
   // Photos are committed before a video can request login or fail.
   for asset in &selected {
     if matches!(asset.item.kind, AttachmentKind::Video) {
@@ -381,9 +399,55 @@ pub(super) async fn download_attempt(
   Ok(())
 }
 
+/// Carousel items the Instagram hand-off already saved are not downloaded again. Positions
+/// match only when gallery-dl lists as many items as yt-dlp did; otherwise all are downloaded.
+fn skip_kept<'a>(
+  entry: &DownloadEntry,
+  post: &GalleryPost,
+  selected: Vec<&'a GalleryAsset>,
+) -> (Vec<&'a GalleryAsset>, usize) {
+  let Some(kept) = entry
+    .kept_carousel
+    .as_ref()
+    .filter(|kept| kept.count == post.assets.len())
+  else {
+    return (selected, 0);
+  };
+  let remaining = selected
+    .into_iter()
+    .filter(|asset| {
+      let position = asset.metadata["num"]
+        .as_u64()
+        .map_or(asset.index, |num| num as usize);
+      !kept.positions.contains(&position)
+    })
+    .collect();
+  (remaining, kept.positions.len())
+}
+
+/// The hand-off saved some items and the rest cannot be read: the row ends as a partial save.
+async fn finish_kept(app: &AppHandle, entry: &DownloadEntry, has_session: bool) {
+  let mut event = error_diagnostic(
+    &entry.group_id,
+    &entry.id,
+    &GalleryError::Refused("galleryItemsSkipped"),
+    has_session,
+  );
+  event.level = crate::models::error::DiagnosticLevel::Warning;
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_DIAGNOSTIC,
+    crate::models::MediaDiagnosticPayload::from_diagnostic_event(event),
+  );
+  if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
+    records.seal(&entry.group_id);
+  }
+  crate::library::complete(app, entry).await;
+}
+
 /// "The other items were saved" is only true when most were; a CDN burst limit is named instead.
 fn skipped_code(saved: usize, skipped: usize, last_failure: &GalleryError) -> &'static str {
-  if skipped > saved && *last_failure == GalleryError::Refused("rateLimited429") {
+  if skipped > saved && last_failure.is_rate_limit() {
     "rateLimited429"
   } else {
     "galleryItemsSkipped"
@@ -438,6 +502,14 @@ pub async fn run_media_download(
     DownloadEngine::Ytdlp => return run_ytdlp_download(app, entry).await,
     DownloadEngine::Gallery => {}
   }
+  if entry
+    .kept_carousel
+    .as_ref()
+    .is_some_and(|kept| kept.login_failed)
+  {
+    finish_kept(&app, &entry, false).await;
+    return Ok(());
+  }
   let mut login = LoginSession::new(
     &app,
     &entry.url,
@@ -480,10 +552,19 @@ pub async fn run_media_download(
         return Err(YtdlpDownloadError::LoginPending)
       }
       Err(error) => {
-        if error == GalleryError::Refused("rateLimited429") {
-          if let Some(delay) = recovery.busy_delay() {
+        if error.is_rate_limit() {
+          let delay = if error.is_shared_api_limit() {
+            None
+          } else {
+            recovery.busy_delay()
+          };
+          if let Some(delay) = delay {
             crate::runners::reliability::cool_host(&entry.url, delay);
             continue;
+          }
+          if entry.kept_carousel.is_some() {
+            finish_kept(&app, &entry, login.has_session).await;
+            return Ok(());
           }
           crate::runners::reliability::fatal(&app, &entry, "rateLimited429");
           return Err(YtdlpDownloadError::RunnerError("rateLimited429".into()));
@@ -550,6 +631,10 @@ pub async fn run_media_download(
           }
           _ => {}
         }
+        if entry.kept_carousel.is_some() {
+          finish_kept(&app, &entry, login.has_session).await;
+          return Ok(());
+        }
         for event in login.failure_diagnostics(diagnostics) {
           diagnostic(&app, &entry.group_id, &entry.id, event);
         }
@@ -559,8 +644,42 @@ pub async fn run_media_download(
   }
 }
 
+fn remove_created_group_dir(destination: &std::path::Path, group_dir: Option<&str>, created: bool) {
+  if !created {
+    return;
+  }
+  if let Some(dir) = destination
+    .parent()
+    .filter(|dir| dir.file_name().and_then(|n| n.to_str()) == group_dir)
+  {
+    let _ = std::fs::remove_dir(dir);
+  }
+}
+
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn cancel_removes_only_an_empty_group_folder_this_attempt_created() {
+    let root = std::env::temp_dir().join(format!("nezzel-cancel-{}", uuid::Uuid::new_v4()));
+    let dest = root.join("Trip/a.png");
+    std::fs::create_dir_all(root.join("Trip")).unwrap();
+    remove_created_group_dir(&dest, Some("Trip"), false);
+    assert!(
+      root.join("Trip").exists(),
+      "pre-existing empty folder stays"
+    );
+    std::fs::write(&dest, b"x").unwrap();
+    remove_created_group_dir(&dest, Some("Trip"), true);
+    assert!(root.join("Trip").exists(), "non-empty folder stays");
+    std::fs::remove_file(&dest).unwrap();
+    remove_created_group_dir(&dest, Some("Trip"), true);
+    assert!(
+      !root.join("Trip").exists(),
+      "folder this attempt made is removed"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+  }
+
   use super::*;
   use crate::models::ParsedMedia;
   use crate::runners::gallery::images::verified_image;
@@ -574,6 +693,12 @@ mod tests {
       false,
     );
     assert_eq!(skipped_code(1, 99, &limited), "rateLimited429");
+    // The shared-key variant never leaves the engine under its own name.
+    let shared = GalleryError::Refused("sharedApiLimit");
+    assert_eq!(skipped_code(1, 99, &shared), "rateLimited429");
+    let event = error_diagnostic("g", "i", &shared, false);
+    assert_eq!(event.code, "rateLimited429");
+    assert!(event.message.is_empty());
     assert_eq!(skipped_code(99, 1, &limited), "galleryItemsSkipped");
     assert_eq!(
       skipped_code(1, 99, &GalleryError::Refused("imageSourceUnavailable")),
@@ -836,6 +961,56 @@ if [ -f "$(dirname "$0")/skip" ]; then echo 'ERROR: HTTP Error 404: Not Found' >
         }
       }
     }
+  }
+
+  #[test]
+  fn instagram_handoff_saves_each_carousel_item_once() {
+    let source = "https://www.instagram.com/p/DfxRiPZIXJo/";
+    let fixture = include_bytes!("../../parsers/fixtures/gallery-recorded-instagram-mixed.json");
+    let post = crate::parsers::gallery::parse_output(0, fixture, b"", source).unwrap();
+    let item = serde_json::from_value(json!({"id":"id","url":source,"format":{"trackType":"both"},"fetchEngine":"gallery","templateContext":{"values":{}}})).unwrap();
+    let mut entry = DownloadEntry::from((item, "group".into()));
+    let kinds = |assets: &[&GalleryAsset]| {
+      assets
+        .iter()
+        .map(|a| matches!(a.item.kind, AttachmentKind::Video))
+        .collect::<Vec<_>>()
+    };
+    // No hand-off: gallery-dl downloads the whole post (signed-in path of 08d63672).
+    let (all, kept) = skip_kept(&entry, &post, post.selected(None).unwrap());
+    assert_eq!((kinds(&all), kept), (vec![true, false, false, false], 0));
+    // yt-dlp saved item 1 (the video): gallery-dl adds the 3 photos, 4 items in total, once each.
+    entry.kept_carousel = Some(crate::scheduling::download_pipeline::KeptCarousel {
+      count: 4,
+      positions: vec![1],
+      login_failed: false,
+    });
+    let (rest, kept) = skip_kept(&entry, &post, post.selected(None).unwrap());
+    assert_eq!((kinds(&rest), kept), (vec![false, false, false], 1));
+    // A listing that no longer matches by length downloads everything rather than lose an item.
+    entry.kept_carousel.as_mut().unwrap().count = 5;
+    let (all, kept) = skip_kept(&entry, &post, post.selected(None).unwrap());
+    assert_eq!((all.len(), kept), (4, 0));
+    // The video at position 2 (photo first): only the photo is left for gallery-dl.
+    let photo_first = crate::parsers::gallery::parse_gallery(br#"[[3,"https://cdn.example/a.jpg",{"extension":"jpg","num":1}],[3,"https://cdn.example/v.mp4",{"extension":"mp4","num":2}]]"#, source).unwrap();
+    entry.kept_carousel = Some(crate::scheduling::download_pipeline::KeptCarousel {
+      count: 2,
+      positions: vec![2],
+      login_failed: false,
+    });
+    let (rest, kept) = skip_kept(&entry, &photo_first, photo_first.selected(None).unwrap());
+    assert_eq!((kinds(&rest), kept), (vec![false], 1));
+    // Video children never carry the hand-off state.
+    let video = post
+      .assets
+      .iter()
+      .find(|a| matches!(a.item.kind, AttachmentKind::Video));
+    assert_eq!(
+      video_request(&entry, &post, video.unwrap(), None)
+        .unwrap()
+        .kept_carousel,
+      None
+    );
   }
 
   #[test]

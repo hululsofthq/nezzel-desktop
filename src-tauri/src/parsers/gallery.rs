@@ -15,6 +15,9 @@ pub enum GalleryError {
   Redirect(String),
 }
 
+/// gallery-dl's lowercase marker for the shared API key limit; the row keeps `rateLimited429`.
+pub(crate) const SHARED_API_LIMIT_MESSAGE: &str = "daily api rate limit exceeded";
+
 pub(crate) fn expired_media(message: &str) -> bool {
   let lower = message.to_ascii_lowercase();
   [
@@ -42,6 +45,14 @@ pub(crate) fn cdn_failure(message: &str) -> GalleryError {
 }
 
 impl GalleryError {
+  /// Both the per-user 429 and gallery-dl's shared API key limit show as `rateLimited429`.
+  pub(crate) fn is_rate_limit(&self) -> bool {
+    matches!(self, Self::Refused("rateLimited429" | "sharedApiLimit"))
+  }
+  /// Waiting seconds cannot refill a shared daily quota.
+  pub(crate) fn is_shared_api_limit(&self) -> bool {
+    *self == Self::Refused("sharedApiLimit")
+  }
   pub fn cookie_fetch_failure(
     &self,
     has_cookies: bool,
@@ -52,7 +63,9 @@ impl GalleryError {
     }
     match self {
       Self::Login => CookieFetchFailure::Refused,
-      Self::Refused("rateLimited429" | "unableToExtractIdOrInfo") => CookieFetchFailure::Transient,
+      Self::Refused("rateLimited429" | "sharedApiLimit" | "unableToExtractIdOrInfo") => {
+        CookieFetchFailure::Transient
+      }
       _ => CookieFetchFailure::Other,
     }
   }
@@ -185,6 +198,11 @@ pub fn failure(message: &str) -> GalleryError {
     && lower.contains("/info/")
   {
     return GalleryError::Refused("notFound404");
+  }
+  // gallery-dl's shared Tumblr API key ran out for the day; the user's own request was not throttled.
+  // Still a rate limit on its own, but a page refusal from yt-dlp explains the row better.
+  if lower.contains(SHARED_API_LIMIT_MESSAGE) {
+    return GalleryError::Refused("sharedApiLimit");
   }
   // Generic cookie advice appended to an empty/throttled response is not a refused session.
   if !lower.contains("authenticationerror")
@@ -515,6 +533,11 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
           .filter(|text| !facebook || !generic_facebook_title(text))
           .find_map(|s| s.lines().map(str::trim).find(|line| !line.is_empty()))
           .map(|s| s.chars().take(200).collect());
+        // Tumblr photo posts carry no title/content: gallery-dl exposes `summary`, `slug` and the
+        // blog name, and without them the file is named after the CDN hash.
+        if post.title.is_none() && meta["category"] == "tumblr" {
+          post.title = tumblr_title(meta);
+        }
       }
       if post.uploader.is_none() {
         post.uploader = meta["author"]["name"]
@@ -523,6 +546,11 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
           .or_else(|| meta["user"]["name"].as_str())
           .or_else(|| meta["author"].as_str())
           .or_else(|| meta["username"].as_str())
+          .or_else(|| {
+            (meta["category"] == "tumblr")
+              .then(|| meta["blog"]["name"].as_str())
+              .flatten()
+          })
           .map(str::to_owned);
       }
       if instagram && instagram_username.is_none() {
@@ -628,6 +656,36 @@ pub fn parse_gallery(bytes: &[u8], source: &str) -> Result<GalleryPost, GalleryE
     post.title = instagram_username.map(|username| format!("Instagram post by @{username}"));
   }
   Ok(post)
+}
+
+/// Readable Tumblr name: post summary, else the URL slug, else `<blog> <post id>`.
+fn tumblr_title(meta: &Value) -> Option<String> {
+  let first_line = |text: &str| {
+    text
+      .lines()
+      .map(str::trim)
+      .find(|line| !line.is_empty())
+      .map(|line| line.chars().take(200).collect::<String>())
+  };
+  if let Some(title) = meta["summary"].as_str().and_then(first_line) {
+    return Some(title);
+  }
+  if let Some(title) = meta["slug"]
+    .as_str()
+    .map(|slug| slug.replace('-', " "))
+    .as_deref()
+    .and_then(first_line)
+  {
+    return Some(title);
+  }
+  let blog = meta["blog"]["name"]
+    .as_str()
+    .filter(|name| !name.is_empty())?;
+  let id = meta["id"]
+    .as_u64()
+    .map(|id| id.to_string())
+    .or_else(|| meta["id"].as_str().map(str::to_owned))?;
+  Some(format!("{blog} {id}"))
 }
 
 pub(crate) fn generic_facebook_title(text: &str) -> bool {
@@ -984,6 +1042,44 @@ mod tests {
         "{resource}"
       );
     }
+  }
+
+  #[test]
+  fn tumblr_photo_posts_get_a_readable_title_instead_of_the_cdn_hash() {
+    let post = |extra: serde_json::Value| {
+      let mut meta = serde_json::json!({"extension":"jpg","category":"tumblr","id":123456789,"hash":"a1b2c3","blog":{"name":"myblog"}});
+      meta
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+      let records = serde_json::json!([[
+        3,
+        "https://64.media.tumblr.com/a1b2c3/tumblr_xyz_1280.jpg",
+        meta
+      ]]);
+      parse_gallery(
+        records.to_string().as_bytes(),
+        "https://www.tumblr.com/myblog/123456789",
+      )
+      .unwrap()
+    };
+    let title = |extra| post(extra).title;
+    assert_eq!(
+      title(serde_json::json!({"summary":"مرحبا بالعالم\nline2"})).as_deref(),
+      Some("مرحبا بالعالم")
+    );
+    assert_eq!(
+      title(serde_json::json!({"summary":" ","slug":"sunset-over-nouakchott"})).as_deref(),
+      Some("sunset over nouakchott")
+    );
+    assert_eq!(
+      title(serde_json::json!({"summary":"","slug":""})).as_deref(),
+      Some("myblog 123456789")
+    );
+    assert_eq!(
+      post(serde_json::json!({})).uploader.as_deref(),
+      Some("myblog")
+    );
   }
 
   #[test]
@@ -1372,6 +1468,20 @@ mod tests {
         GalleryError::Refused("imageSourceUnavailable")
       );
     }
+    assert_eq!(
+      stderr_failure("[download][error] HTTP Error 429: Too Many Requests", false),
+      GalleryError::Refused("rateLimited429")
+    );
+  }
+
+  #[test]
+  fn tumblr_shared_key_daily_limit_is_its_own_rate_limit_variant() {
+    // Issue #68: the post page answers 403, gallery-dl reports its shared API key limit.
+    assert_eq!(
+      stderr_failure("[tumblr][error] Daily API rate limit exceeded", false),
+      GalleryError::Refused("sharedApiLimit")
+    );
+    // A real per-user 429 keeps the wait message.
     assert_eq!(
       stderr_failure("[download][error] HTTP Error 429: Too Many Requests", false),
       GalleryError::Refused("rateLimited429")

@@ -9,6 +9,49 @@ use std::time::Duration;
 /// Desktop Chrome, for requests that must look like a browser navigation (page reads, Dropbox).
 pub(crate) const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
+static CONFIG: std::sync::OnceLock<crate::SharedConfig> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+  static TEST_PROXIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test scope: proxy on for this thread until the guard drops (restores the previous value).
+#[cfg(test)]
+pub(crate) struct ProxiedGuard(bool);
+#[cfg(test)]
+impl ProxiedGuard {
+  pub(crate) fn on() -> Self {
+    Self(TEST_PROXIED.replace(true))
+  }
+}
+#[cfg(test)]
+impl Drop for ProxiedGuard {
+  fn drop(&mut self) {
+    TEST_PROXIED.set(self.0);
+  }
+}
+
+/// True while the user has the proxy switched on in Settings. The pinned clients connect to
+/// addresses they resolved and admitted themselves, which a proxy would bypass, so every
+/// built-in page read refuses (and its caller falls through to the engines, which honour the
+/// proxy) instead of leaving outside it. Reads the live config snapshot, the same one the
+/// engines read: no second flag that could lag a config change. System and environment
+/// proxies stay ignored. Unset only before startup setup and in unit tests.
+pub(crate) fn proxied() -> bool {
+  #[cfg(test)]
+  if TEST_PROXIED.get() {
+    return true;
+  }
+  CONFIG
+    .get()
+    .is_some_and(|config| config.load().network.enable_proxy == Some(true))
+}
+
+pub(crate) fn setup(config: crate::SharedConfig) {
+  let _ = CONFIG.set(config);
+}
+
 /// Bound on one DNS lookup during admission.
 pub(crate) const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 

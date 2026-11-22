@@ -119,6 +119,7 @@ pub fn run() {
       // setup config management
       let config_handle = ConfigHandle::init(handle)?;
       let shared_config = Arc::new(config_handle);
+      net::setup(shared_config.clone());
       handle.manage::<SharedConfig>(shared_config);
       usage::setup(handle, path_handle.app_dir());
 

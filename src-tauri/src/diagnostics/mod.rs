@@ -169,11 +169,20 @@ impl Draft {
   /// reduced ([`link_for_report`]), the extractor tokenised, the crash scrubbed. `names`: [`redact::local_names`].
   fn into_input(self, environment: ReportInput, names: &[String]) -> ReportInput {
     let download = self.download.map(|mut download| {
-      let link = self
+      let shape = self
         .url
         .as_deref()
-        .and_then(|url| link_for_report(url, self.include_full_link));
+        .and_then(|url| link_for_report(url, false));
+      let link = if self.include_full_link {
+        self
+          .url
+          .as_deref()
+          .and_then(|url| link_for_report(url, true))
+      } else {
+        shape.clone()
+      };
       download.site = link.as_ref().map(|link| link.site.clone());
+      download.shape = shape.map(|shape| shape.link);
       download.link = link.map(|link| link.link);
       download.extractor = self.extractor.as_deref().map(ExtractorToken::new);
       download
@@ -262,13 +271,19 @@ pub async fn diagnostics_send(
   batch_id: Option<String>,
   event_id: Option<String>,
 ) -> Result<(), send::SendError> {
-  let report = build_report(
+  let input = report_input(
     &app,
     manual_draft(note, download, url, extractor, include_link),
   );
+  let report = report::build(&input);
   // The frontend says "could not send" and offers "Copy details" for any `SendError`.
   tauri::async_runtime::spawn_blocking(move || {
-    send::send_manual(&report, batch_id.as_deref(), event_id.as_deref())
+    send::send_manual(
+      &report,
+      input.download.as_ref(),
+      batch_id.as_deref(),
+      event_id.as_deref(),
+    )
   })
   .await
   .map_err(|_| send::SendError::NotDelivered)?
@@ -381,7 +396,7 @@ pub async fn diagnostics_send_crash(app: AppHandle) -> Result<(), send::SendErro
     .try_state::<PendingCrash>()
     .and_then(|pending| pending.0.lock().ok()?.clone())
     .ok_or(send::SendError::NothingToSend)?;
-  tauri::async_runtime::spawn_blocking(move || send::send_manual(&report, None, None))
+  tauri::async_runtime::spawn_blocking(move || send::send_manual(&report, None, None, None))
     .await
     .map_err(|_| send::SendError::NotDelivered)??;
   if let Some(pending) = app.try_state::<PendingCrash>() {

@@ -5,9 +5,9 @@
 //! drops anything else (no breadcrumbs, host name or user
 //! fields; the user carries only a placeholder IP so Sentry can't infer a city, #39).
 
-use super::link::SiteToken;
+use super::link::{LinkText, SiteToken};
 use super::redact::ScrubbedText;
-use super::report::{CodeToken, DownloadContext, ExtractorToken, Report};
+use super::report::{CodeToken, DownloadContext, ExtractorToken, Report, Token};
 use crate::SharedConfig;
 use sentry::protocol::{Attachment, Event, Level};
 use std::borrow::Cow;
@@ -64,12 +64,36 @@ pub fn init(raw: Option<&str>) -> Option<sentry::ClientInitGuard> {
   }))
 }
 
+/// Build-time marker set only by the publish workflow (`NEZZEL_SENTRY_ENV=production`).
+const PRODUCTION_ENV: &str = "production";
+
+/// Release and environment for events. Only an official CI build (`production`) reports under the plain
+/// `nezzel@<version>`; any other build (local, test, unset) gets its own environment and a release suffix so
+/// real users stay separable from our testing.
+fn release_and_environment(marker: Option<&str>, base_release: &str) -> (String, String) {
+  let marker = marker.map(str::trim).filter(|value| !value.is_empty());
+  if marker == Some(PRODUCTION_ENV) {
+    return (base_release.to_string(), PRODUCTION_ENV.to_string());
+  }
+  let environment = marker.map_or_else(|| "development".to_string(), super::report::token);
+  (format!("{base_release}-{environment}"), environment)
+}
+
 pub fn client_options() -> sentry::ClientOptions {
+  client_options_for(
+    option_env!("NEZZEL_SENTRY_ENV"),
+    &sentry::release_name!().unwrap_or_default(),
+  )
+}
+
+fn client_options_for(marker: Option<&str>, base_release: &str) -> sentry::ClientOptions {
+  let (release, environment) = release_and_environment(marker, base_release);
   sentry::ClientOptions {
     // Every crash counts; no performance tracing.
     sample_rate: 1.0,
     traces_sample_rate: 0.0,
-    release: sentry::release_name!(),
+    release: Some(release.into()),
+    environment: Some(environment.into()),
     // No panic/contexts/backtrace integrations: they read the host name and unscrubbed panics.
     default_integrations: false,
     send_default_pii: false,
@@ -179,7 +203,14 @@ macro_rules! event_text_from {
   )*};
 }
 
-event_text_from!(ScrubbedText, CodeToken, ExtractorToken, SiteToken);
+event_text_from!(
+  ScrubbedText,
+  CodeToken,
+  ExtractorToken,
+  SiteToken,
+  Token,
+  LinkText
+);
 
 struct Outgoing {
   source: &'static str,
@@ -262,6 +293,70 @@ fn failure_site(download: &DownloadContext) -> EventText {
     .map_or_else(|| EventText::from("unknown"), EventText::from)
 }
 
+/// A tag value, passed through `scrub` like every other outgoing text.
+fn tag_text(value: &str) -> EventText {
+  EventText::from(&super::redact::scrub(value, super::redact::local_names()))
+}
+
+/// Stages the engine emits (`extract::chain`); anything else is `other`, never the webview's text.
+fn known_stage(stage: &str) -> &'static str {
+  const STAGES: &[&str] = &[
+    "files",
+    "ytdlp",
+    "gallery",
+    "pagescan",
+    "reader:reddit",
+    "reader:facebook",
+    "reader:threads",
+    "reader:linkedin",
+    "reader:telegram",
+    "reader:snapchat",
+  ];
+  let stage = stage.to_ascii_lowercase();
+  STAGES
+    .iter()
+    .find(|known| **known == stage)
+    .copied()
+    .unwrap_or("other")
+}
+
+/// The yt-dlp extractors of the sites we list (`sites::SITES`), matched without case or `:`; else `other`.
+fn known_extractor(extractor: &str) -> &'static str {
+  let key: String = extractor
+    .chars()
+    .filter(char::is_ascii_alphanumeric)
+    .collect::<String>()
+    .to_ascii_lowercase();
+  crate::sites::SITES
+    .iter()
+    .flat_map(|site| site.extractors.iter())
+    .find(|known| **known == key)
+    .copied()
+    .unwrap_or("other")
+}
+
+/// Filterable tags from values the report already carries: OS family, extractor, the failing stage of the
+/// attempt trail (the last attempt with an error code, else the last one) and the link shape (never the full link).
+fn detail_tags(download: &DownloadContext) -> Vec<(&'static str, EventText)> {
+  let mut tags = vec![("os", tag_text(std::env::consts::OS))];
+  if let Some(extractor) = &download.extractor {
+    tags.push(("extractor", tag_text(known_extractor(extractor.as_str()))));
+  }
+  let stage = download
+    .attempts
+    .iter()
+    .rfind(|attempt| attempt.code.is_some())
+    .or_else(|| download.attempts.last());
+  if let Some(attempt) = stage {
+    tags.push(("stage", tag_text(known_stage(attempt.stage.as_str()))));
+  }
+  if let Some(shape) = &download.shape {
+    // Not through `scrub`: it would redact a link-shaped value, and this one is already reduced by `link_for_report`.
+    tags.push(("link_shape", EventText::from(shape)));
+  }
+  tags
+}
+
 fn failure_event(report: &Report, download: &DownloadContext) -> Outgoing {
   let code = failure_code(download);
   let site = failure_site(download);
@@ -269,9 +364,7 @@ fn failure_event(report: &Report, download: &DownloadContext) -> Outgoing {
     ("error_code", EventText::from(&code)),
     ("site", site.clone()),
   ];
-  if let Some(extractor) = &download.extractor {
-    tags.push(("extractor", EventText::from(extractor)));
-  }
+  tags.extend(detail_tags(download));
   Outgoing {
     source: "download",
     level: Level::Error,
@@ -298,12 +391,23 @@ fn frontend_event(clean: &ScrubbedText) -> Outgoing {
   }
 }
 
-fn manual_event(report: &Report, batch_id: Option<&str>) -> Outgoing {
+fn manual_event(
+  report: &Report,
+  download: Option<&DownloadContext>,
+  batch_id: Option<&str>,
+) -> Outgoing {
   // A batch id is random and per-dialog; reject arbitrary webview text at the privacy boundary.
-  let tags = batch_id
+  let mut tags = batch_id
     .and_then(|id| uuid::Uuid::parse_str(id).ok())
     .map(|id| vec![("batch_id", EventText(id.to_string()))])
     .unwrap_or_default();
+  // The same site (registrable domain) and detail tags as automatic events, so they group together.
+  if let Some(download) = download {
+    if download.site.is_some() {
+      tags.push(("site", tag_text(failure_site(download).0.as_str())));
+    }
+    tags.extend(detail_tags(download));
+  }
   Outgoing {
     source: "manual",
     level: Level::Info,
@@ -389,13 +493,14 @@ impl serde::Serialize for SendError {
 /// Waits for delivery so the UI can say it was sent.
 pub fn send_manual(
   report: &Report,
+  download: Option<&DownloadContext>,
   batch_id: Option<&str>,
   event_id: Option<&str>,
 ) -> Result<(), SendError> {
   if !configured() {
     return Err(SendError::NotConfigured);
   }
-  capture(manual_event(report, batch_id), event_id);
+  capture(manual_event(report, download, batch_id), event_id);
   let delivered = sentry::Hub::current()
     .client()
     .is_some_and(|client| client.flush(Some(Duration::from_secs(10))));
@@ -488,7 +593,7 @@ mod tests {
     assert_eq!(json["message"], "Download failed: http403 on instagram.com");
     assert_eq!(json["tags"]["error_code"], "http403");
     assert_eq!(json["tags"]["site"], "instagram.com");
-    assert_eq!(json["tags"]["extractor"], "Instagramrm-rf");
+    assert_eq!(json["tags"]["extractor"], "other");
     assert_eq!(json["tags"][SOURCE_TAG], "download");
     assert_eq!(
       json["fingerprint"],
@@ -508,24 +613,24 @@ mod tests {
       None,
       None,
     ));
-    let (single, _) = wire(manual_event(&report, None));
+    let (single, _) = wire(manual_event(&report, None, None));
     let id = uuid::Uuid::new_v4().to_string();
-    let (batch, _) = wire(manual_event(&report, Some(&id)));
+    let (batch, _) = wire(manual_event(&report, None, Some(&id)));
     assert_eq!(batch["tags"]["batch_id"], id);
     assert_eq!(batch["message"], single["message"]);
     assert_eq!(batch["fingerprint"], single["fingerprint"]);
     let event_id = uuid::Uuid::new_v4();
     let (first, _) = event(
-      manual_event(&report, Some(&id)),
+      manual_event(&report, None, Some(&id)),
       Some(&event_id.to_string()),
     );
     let (retry, _) = event(
-      manual_event(&report, Some(&id)),
+      manual_event(&report, None, Some(&id)),
       Some(&event_id.to_string()),
     );
     assert_eq!(first.event_id, event_id);
     assert_eq!(first.event_id, retry.event_id);
-    let (invalid, _) = wire(manual_event(&report, Some("/Users/private/name")));
+    let (invalid, _) = wire(manual_event(&report, None, Some("/Users/private/name")));
     assert!(invalid["tags"].get("batch_id").is_none());
   }
 
@@ -541,7 +646,7 @@ mod tests {
       )
     };
     let (report, _) = built(draft(true));
-    let (json, body) = wire(manual_event(&report, None));
+    let (json, body) = wire(manual_event(&report, None, None));
     assert_no_leaks(&json, &body);
     assert_eq!(json["message"], "Download failed: http403");
     assert_eq!(json["tags"][SOURCE_TAG], "manual");
@@ -552,12 +657,139 @@ mod tests {
     assert!(body.contains("### Recent log"), "{body}");
 
     let (report, _) = built(draft(false));
-    let (json, body) = wire(manual_event(&report, None));
+    let (json, body) = wire(manual_event(&report, None, None));
     assert_no_leaks(&json, &body);
     assert!(!body.contains("dQw4w9WgXcQ"), "{body}");
     assert!(
       body.contains("- Link: youtube.com/watch?v={id}&token={id}"),
       "{body}"
+    );
+  }
+
+  #[test]
+  fn events_carry_os_extractor_stage_and_the_link_shape_only() {
+    let row = |stage: &str, second: &str| -> DownloadContext {
+      serde_json::from_value(serde_json::json!({
+        "errorCode": "http403",
+        "attempts": [
+          { "stage": stage, "outcome": "failed", "code": "http403" },
+          { "stage": second, "outcome": "skipped" },
+        ],
+      }))
+      .expect("a row")
+    };
+    let cases = [
+      (
+        "https://bob:hunter2@www.instagram.com/reel/Cx1secret/?igsh=zzz",
+        "instagram.com/reel/{id}",
+      ),
+      (
+        "https://www.youtube.com/watch?v=Cx1secret&token=zzz",
+        "youtube.com/watch?v={id}&token={id}",
+      ),
+    ];
+    for (url, shape) in cases {
+      for include_link in [false, true] {
+        let (report, input) = built(Draft {
+          download: Some(row("ytdlp", "gallery/dl")),
+          url: Some(url.into()),
+          extractor: Some("Instagram".into()),
+          include_full_link: include_link,
+          ..Draft::default()
+        });
+        let download = input.download.as_ref().expect("the row");
+        let (json, body) = wire(failure_event(&report, download));
+        assert_eq!(json["tags"]["os"], std::env::consts::OS);
+        assert_eq!(json["tags"]["extractor"], "instagram");
+        // The failing attempt, not the later skipped one (with `/` dropped by the token).
+        assert_eq!(json["tags"]["stage"], "ytdlp");
+        assert_eq!(json["tags"]["link_shape"], shape, "{url} {include_link}");
+        let tags = json["tags"].to_string();
+        for leak in ["Cx1secret", "igsh", "bob", "hunter2", "zzz", "://"] {
+          assert!(!tags.contains(leak), "{leak} in {tags}");
+        }
+        if !include_link {
+          assert_no_leaks(&json, &body);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn stage_and_extractor_tags_never_carry_webview_text() {
+    let download: DownloadContext = serde_json::from_value(serde_json::json!({
+      "attempts": [{ "stage": "u1234567890-samira", "outcome": "failed", "code": "x" }],
+    }))
+    .expect("a row");
+    let mut download = download;
+    download.extractor = Some(ExtractorToken::new("Samira31337abc"));
+    let tags: std::collections::HashMap<_, _> = detail_tags(&download)
+      .into_iter()
+      .map(|(key, value)| (key, value.0))
+      .collect();
+    assert_eq!(tags["stage"], "other");
+    assert_eq!(tags["extractor"], "other");
+    download.extractor = Some(ExtractorToken::new("youtube:tab"));
+    download.attempts[0].stage = Token::new("Reader:Reddit");
+    let tags: std::collections::HashMap<_, _> = detail_tags(&download)
+      .into_iter()
+      .map(|(key, value)| (key, value.0))
+      .collect();
+    assert_eq!(tags["stage"], "reader:reddit");
+    assert_eq!(tags["extractor"], "youtubetab");
+  }
+
+  #[test]
+  fn client_options_use_the_release_and_environment_of_the_build() {
+    let options = client_options_for(Some("production"), "nezzel@0.1.3");
+    assert_eq!(options.release.as_deref(), Some("nezzel@0.1.3"));
+    assert_eq!(options.environment.as_deref(), Some("production"));
+    let options = client_options_for(None, "nezzel@0.1.3");
+    assert_eq!(options.release.as_deref(), Some("nezzel@0.1.3-development"));
+    assert_eq!(options.environment.as_deref(), Some("development"));
+  }
+
+  #[test]
+  fn manual_report_without_the_link_has_the_site_tag_and_no_full_link() {
+    let (report, input) = built(super::super::manual_draft(
+      None,
+      Some(failed_row()),
+      Some("https://bob:hunter2@www.youtube.com/watch?v=dQw4w9WgXcQ&token=zzz".into()),
+      Some("youtube".into()),
+      Some(false),
+    ));
+    let download = input.download.as_ref().expect("the row");
+    let (json, body) = wire(manual_event(&report, Some(download), None));
+    assert_no_leaks(&json, &body);
+    assert_eq!(json["tags"]["site"], "youtube.com");
+    assert_eq!(json["tags"]["os"], std::env::consts::OS);
+    assert_eq!(
+      json["tags"]["link_shape"],
+      "youtube.com/watch?v={id}&token={id}"
+    );
+    assert!(!json.to_string().contains("dQw4w9WgXcQ"), "{json}");
+    assert!(!body.contains("dQw4w9WgXcQ"), "{body}");
+    // A manual report of the same failure groups with the automatic one by site.
+    let (auto, _) = wire(failure_event(&report, download));
+    assert_eq!(auto["tags"]["site"], json["tags"]["site"]);
+  }
+
+  #[test]
+  fn only_the_publish_workflow_marker_reports_under_the_plain_release() {
+    let base = "nezzel@0.1.3";
+    assert_eq!(
+      release_and_environment(Some("production"), base),
+      (base.into(), "production".into())
+    );
+    for marker in [None, Some(""), Some("  ")] {
+      assert_eq!(
+        release_and_environment(marker, base),
+        ("nezzel@0.1.3-development".into(), "development".into())
+      );
+    }
+    assert_eq!(
+      release_and_environment(Some("local test/1"), base),
+      ("nezzel@0.1.3-localtest1".into(), "localtest1".into())
     );
   }
 

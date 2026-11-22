@@ -159,7 +159,35 @@ impl LoginRequest {
     };
     (diagnostic, fatal)
   }
+  /// Opt-in for the Instagram hand-off only: a row whose videos were already saved does not fail
+  /// when the sign-in for its photos does; it resumes once to finish as a partial save.
+  pub(super) fn resume_kept<R: tauri::Runtime>(&self, app: &AppHandle<R>) -> bool {
+    let Self::Download(entry) = self else {
+      return false;
+    };
+    let Some(kept) = entry.kept_carousel.as_ref() else {
+      return false;
+    };
+    if !is_group_running(&entry.group_id) {
+      return false;
+    }
+    let mut entry = entry.clone();
+    entry.kept_carousel = Some(crate::scheduling::download_pipeline::KeptCarousel {
+      login_failed: true,
+      ..kept.clone()
+    });
+    app
+      .state::<DownloadSender>()
+      .0
+      .send(DispatchRequest::Pipeline(DownloadRequest::Resume(
+        Box::new(entry),
+      )))
+      .is_ok()
+  }
   pub(super) fn fail<R: tauri::Runtime>(&self, app: &AppHandle<R>, message: &str) {
+    if self.resume_kept(app) {
+      return;
+    }
     if message.contains("timed out") || message.contains("expired") {
       let (diagnostic, fatal) = self.timeout_payloads();
       crate::events::emit(app, crate::events::MEDIA_DIAGNOSTIC, diagnostic);
@@ -307,11 +335,15 @@ pub(super) async fn expire_pending(
   deadline: impl std::future::Future<Output = ()>,
   mut emit: impl FnMut(MediaDiagnosticPayload, MediaFatalPayload),
   mut release: impl FnMut(LoginRequest),
+  mut resume_kept: impl FnMut(&LoginRequest) -> bool,
 ) {
   deadline.await;
   let pending = PENDING.lock().unwrap().remove(request_id);
   if let Some(pending) = pending {
     for row in pending.into_rows() {
+      if *row.cancel.borrow() && resume_kept(&row.request) {
+        continue;
+      }
       if *row.cancel.borrow() {
         let (diagnostic, fatal) = row.request.timeout_payloads();
         emit(diagnostic, fatal);
@@ -330,6 +362,7 @@ fn schedule_expiry(app: AppHandle, request_id: String) {
         crate::events::emit(&app, crate::events::MEDIA_FATAL, fatal);
       },
       |request| request.release(&app),
+      |request| request.resume_kept(&app),
     )
     .await;
   });
@@ -499,8 +532,15 @@ pub fn media_login_dismiss(app: AppHandle, request_id: String) -> Result<(), Str
   if CHOICES.lock().unwrap().remove(&request_id).is_some() {
     return Ok(());
   }
-  if let Some(pending) = PENDING.lock().unwrap().remove(&request_id) {
+  dismiss_pending(&app, &request_id);
+  Ok(())
+}
+pub(super) fn dismiss_pending<R: tauri::Runtime>(app: &AppHandle<R>, request_id: &str) {
+  if let Some(pending) = PENDING.lock().unwrap().remove(request_id) {
     for row in pending.into_rows() {
+      if *row.cancel.borrow() && row.request.resume_kept(app) {
+        continue;
+      }
       if *row.cancel.borrow() {
         let (mut diagnostic, mut fatal) = row.request.timeout_payloads();
         diagnostic.code = "loginConsentDeclined".into();
@@ -508,13 +548,12 @@ pub fn media_login_dismiss(app: AppHandle, request_id: String) -> Result<(), Str
         diagnostic.message = "Browser login was not used".into();
         fatal.message = diagnostic.message.clone();
         fatal.details = Some(diagnostic.code.clone());
-        crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, diagnostic);
-        crate::events::emit(&app, crate::events::MEDIA_FATAL, fatal);
+        crate::events::emit(app, crate::events::MEDIA_DIAGNOSTIC, diagnostic);
+        crate::events::emit(app, crate::events::MEDIA_FATAL, fatal);
       }
-      row.request.release(&app);
+      row.request.release(app);
     }
   }
-  Ok(())
 }
 pub(super) fn remove_pending_group(map: &mut HashMap<String, PendingLogin>, group_id: &str) {
   let tokens: Vec<_> = map

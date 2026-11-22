@@ -379,15 +379,29 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
         stopped = true;
         break;
       }
+      let mut photo_fallback = false;
       if phase == Phase::Login {
         let redirected_facebook_post = stage == StageId::Gallery
           && crate::resolve::facebook_share(original)
           && resolved_url
             .as_deref()
             .is_some_and(crate::resolve::facebook_post_target);
-        if !login_capable(stage, &attempts) && !redirected_facebook_post {
+        // A signed-in yt-dlp that reports photos only on a Facebook photo share hands over to
+        // the photo stage with the same login, even if that stage refused the anonymous link.
+        let photos_only_facebook_share = stage == StageId::Gallery
+          && crate::resolve::facebook_photo_share(original)
+          && attempts.iter().any(|a| {
+            a.stage == StageId::Ytdlp
+              && a.auth != AuthUsed::Anonymous
+              && a.code.is_some_and(|code| code.as_str() == "photosOnly")
+          });
+        if !login_capable(stage, &attempts)
+          && !redirected_facebook_post
+          && !photos_only_facebook_share
+        {
           continue;
         }
+        photo_fallback = photos_only_facebook_share;
       } else {
         let ytdlp_tried = attempts.iter().any(|a| a.stage == StageId::Ytdlp);
         if stage == StageId::Gallery {
@@ -453,6 +467,15 @@ async fn coordinate_row<T, F: Future<Output = StageResult<T>>>(
           result
         }
       };
+      // This fallback only adds media; its refusal must not replace the sign-in outcome.
+      if photo_fallback && result.media.is_none() {
+        result.attempts.retain(|a| {
+          a.outcome != Outcome::NoMedia
+            && a
+              .code
+              .is_none_or(|code| code.as_str() != "accountAccessDenied")
+        });
+      }
       // Facebook share links can look missing until a browser session resolves the redirect.
       if crate::resolve::facebook_share(original) {
         for (index, attempt) in result.attempts.iter_mut().enumerate() {
@@ -764,6 +787,26 @@ pub async fn run(
                   && crate::resolve::facebook_post_target(url))
             }) {
               gallery_entry.url = url.to_owned();
+            } else if login.as_ref().is_some_and(LoginSession::uses_cookies)
+              && crate::resolve::facebook_photo_share(&entry.url)
+            {
+              // gallery-dl cannot read a /share/p/ link: use the reader's resolution (proxy-gated,
+              // no cookies) or skip the stage.
+              match crate::resolve::resolve(&entry.url).await {
+                crate::resolve::Resolution::Passthrough(url)
+                  if crate::resolve::facebook_photo_target(&url)
+                    || crate::resolve::facebook_post_target(&url) =>
+                {
+                  gallery_entry.url = url;
+                }
+                _ => {
+                  return StageResult::new(StageId::Gallery, Confidence::Low).finish(
+                    Outcome::NoMatch,
+                    false,
+                    Instant::now(),
+                  );
+                }
+              }
             }
             crate::runners::gallery::run_gallery_info(
               app,
@@ -991,6 +1034,163 @@ mod tests {
       assert_eq!(final_code(&report.attempts), None);
     }
   }
+  const PHOTO_SHARE: &str = "https://www.facebook.com/share/p/15tZsdvxAj/";
+
+  /// Anonymous: yt-dlp signInRequired. Signed in: yt-dlp photosOnly (optionally with a redirect target).
+  /// Returns the report and the (stage, had_login) log of every stage run.
+  async fn facebook_share_photos_only_run(
+    original: &str,
+    resolved: Option<&str>,
+    gallery_media: bool,
+    gallery_code: &str,
+  ) -> (
+    ChainResult<crate::models::ParsedSingleVideo>,
+    Vec<(StageId, bool)>,
+  ) {
+    let mut signed_in = false;
+    let mut ran = Vec::new();
+    let report = coordinate(original, |step, login, _| {
+      let has_login = login.as_ref().is_some_and(LoginSession::uses_cookies);
+      let result = match step {
+        ChainStep::Login { stage, .. } => {
+          signed_in = true;
+          let mut result = StageResult::new(stage, Confidence::Medium);
+          result.login = Some(crate::runners::login::test_consented_session());
+          result
+        }
+        ChainStep::Stage(stage) => {
+          ran.push((stage, has_login));
+          match stage {
+            StageId::Ytdlp => {
+              let mut result = StageResult::new(stage, Confidence::Medium);
+              result.record_code(
+                if signed_in {
+                  "photosOnly"
+                } else {
+                  "signInRequired"
+                },
+                "",
+                signed_in,
+                Instant::now(),
+              );
+              result.resolved_url = resolved.filter(|_| signed_in).map(Into::into);
+              result.login = login;
+              result
+            }
+            StageId::Gallery if has_login && gallery_media => {
+              let mut result = StageResult::new(stage, Confidence::Medium);
+              let records = serde_json::json!([[
+                3, "https://scontent.example.fbcdn.net/1.jpg",
+                {"extension":"jpg", "category":"facebook", "num":1}
+              ]]);
+              let post = crate::parsers::gallery::parse_output(
+                0,
+                &serde_json::to_vec(&records).unwrap(),
+                b"",
+                "https://www.facebook.com/page/posts/pfbidABC",
+              )
+              .unwrap();
+              result.media = Some(post.into_media("row".into()));
+              result.finish(Outcome::Verified, true, Instant::now())
+            }
+            StageId::Gallery if has_login => {
+              let mut result = StageResult::new(stage, Confidence::Medium);
+              result.record_code(gallery_code, "", true, Instant::now());
+              result
+            }
+            StageId::Gallery => {
+              let mut result = StageResult::new(stage, Confidence::Medium);
+              result.record_code("urlNotSupported", "", false, Instant::now());
+              result
+            }
+            _ => StageResult::new(stage, Confidence::Low).finish(
+              Outcome::NoMatch,
+              false,
+              Instant::now(),
+            ),
+          }
+        }
+      };
+      std::future::ready(result)
+    })
+    .await;
+    (report, ran)
+  }
+
+  #[tokio::test]
+  async fn facebook_share_photo_signed_in_photos_only_runs_photo_stage_with_login() {
+    for resolved in [
+      None,
+      Some("https://www.facebook.com/photo/?fbid=1&set=pcb.2"),
+      Some("https://www.facebook.com/page/posts/pfbidABC"),
+    ] {
+      let (report, ran) =
+        facebook_share_photos_only_run(PHOTO_SHARE, resolved, true, "photosOnly").await;
+      assert!(
+        ran.contains(&(StageId::Gallery, true)),
+        "{resolved:?}: {ran:?}"
+      );
+      assert_eq!(report.media.unwrap().attachments.len(), 1, "{resolved:?}");
+      assert_eq!(final_code(&report.attempts), None, "{resolved:?}");
+    }
+  }
+
+  #[tokio::test]
+  async fn facebook_share_photo_signed_in_photos_only_without_photo_media_stays_sign_in() {
+    // Refusals the signed-in photo stage can return without media. A signed-in notFound404
+    // (removed post) is a real content verdict and is deliberately not forced back to sign-in.
+    for code in [
+      "photosOnly",
+      "urlNotSupported",
+      "noMediaFound",
+      "imageSourceUnavailable",
+      "imageEngineUnavailable",
+      "accountAccessDenied",
+      "unableToExtractIdOrInfo",
+      "signInRequired",
+    ] {
+      for resolved in [
+        None,
+        Some("https://www.facebook.com/photo/?fbid=1&set=pcb.2"),
+      ] {
+        let (report, ran) =
+          facebook_share_photos_only_run(PHOTO_SHARE, resolved, false, code).await;
+        assert!(report.media.is_none());
+        assert!(
+          ran.contains(&(StageId::Gallery, true)),
+          "{code} {resolved:?}: {ran:?}"
+        );
+        assert_eq!(
+          final_code(&report.attempts),
+          Some("signInRequired"),
+          "{code} {resolved:?}"
+        );
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn facebook_share_photo_branch_needs_a_real_facebook_share_p_link() {
+    // Hosts the Facebook resolver accepts (www/m/web/... and xx-xx. locale subdomains) count.
+    for (original, branch) in [
+      (PHOTO_SHARE, true),
+      ("https://m.facebook.com/share/p/15tZsdvxAj/", true),
+      ("https://evil.facebook.com/share/p/15tZsdvxAj/", false),
+      (
+        "https://facebook.com.evil.example/share/p/15tZsdvxAj/",
+        false,
+      ),
+      ("https://www.facebook.com/share/v/15tZsdvxAj/", false),
+    ] {
+      let (_, ran) = facebook_share_photos_only_run(original, None, false, "photosOnly").await;
+      assert_eq!(
+        ran.contains(&(StageId::Gallery, true)),
+        branch,
+        "{original}: {ran:?}"
+      );
+    }
+  }
+
   #[tokio::test]
   async fn facebook_share_404_stays_missing_when_login_does_not_run() {
     let report = coordinate::<(), _>("https://www.facebook.com/share/p/abc/", |step, _, _| {

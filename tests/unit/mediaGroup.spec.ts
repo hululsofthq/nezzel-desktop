@@ -134,6 +134,37 @@ describe('media group store', () => {
     expect(itemIdsInOrder).toEqual(['b', 'c']);
   });
 
+  it('gives each split child its own preview, else its entry preview, else the post one', () => {
+    const store = useMediaGroupStore();
+    const group: Group = {
+      id: 'g-thumbs', url: 'g-thumbs', total: 3, processed: 3, errored: 0, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0,
+      items: {
+        a: {
+          ...createItem('a'), thumbnail: 'https://cdn.example/post.jpg',
+          entries: [
+            { videoUrl: 'b', index: 0, thumbnail: 'https://cdn.example/entry-b.jpg' },
+            { videoUrl: 'c', index: 1, thumbnail: 'https://cdn.example/entry-c.jpg' },
+            { videoUrl: 'd', index: 2 },
+          ],
+        },
+        b: createItem('b'),
+        c: createItem('c', { thumbnail: 'https://cdn.example/own-c.jpg' }),
+        d: createItem('d'),
+      },
+    };
+
+    store.createGroup(group);
+    const result = store.splitGroup(group);
+
+    expect(result.map(g => g.thumbnail)).toEqual([
+      'https://cdn.example/entry-b.jpg',
+      'https://cdn.example/own-c.jpg',
+      'https://cdn.example/post.jpg',
+    ]);
+    expect(Object.values(result[0].items)[0].thumbnail).toBe('https://cdn.example/entry-b.jpg');
+  });
+
   it('puts items without matching entry at the end', () => {
     const store = useMediaGroupStore();
     const group: Group = {

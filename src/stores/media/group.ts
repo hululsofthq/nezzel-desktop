@@ -91,6 +91,8 @@ export const useMediaGroupStore = defineStore('media-group', () => {
 
       const entry = entriesByUrl.get(item.url)?.shift();
       const meta = omit(item, ['id', 'groupId', 'isLeader']);
+      // Own preview first, then the one the listing carried for this entry, then the post's.
+      const thumbnail = item.thumbnail || entry?.thumbnail || leader?.thumbnail;
 
       const newGroup: Group = {
         id: uuidv4(),
@@ -99,8 +101,9 @@ export const useMediaGroupStore = defineStore('media-group', () => {
         errored: 0,
         isCombined: false,
         ...meta,
+        ...(thumbnail ? { thumbnail } : {}),
         items: {
-          [itemKey]: { ...item, isLeader: true },
+          [itemKey]: { ...item, ...(thumbnail ? { thumbnail } : {}), isLeader: true },
         },
       };
 

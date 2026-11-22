@@ -99,6 +99,9 @@ impl automatic::LoginRuntime for tauri::test::MockRuntime {
 struct AutomaticFixture {
   app: tauri::App<tauri::test::MockRuntime>,
   queued: tokio::sync::mpsc::UnboundedReceiver<DispatchRequest<FetchRequest>>,
+  downloads: tokio::sync::mpsc::UnboundedReceiver<
+    DispatchRequest<crate::scheduling::download_pipeline::DownloadRequest>,
+  >,
   group: String,
   url: String,
 }
@@ -109,7 +112,8 @@ impl AutomaticFixture {
     let app = tauri::test::mock_app();
     let (tx, queued) = tokio::sync::mpsc::unbounded_channel();
     app.manage(FetchSender(tx));
-    app.manage(DownloadSender(tokio::sync::mpsc::unbounded_channel().0));
+    let (download_tx, downloads) = tokio::sync::mpsc::unbounded_channel();
+    app.manage(DownloadSender(download_tx));
     app.manage(AutomaticIo {
       candidates: candidates.to_vec(),
       ..Default::default()
@@ -117,6 +121,7 @@ impl AutomaticFixture {
     Self {
       app,
       queued,
+      downloads,
       url: format!("https://{group}.test/private"),
       group,
     }
@@ -274,6 +279,175 @@ async fn automatic_schedule_browser_error_allows_later_row_to_try_next_source() 
     *fixture.app.state::<AutomaticIo>().exports.lock().unwrap(),
     ["firefox:first", "chrome:second"]
   );
+}
+
+#[tokio::test]
+async fn instagram_handoff_with_saved_items_finishes_partially_when_automatic_login_fails() {
+  use crate::scheduling::download_pipeline::{DownloadRequest, KeptCarousel};
+  let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  *fixture
+    .app
+    .state::<AutomaticIo>()
+    .browser_error_once
+    .lock()
+    .unwrap() = Some("browserCookiesUnreadable");
+  let item = serde_json::from_value(serde_json::json!({
+    "id":"post","url":fixture.url,"format":{"trackType":"both"},"fetchEngine":"gallery","templateContext":{"values":{}}
+  }))
+  .unwrap();
+  let mut entry = DownloadEntry::from((item, fixture.group.clone()));
+  // Another site's download (no saved items) keeps today's failure: no resume is queued.
+  assert!(!LoginRequest::Download(entry.clone()).resume_kept(fixture.app.handle()));
+  assert!(!LoginRequest::Fetch(FetchEntry {
+    group_id: fixture.group.clone(),
+    ..match pending(&fixture.group).request {
+      LoginRequest::Fetch(entry) => entry,
+      LoginRequest::Download(_) => unreachable!(),
+    }
+  })
+  .resume_kept(fixture.app.handle()));
+  assert!(fixture.downloads.try_recv().is_err());
+  let kept = KeptCarousel {
+    count: 4,
+    positions: vec![1],
+    login_failed: false,
+  };
+  entry.kept_carousel = Some(kept.clone());
+  // Either outcome ends the wait: a resume, or the plain failure (MEDIA_FATAL) a regression emits.
+  let (failed_tx, failed) = tokio::sync::oneshot::channel();
+  let failed_tx = Mutex::new(Some(failed_tx));
+  tauri::Listener::listen(&fixture.app, crate::events::MEDIA_FATAL, move |_| {
+    if let Some(tx) = failed_tx.lock().unwrap().take() {
+      let _ = tx.send(());
+    }
+  });
+  // No login-exhausted prompt or login failure diagnostic may show before the partial finish.
+  let shown = std::sync::Arc::new(Mutex::new(Vec::new()));
+  for name in [
+    crate::events::MEDIA_LOGIN_NEEDED,
+    crate::events::MEDIA_DIAGNOSTIC,
+  ] {
+    let shown = shown.clone();
+    tauri::Listener::listen(&fixture.app, name, move |_| {
+      shown.lock().unwrap().push(name)
+    });
+  }
+  let failure = crate::models::error::DiagnosticEvent {
+    id: "post".into(),
+    group_id: fixture.group.clone(),
+    level: DiagnosticLevel::Error,
+    code: "signInRequired".into(),
+    component: Some("gallery-dl".into()),
+    message: String::new(),
+    raw: String::new(),
+    timestamp: 0,
+  };
+  assert_eq!(
+    automatic::schedule(
+      fixture.app.handle(),
+      LoginRequest::Download(entry),
+      false,
+      Some(failure)
+    ),
+    RetryAction::Pending
+  );
+  // The failed browser read does not fail the row: it comes back once to finish with the video.
+  // The bound is only reached by a regression that emits neither outcome; a pass never waits on it.
+  let resumed = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+    tokio::select! {
+      request = fixture.downloads.recv() => request,
+      _ = failed => panic!("a row with saved videos ended as a failure"),
+    }
+  })
+  .await
+  .expect("the automatic login neither resumed nor failed the row");
+  assert_eq!(*shown.lock().unwrap(), Vec::<&str>::new());
+  let Some(DispatchRequest::Pipeline(DownloadRequest::Resume(resumed))) = resumed else {
+    panic!("expected the saved items to finish the row");
+  };
+  assert_eq!(
+    resumed.kept_carousel,
+    Some(KeptCarousel {
+      login_failed: true,
+      ..kept
+    })
+  );
+  assert_eq!(resumed.login_browser, None);
+}
+
+#[tokio::test]
+async fn instagram_handoff_rows_resume_instead_of_failing_on_every_login_end() {
+  use crate::scheduling::download_pipeline::{DownloadRequest, KeptCarousel};
+  let group = uuid::Uuid::new_v4().to_string();
+  crate::scheduling::group_state::ensure_group_running(&group);
+  let app = tauri::test::mock_app();
+  let (download_tx, mut downloads) = tokio::sync::mpsc::unbounded_channel();
+  app.manage(DownloadSender(download_tx));
+  app.manage(FetchSender(tokio::sync::mpsc::unbounded_channel().0));
+  let fatals = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  let counter = fatals.clone();
+  tauri::Listener::listen(&app, crate::events::MEDIA_FATAL, move |_| {
+    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+  });
+  let row = |kept: bool| {
+    let item = serde_json::from_value(serde_json::json!({
+      "id":"post","url":"https://www.instagram.com/p/abc/","format":{"trackType":"both"},"fetchEngine":"gallery","templateContext":{"values":{}}
+    }))
+    .unwrap();
+    let mut entry = DownloadEntry::from((item, group.clone()));
+    entry.kept_carousel = kept.then(|| KeptCarousel {
+      count: 4,
+      positions: vec![2],
+      login_failed: false,
+    });
+    LoginRequest::Download(entry)
+  };
+  let park = |request: LoginRequest| {
+    let token = uuid::Uuid::new_v4().to_string();
+    let mut parked = pending(&group);
+    parked.request = request;
+    PENDING.lock().unwrap().insert(token.clone(), parked);
+    token
+  };
+  let fatal_count = || fatals.load(std::sync::atomic::Ordering::SeqCst);
+  let mut resumed = || match downloads.try_recv() {
+    Ok(DispatchRequest::Pipeline(DownloadRequest::Resume(entry))) => {
+      entry.kept_carousel.is_some_and(|kept| kept.login_failed)
+    }
+    _ => false,
+  };
+  // fail(): timeouts, expiries and the automatic login end here.
+  row(true).fail(app.handle(), "Browser login could not be used");
+  assert!(resumed());
+  assert_eq!(fatal_count(), 0);
+  row(false).fail(app.handle(), "Browser login could not be used");
+  assert!(!resumed());
+  assert_eq!(fatal_count(), 1);
+  // The user dismisses the sign-in request.
+  dismiss_pending(app.handle(), &park(row(true)));
+  assert!(resumed());
+  assert_eq!(fatal_count(), 1);
+  dismiss_pending(app.handle(), &park(row(false)));
+  assert!(!resumed());
+  assert_eq!(fatal_count(), 2);
+  // The consent request expires.
+  for (kept, fatals_after) in [(true, 2), (false, 3)] {
+    let token = park(row(kept));
+    expire_pending(
+      &token,
+      std::future::ready(()),
+      |diagnostic, fatal| {
+        crate::events::emit(app.handle(), crate::events::MEDIA_DIAGNOSTIC, diagnostic);
+        crate::events::emit(app.handle(), crate::events::MEDIA_FATAL, fatal);
+      },
+      |request| request.release(app.handle()),
+      |request| request.resume_kept(app.handle()),
+    )
+    .await;
+    assert_eq!(resumed(), kept);
+    assert_eq!(fatal_count(), fatals_after);
+  }
+  crate::scheduling::group_state::remove_group(&group);
 }
 
 #[tokio::test]
@@ -1564,6 +1738,7 @@ async fn unanswered_login_emits_terminal_failure_and_releases_its_request() {
       fatals.push(event);
     },
     |request| released.push(request.ids().1.to_owned()),
+    |_| false,
   )
   .await;
   assert_eq!(fatals.len(), 2);
@@ -1580,6 +1755,7 @@ async fn unanswered_login_emits_terminal_failure_and_releases_its_request() {
     std::future::ready(()),
     |_, _| panic!("duplicate fatal"),
     |_| panic!("duplicate release"),
+    |_| panic!("duplicate resume"),
   )
   .await;
   crate::scheduling::group_state::remove_group(&group);
@@ -1831,6 +2007,7 @@ async fn cancelling_a_group_invalidates_its_pending_login() {
     std::future::ready(()),
     |_, _| panic!("fatal after cancel"),
     |_| panic!("duplicate cleanup"),
+    |_| panic!("resume after cancel"),
   )
   .await;
   crate::scheduling::group_state::remove_group(&group);

@@ -469,6 +469,7 @@
         "label": "Organiser les téléchargements par",
         "exampleLabel": "Exemple de sortie",
         "options": {
+          "group": "Un dossier par playlist ou album",
           "none": "Aucun sous-dossier",
           "playlist": "Playlist",
           "channel": "Chaîne",
@@ -478,6 +479,7 @@
           "custom": "Personnalisé"
         },
         "examples": {
+          "group": "Ma playlist/ (à partir de 2 fichiers)",
           "playlist": "Ma playlist/",
           "channel": "MaChaîne/",
           "channelPlaylist": "MaChaîne/Ma playlist/",

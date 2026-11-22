@@ -16,6 +16,9 @@ pub enum NetworkScope {
   StageLocal,
 }
 
+/// Internal attempt code for gallery-dl's shared API key limit; never shown to the user.
+pub(crate) const SHARED_API_LIMIT: &str = "sharedApiLimit";
+
 /// Typed causes allow exhaustive stop rules independent of diagnostic wording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -116,6 +119,8 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "signInRequiredForBotDetection" => (Outcome::Login, "signInRequiredForBotDetection"),
     "ageRestricted" => (Outcome::AgeRestricted, "ageRestricted"),
     "rateLimited429" => (Outcome::RateLimited, "rateLimited429"),
+    // Ranks below a page refusal in precedence; reported as rateLimited429.
+    SHARED_API_LIMIT => (Outcome::RateLimited, SHARED_API_LIMIT),
     "accessForbidden403" => {
       let waf = ["cloudflare", "blocked by network security", "waf challenge"]
         .iter()

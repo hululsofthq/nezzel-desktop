@@ -98,6 +98,7 @@ pub(crate) fn error_diagnostic(
     GalleryError::NetworkDown => "networkNameResolutionFailed",
     GalleryError::Unavailable => "imageEngineUnavailable",
     GalleryError::Refused(FETCH_TIMEOUT) => FETCH_TIMEOUT,
+    GalleryError::Refused("sharedApiLimit") => "rateLimited429",
     GalleryError::Refused(code) => code,
     GalleryError::Unsupported => "urlNotSupported",
     _ => "imageSourceUnavailable",
@@ -294,6 +295,14 @@ pub(super) async fn gallery_info_attempts(
         if error == GalleryError::NetworkDown {
           stage.record_code(
             "networkNameResolutionFailed",
+            "",
+            login.has_session,
+            attempt_start,
+          );
+        } else if error.is_shared_api_limit() {
+          // The chain ranks this below a page refusal; the event above stays rateLimited429.
+          stage.record_code(
+            crate::extract::outcome::SHARED_API_LIMIT,
             "",
             login.has_session,
             attempt_start,

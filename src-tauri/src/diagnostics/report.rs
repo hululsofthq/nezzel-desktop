@@ -100,6 +100,9 @@ pub struct DownloadContext {
   pub site: Option<SiteToken>,
   #[serde(skip_deserializing)]
   pub link: Option<LinkText>,
+  /// Always the reduced shape (`site/route/{id}`), even when `link` is the full link; feeds the event tag.
+  #[serde(skip_deserializing)]
+  pub shape: Option<LinkText>,
   #[serde(skip_deserializing)]
   pub extractor: Option<ExtractorToken>,
   pub exit_code: Option<i32>,

@@ -142,6 +142,12 @@ pub(crate) async fn execute_with_started(
   execute_monitored(path, args, cancel, deadline, None, started, || {}).await
 }
 
+/// Past the soft deadline a transfer survives only while bytes keep arriving (the hard cap is
+/// enforced separately by `wait_until`).
+fn soft_deadline_passed(elapsed: Duration, last_growth: Duration, soft: Duration) -> bool {
+  elapsed >= soft && elapsed.saturating_sub(last_growth) >= Duration::from_secs(60)
+}
+
 pub(crate) async fn execute_monitored(
   path: &Path,
   args: &[String],
@@ -185,12 +191,15 @@ pub(crate) async fn execute_monitored(
       async { err_task.await.map_err(|_| GalleryError::Invalid)? },
     )
   };
-  let deadline = tokio::time::Instant::now()
-    + if staging.is_some() {
-      deadline.max(Duration::from_secs(300))
-    } else {
-      deadline
-    };
+  // Image transfers: `soft` ends the run only when no bytes arrived lately; `hard` always does.
+  let soft = if staging.is_some() {
+    deadline.max(Duration::from_secs(300))
+  } else {
+    deadline
+  };
+  let hard = if staging.is_some() { soft * 2 } else { soft };
+  let deadline = tokio::time::Instant::now() + hard;
+  let mut last_growth = start.elapsed();
   let guarded = wait_until(run, deadline, &mut cancel);
   tokio::pin!(guarded);
   let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -198,7 +207,8 @@ pub(crate) async fn execute_monitored(
     tokio::select! {
       result = &mut guarded => break result,
       _ = tick.tick(), if staging.is_some() => {
-        if let Some(bytes) = staging.and_then(crate::runners::reliability::partial_bytes) { if watchdog.observe_file_bytes(bytes, start.elapsed()) { progressed(); } }
+        if let Some(bytes) = staging.and_then(crate::runners::reliability::partial_bytes) { if watchdog.observe_file_bytes(bytes, start.elapsed()) { last_growth = start.elapsed(); progressed(); } }
+        if soft_deadline_passed(start.elapsed(), last_growth, soft) { return Err(GalleryError::Refused("imageSourceUnavailable")); }
         if watchdog.extraction_expired(start.elapsed()) { return Err(GalleryError::Refused("imageSourceUnavailable")); }
         if watchdog.stalled(start.elapsed()) { return Err(GalleryError::Refused("downloadStalled")); }
       }
@@ -370,6 +380,16 @@ pub(crate) async fn execute_listing(
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn soft_deadline_extends_only_while_bytes_arrive() {
+    use super::soft_deadline_passed as passed;
+    use std::time::Duration as D;
+    let soft = D::from_secs(300);
+    assert!(!passed(D::from_secs(299), D::ZERO, soft));
+    assert!(!passed(D::from_secs(400), D::from_secs(380), soft));
+    assert!(passed(D::from_secs(400), D::from_secs(339), soft));
+  }
+
   use super::*;
 
   /// Recorded gallery-dl 1.31 output for a deleted Facebook album listing (jsonl mode):

@@ -178,7 +178,86 @@ async fn read_image<T: http::Transport>(source: &str, target: Url, transport: &T
   .await
 }
 
+/// One read's verdict for `nezzel.log` (#68): why the reader handed the link on or what it found.
+/// Only the link's shape (`diagnostics::link_for_report`), never the link, page text or cookies.
+pub(super) struct ReadLog {
+  pub(super) link: String,
+  started: std::time::Instant,
+  /// The last step reached; still "interrupted" when a caller's timeout drops the read.
+  pub(super) verdict: &'static str,
+  pub(super) status: Option<u16>,
+  pub(super) redirects: u8,
+  pub(super) challenge_answered: bool,
+  bytes: usize,
+  post_element: bool,
+}
+impl ReadLog {
+  pub(super) fn new(raw: &str) -> Self {
+    Self {
+      link: crate::diagnostics::link::link_for_report(raw, false)
+        .map_or_else(|| "reddit".into(), |report| report.link.to_string()),
+      started: std::time::Instant::now(),
+      verdict: "interrupted",
+      status: None,
+      redirects: 0,
+      challenge_answered: false,
+      bytes: 0,
+      post_element: false,
+    }
+  }
+}
+impl Drop for ReadLog {
+  fn drop(&mut self) {
+    tracing::info!(
+      link = %self.link,
+      verdict = self.verdict,
+      status = self.status.unwrap_or(0),
+      redirects = self.redirects,
+      challenge_answered = self.challenge_answered,
+      bytes = self.bytes,
+      post_element = self.post_element,
+      ms = self.started.elapsed().as_millis() as u64,
+      "Reddit reader"
+    );
+  }
+}
+
+/// A Reddit link whose shape no reader claims goes straight to yt-dlp: say so in the log.
+pub(super) fn log_skipped(raw: &str) -> bool {
+  let reddit = Url::parse(raw)
+    .ok()
+    .and_then(|url| url.host_str().map(is_host))
+    .unwrap_or(false);
+  if reddit {
+    let mut log = ReadLog::new(raw);
+    log.verdict = "skippedLinkShape";
+  }
+  reddit
+}
+
 pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdict {
+  // Logged on drop, so a read cut off by the resolve timeout still leaves its line.
+  let mut log = ReadLog::new(raw);
+  let verdict = read_logged(raw, transport, &mut log).await;
+  if log.verdict == "interrupted" {
+    log.verdict = match &verdict {
+      Verdict::Verified(Resolution::Attachments { .. }) => "media",
+      Verdict::Verified(Resolution::PostMedia { .. }) => "videoOrLink",
+      Verdict::Verified(Resolution::Unsupported { .. }) => "noMedia",
+      Verdict::Verified(_) => "handedOn",
+      Verdict::Unknown => "mediaRefused",
+      Verdict::NoMatch => "skippedLinkShape",
+      Verdict::Failed(_) => "failed",
+    };
+  }
+  verdict
+}
+
+pub(super) async fn read_logged<T: http::Transport>(
+  raw: &str,
+  transport: &T,
+  log: &mut ReadLog,
+) -> Verdict {
   if let Some(target) = media_target(raw) {
     return read_image(raw, target, transport).await;
   }
@@ -193,21 +272,35 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
   let mut answered: Option<String> = None;
   loop {
     if !seen.insert(url.to_string()) {
+      log.verdict = "redirectLoop";
       break;
     }
-    let Ok(response) = transport.get(&url, PAGE_CAP).await else {
-      break;
+    let response = match transport.get(&url, PAGE_CAP).await {
+      Ok(response) => response,
+      Err(error) => {
+        log.verdict = match error {
+          http::FetchError::Address => "addressRefused",
+          http::FetchError::Encoding => "encodedBody",
+          http::FetchError::BodyLimit => "bodyCap",
+          _ => "networkError",
+        };
+        break;
+      }
     };
+    log.status = Some(response.status);
     if [301, 302, 303, 307, 308].contains(&response.status) {
       if redirects >= 3 {
+        log.verdict = "redirectLimit";
         break;
       }
       let Some(next) = response.location.as_deref().and_then(|v| url.join(v).ok()) else {
+        log.verdict = "redirectRefused";
         break;
       };
       if let Some(target) = media_target(next.as_str()) {
         return read_image(next.as_str(), target, transport).await;
       }
+      log.verdict = "redirectRefused";
       let Some(identity) = Identity::parse(next.as_str()) else {
         break;
       };
@@ -227,25 +320,34 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
       url = next;
       url.set_query(None);
       redirects += 1;
+      log.redirects = redirects;
+      log.verdict = "interrupted";
       continue;
     }
+    log.bytes = response.body.len();
     if response.status != 200 || response.body.len() > PAGE_CAP {
+      log.verdict = "status";
       break;
     }
     let Ok(body) = std::str::from_utf8(&response.body) else {
+      log.verdict = "bodyNotText";
       break;
     };
+    log.post_element = body.contains("<shreddit-post");
     if answered.as_deref() != Some(url.path()) {
       if let Some(answer) = challenge(body, &url) {
         answered = Some(url.path().to_owned());
+        log.challenge_answered = true;
         url = answer;
         continue;
       }
     }
     let Some(identity) = Identity::parse(url.as_str()) else {
+      log.verdict = "notPostPage";
       break;
     };
     let Some(id) = identity.post_id else {
+      log.verdict = "notPostPage";
       break;
     };
     if let Some(result) = parse(body, &id, requested.video_id.as_deref()) {
@@ -301,7 +403,16 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
         }
       };
     }
+    // A challenge page that was not answered, or a page variant `parse` does not know.
+    log.verdict = if body.contains("jsc_token") {
+      "challengeUnanswered"
+    } else {
+      "parseNone"
+    };
     break;
+  }
+  if log.verdict == "interrupted" {
+    log.verdict = "mediaRefused";
   }
   Verdict::Verified(Resolution::Passthrough(fallback))
 }

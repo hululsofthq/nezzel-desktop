@@ -362,6 +362,8 @@ pub(super) fn schedule<R: LoginRuntime>(
               .fail(&app, "Browser login retry could not be queued");
           }
         }
+        // Instagram hand-off with saved items: no login failure is shown, the row finishes partially.
+        _ if row.request.resume_kept(&app) => {}
         _ => {
           let (id, group) = row.request.ids();
           crate::events::emit(

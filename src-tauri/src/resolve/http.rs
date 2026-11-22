@@ -271,6 +271,10 @@ pub(crate) fn append(body: &mut Vec<u8>, chunk: &[u8], cap: usize) -> Result<(),
 
 /// Page reads go to port 443 only and only to public addresses.
 pub(crate) async fn addresses(url: &Url) -> Result<Vec<SocketAddr>, FetchError> {
+  // The one lookup in resolve/: with a proxy on, nothing resolves or connects directly.
+  if net::proxied() {
+    return Err(FetchError::Network);
+  }
   let host = net::host(url).ok_or(FetchError::InvalidUrl)?;
   net::admit(host, 443, net::public_address)
     .await
@@ -623,6 +627,31 @@ mod tests {
         .collect();
       assert_eq!(ports, [443], "{url}");
     }
+  }
+
+  // With the user's proxy on, no reader request is made at all (refused before any lookup or
+  // connect: a loopback literal answers Network, not the Address refusal it gets otherwise).
+  #[tokio::test]
+  async fn page_reads_never_go_direct_when_the_proxy_is_on() {
+    let url = Url::parse("https://127.0.0.1/").unwrap();
+    assert_eq!(
+      PublicHttp.get(&url, 1024).await.err(),
+      Some(FetchError::Address)
+    );
+    let _proxied = crate::net::ProxiedGuard::on();
+    assert_eq!(
+      PublicHttp.get(&url, 1024).await.err(),
+      Some(FetchError::Network)
+    );
+    assert_eq!(PublicHttp.head(&url).await.err(), Some(FetchError::Network));
+    assert_eq!(PublicHttp.admit_media(&url).await, Err(FetchError::Network));
+    assert!(crate::resolve::generic_scan("https://127.0.0.1/")
+      .await
+      .is_none());
+    assert!(matches!(
+      crate::resolve::resolve("https://www.reddit.com/r/a/comments/b/c/").await,
+      crate::resolve::Resolution::Passthrough(_)
+    ));
   }
 
   // DNS rebinding: the client connects to the admitted answer and never looks the host up again

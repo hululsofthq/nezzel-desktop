@@ -629,3 +629,84 @@ fn reddit_media_redirect_is_recovered_from_ytdlp_errors_only_for_reddit_sources(
     None
   );
 }
+
+/// #68: the installed app logged nothing when the reader handed a post on to yt-dlp. The line is
+/// written on drop (`ReadLog`); these are its fields.
+#[tokio::test]
+async fn reddit_reader_records_its_verdict_with_the_link_shape_only() {
+  use std::sync::Mutex;
+  struct Hanging;
+  impl http::Transport for Hanging {
+    async fn get(&self, _: &reqwest::Url, _: usize) -> Result<http::Response, http::FetchError> {
+      std::future::pending().await
+    }
+  }
+  const CHALLENGE: &str = r#"<form method="get" action="/r/test/comments/abc123/title/"><input name="jsc_token" value="token"><input name="solution" value=""></form><script>const x=await(async e=>e+f)("abcdef12")</script>"#;
+  let permalink = "https://www.reddit.com/r/test/comments/abc123/title/";
+  let lightbox = "https://www.reddit.com/r/test/comments/abc123/title/#lightbox";
+  let share = "https://www.reddit.com/u/someone/s/Share123";
+  let cases = [
+    (
+      lightbox,
+      vec![(permalink, reply(200, None, b"<html>another layout</html>"))],
+      ("parseNone", Some(200), 0, false),
+    ),
+    (
+      lightbox,
+      vec![(permalink, reply(200, None, CHALLENGE.as_bytes()))],
+      ("challengeUnanswered", Some(200), 0, false),
+    ),
+    (
+      share,
+      vec![
+        (
+          "https://www.reddit.com/u/someone/s/Share123/",
+          reply(301, Some(permalink), b""),
+        ),
+        (permalink, reply(403, None, b"")),
+      ],
+      ("status", Some(403), 1, false),
+    ),
+  ];
+  for (source, replies, expected) in cases {
+    let transport = FakeTransport(Mutex::new(replies.into()));
+    let mut log = crate::resolve::reddit::ReadLog::new(source);
+    let verdict = crate::resolve::reddit::read_logged(source, &transport, &mut log).await;
+    assert!(matches!(
+      verdict,
+      Verdict::Verified(Resolution::Passthrough(_))
+    ));
+    assert_eq!(
+      (
+        log.verdict,
+        log.status,
+        log.redirects,
+        log.challenge_answered
+      ),
+      expected,
+      "{source}"
+    );
+    for private in ["abc123", "title", "someone", "Share123", "lightbox"] {
+      assert!(!log.link.contains(private), "{source}: {}", log.link);
+    }
+  }
+  assert_eq!(
+    crate::resolve::reddit::ReadLog::new(lightbox).link,
+    "reddit.com/r/{id}/comments/{id}/{id}"
+  );
+  // A read the resolve timeout drops is logged as interrupted, not lost.
+  let mut log = crate::resolve::reddit::ReadLog::new(lightbox);
+  let limited = tokio::time::timeout(
+    std::time::Duration::from_millis(20),
+    crate::resolve::reddit::read_logged(lightbox, &Hanging, &mut log),
+  )
+  .await;
+  assert!(limited.is_err());
+  assert_eq!((log.verdict, log.status), ("interrupted", None));
+  assert!(crate::resolve::reddit::log_skipped(
+    "https://www.reddit.com/r/test/"
+  ));
+  assert!(!crate::resolve::reddit::log_skipped(
+    "https://example.com/r/test/"
+  ));
+}

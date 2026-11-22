@@ -466,6 +466,7 @@
         "label": "Organise downloads by",
         "exampleLabel": "Example output",
         "options": {
+          "group": "One folder per playlist or album",
           "none": "No subfolders",
           "playlist": "Playlist",
           "channel": "Channel",
@@ -475,6 +476,7 @@
           "custom": "Custom"
         },
         "examples": {
+          "group": "My Playlist/ (only for 2 or more files)",
           "playlist": "My Playlist/",
           "channel": "MyChannel/",
           "channelPlaylist": "MyChannel/My Playlist/",

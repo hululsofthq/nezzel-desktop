@@ -63,6 +63,31 @@ mod tests {
   }
 
   #[test]
+  fn folder_layout_keeps_what_was_chosen_and_defaults_to_one_folder_per_group() {
+    let layout = |raw: Value| {
+      Preferences::materialize(&raw)
+        .unwrap()
+        .paths
+        .video_directory_template
+    };
+    // Never set, or saved empty before the default changed: the engine reads "" as one folder per group.
+    assert_eq!(layout(json!({})), "");
+    assert_eq!(
+      layout(json!({ "paths": { "videoDirectoryTemplate": "" } })),
+      ""
+    );
+    // A chosen layout, including "No subfolders", is kept as saved.
+    assert_eq!(
+      layout(json!({ "paths": { "videoDirectoryTemplate": "%(uploader)s" } })),
+      "%(uploader)s"
+    );
+    assert_eq!(
+      layout(json!({ "paths": { "videoDirectoryTemplate": "." } })),
+      "."
+    );
+  }
+
+  #[test]
   fn close_note_is_recorded_once_after_display_and_survives_reload() {
     for (initial, displayed, should_save) in [
       (false, false, false),

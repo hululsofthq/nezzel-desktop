@@ -70,7 +70,18 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
       && attempt.confidence == Confidence::High
       && attempt.outcome == Outcome::NoMedia
   });
+  // gallery-dl's shared API key limit is a weaker explanation than a page refusal.
+  let page_refused = attempts
+    .iter()
+    .any(|attempt| matches!(attempt.outcome, Outcome::Forbidden | Outcome::Blocked));
   for attempt in attempts {
+    if page_refused
+      && attempt
+        .code
+        .is_some_and(|code| code.as_str() == SHARED_API_LIMIT)
+    {
+      continue;
+    }
     if network_blocked && attempt.outcome == Outcome::Login {
       continue;
     }
@@ -188,6 +199,13 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     } else {
       attempt.code.map(DiagnosticCode::as_str)
     };
+    let code = code.map(|code| {
+      if code == SHARED_API_LIMIT {
+        "rateLimited429"
+      } else {
+        code
+      }
+    });
     if let (Some(rank), Some(code)) = (rank, code) {
       let replace = match best {
         None => true,
@@ -275,6 +293,45 @@ mod tests {
       classify(code, "", NetworkScope::PageHost),
       0,
     )
+  }
+
+  fn gallery(code: &str, message: &str) -> Attempt {
+    Attempt::failed(
+      StageId::Gallery,
+      AuthUsed::Anonymous,
+      Confidence::High,
+      classify(code, message, NetworkScope::StageLocal),
+      0,
+    )
+  }
+
+  #[test]
+  fn shared_key_limit_yields_to_a_page_refusal_but_real_429s_do_not() {
+    let shared = || gallery(SHARED_API_LIMIT, "");
+    // (1) yt-dlp 403 + gallery shared-key limit: the 403 is the cause, in either order.
+    assert_eq!(
+      final_code(&[failed("accessForbidden403"), shared()]),
+      Some("accessForbidden403")
+    );
+    assert_eq!(
+      final_code(&[shared(), failed("accessForbidden403")]),
+      Some("accessForbidden403")
+    );
+    // (2) shared-key limit alone is still a wait message.
+    assert_eq!(final_code(&[shared()]), Some("rateLimited429"));
+    // (3) yt-dlp 403 + a real gallery 429 keeps today's result: the 429 outranks the 403.
+    assert_eq!(
+      final_code(&[
+        failed("accessForbidden403"),
+        gallery("rateLimited429", "HTTP Error 429: Too Many Requests")
+      ]),
+      Some("rateLimited429")
+    );
+    // (4) a plain 429 alone.
+    assert_eq!(
+      final_code(&[failed("rateLimited429")]),
+      Some("rateLimited429")
+    );
   }
 
   #[test]

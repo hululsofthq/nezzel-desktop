@@ -656,6 +656,15 @@ fn finish_photo_fetch(
     }
     Err(error) => error,
   };
+  if error.is_shared_api_limit() {
+    gallery.record_code(
+      crate::extract::outcome::SHARED_API_LIMIT,
+      "",
+      has_cookies,
+      start,
+    );
+    return gallery;
+  }
   gallery.record_diagnostics(
     &[crate::runners::gallery::error_diagnostic(
       group_id,

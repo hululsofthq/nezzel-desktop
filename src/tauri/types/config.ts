@@ -94,6 +94,7 @@ export enum FormatPreset {
 }
 
 export enum DirectoryPreset {
+  Group = 'group',
   None = 'none',
   Playlist = 'playlist',
   Channel = 'channel',

@@ -33,6 +33,7 @@ import { defaultDownloadOptions } from '../../helpers/quickChoice';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import type { CaptureChoice } from '@/generated/contract';
 import { countUsage } from '../../tauri/usage';
+import { groupFolderValues, type GroupFolderInput } from '../../helpers/groupFolder.ts';
 import { settingsToInputFilterOverride } from '../../helpers/inputFilters.ts';
 import {
   applyPlaylistSelectionToEntries,
@@ -908,6 +909,7 @@ export const useMediaStore = defineStore('media', () => {
           templateContext: {
             values: {
               ...buildTemplateContext(item, group, overrides),
+              ...groupFolderValues(groupFolderInput(group, items, attachmentIds)),
               filesize: String(sizeStore.getSize(item.id, resolvedOptions)?.size || item.filesize || 0),
               enriched_title: item.title ?? undefined,
               ...(item.attachments?.length || (item.resolvedUrl && item.resolvedUrl !== item.url)
@@ -956,6 +958,19 @@ export const useMediaStore = defineStore('media', () => {
         .forEach(item => stateStore.setState(item.id, group.isCombined ? MediaState.downloadingList : MediaState.downloading));
       return false;
     }
+  }
+
+  /** What the folder decision needs: how many files this link yields and what it is called. */
+  function groupFolderInput(group: Group, items: MediaItem[], attachmentIds: string[] | undefined): GroupFolderInput {
+    const parent = group.parentId ? playlistStore.findPlaylist(group.parentId) : undefined;
+    const leader = items.find(item => !item.entries);
+    return {
+      files: attachmentIds?.length ?? parent?.count ?? items.filter(item => !item.entries).length,
+      title: parent?.title ?? group.playlistTitle ?? group.title ?? leader?.title,
+      uploader: group.uploader ?? leader?.uploader,
+      id: group.playlistId,
+      url: parent?.url ?? group.url,
+    };
   }
 
   function buildTemplateContext(

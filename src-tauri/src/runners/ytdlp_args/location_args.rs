@@ -48,6 +48,56 @@ pub fn output_base_dir(
   preferred_dir.map(PathBuf::from).unwrap_or(global_dir)
 }
 
+/// Layout value of "No subfolders": distinct from the empty default, which means one folder per group.
+pub const NO_SUBFOLDERS: &str = ".";
+
+/// Longest group folder name, in UTF-8 bytes: leaves room for the file name inside Windows' path limit.
+const MAX_GROUP_DIR_BYTES: usize = 100;
+
+/// Folder name for a link that yields several files; `None` for one file or a layout other than the default.
+pub fn group_dir_name(context: &TemplateContext) -> Option<String> {
+  let files: usize = context.values.get("nezzel_group_files")?.parse().ok()?;
+  if files < 2 {
+    return None;
+  }
+  let title = context
+    .values
+    .get("nezzel_group_title")
+    .map(String::as_str)
+    .unwrap_or_default();
+  // `%` would be read as a yt-dlp template field, path separators as nesting.
+  let cleaned: String = title
+    .chars()
+    .map(|c| {
+      if matches!(c, '%' | '/' | '\\') {
+        '_'
+      } else {
+        c
+      }
+    })
+    .collect();
+  let mut name = crate::files::sanitize::sanitize_file_name(&cleaned);
+  if name.len() > MAX_GROUP_DIR_BYTES {
+    let mut end = MAX_GROUP_DIR_BYTES;
+    while !name.is_char_boundary(end) {
+      end -= 1;
+    }
+    name = crate::files::sanitize::sanitize_file_name(&name[..end]);
+  }
+  Some(name)
+}
+
+/// Directory under the download folder: the chosen layout, or by default the group folder.
+fn directory_layout(layout: &str, context: &TemplateContext) -> PathBuf {
+  match layout {
+    NO_SUBFOLDERS => PathBuf::new(),
+    "" => group_dir_name(context)
+      .map(PathBuf::from)
+      .unwrap_or_default(),
+    chosen => PathBuf::from(chosen),
+  }
+}
+
 pub fn build_location_args(
   track_type: &TrackType,
   template_context: &TemplateContext,
@@ -96,8 +146,9 @@ pub fn build_location_args(
     custom => custom,
   };
   let base_dir = output_base_dir(track_type, output_settings, path_preferences, fallback_dir);
-
-  let output_path = base_dir.join(prefix_dir).join(filename);
+  let output_path = base_dir
+    .join(directory_layout(prefix_dir, template_context))
+    .join(filename);
   let rendered_output = template_context.render_template(output_path.to_string_lossy().as_ref());
 
   vec!["-o".into(), rendered_output]

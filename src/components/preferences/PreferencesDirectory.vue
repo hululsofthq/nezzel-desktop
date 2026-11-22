@@ -66,12 +66,21 @@ const prefs = defineModel<Preferences>({ required: true });
 const emit = defineEmits(['clearRecents']);
 const { recentValues } = defineProps<{ recentValues: Record<string, string[]> }>();
 
+// Empty means the default (a folder per group); this value is "No subfolders". Same value in the engine.
+const NO_SUBFOLDERS = '.';
+
 const dirPresets: PresetDef[] = [
+  {
+    label: t('location.directory.directoryPreset.options.group'),
+    example: t('location.directory.directoryPreset.examples.group'),
+    value: DirectoryPreset.Group,
+    format: '',
+  },
   {
     label: t('location.directory.directoryPreset.options.none'),
     example: '',
     value: DirectoryPreset.None,
-    format: '',
+    format: NO_SUBFOLDERS,
   },
   {
     label: t('location.directory.directoryPreset.options.playlist'),
@@ -111,8 +120,8 @@ const dirPresets: PresetDef[] = [
 
 ];
 
-const selectedVideoPreset = ref<DirectoryPreset>(DirectoryPreset.Custom);
-const selectedAudioPreset = ref<DirectoryPreset>(DirectoryPreset.Custom);
+const selectedVideoPreset = ref<DirectoryPreset>(DirectoryPreset.Group);
+const selectedAudioPreset = ref<DirectoryPreset>(DirectoryPreset.Group);
 
 const videoTemplate = computed<string>({
   get: () => prefs.value.paths.videoDirectoryTemplate ?? '',

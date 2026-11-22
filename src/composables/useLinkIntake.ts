@@ -60,7 +60,8 @@ export function useLinkIntake() {
     if (result.urls.length > 0) {
       if (fromInput) countUsage('paste');
       clearSearch();
-      if (immediateDownload) {
+      // Several links submitted together never wait on the user; the default choice applies to each.
+      if (immediateDownload || (fromInput && result.urls.length > 1)) {
         await mediaStore.addUrlBatchAndDownload(result.urls, false, true);
       } else {
         const ids = await mediaStore.addUrlBatch(result.urls);

@@ -1,9 +1,20 @@
 # Changelog
 
+## 0.1.4
+
+- A link that gives two or more files (a playlist, an album, a post with several videos or photos) is now saved in one folder named after it. To keep everything in one place as before, choose "No subfolders" under "Organise downloads by" in Settings; if you had already chosen it, choose it once more.
+- Several links pasted or submitted together start downloading by themselves instead of waiting under "Needs you".
+- The items of a playlist or of a post with several videos each keep their own preview picture in the list.
+- With a proxy set in Settings, every page Nezzel reads goes through the proxy; before, some built-in page readers connected directly.
+- A large photo album keeps downloading while photos are still arriving instead of stopping at the time limit.
+- Instagram: a post with videos and photos keeps the videos it already saved when the photos need a sign-in, and the row says that part of the post was saved.
+- Facebook: a "share/p" link to a photo post is saved after you sign in.
+- Tumblr: saved photos get readable file names, and when Tumblr refuses the page the message says so instead of asking you to wait.
+
 ## 0.1.3
 
 - A post with several videos (for example an X post with ten clips) saves each video; before, the first video was saved once and copied under the other names.
-- Reddit: posts with several photos, links ending in "#lightbox" and profile posts are saved instead of ending in "Reddit blocked this request". A post that has nothing to save says so.
+- Reddit: posts with several photos, links ending in "#lightbox" and profile posts are saved. When Reddit is limiting requests from your network, such a post can still end with a message asking you to open it in the browser; trying again later works. A post that has nothing to save says so.
 - Reddit: when Reddit asks for a login, Nezzel now tries your browser's Reddit login before giving up, and the "blocked" message no longer says that signing in cannot help.
 - Picking videos from a playlist while a download filter (date, size) excludes them now says "Skipped by your link filters" with a button to edit the filters, instead of "This page has no videos to save".
 

@@ -59,10 +59,11 @@ impl PendingFiles {
     receipts: &Path,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
-    self.publish_with(stage, anchor, url, receipts, false, cancelled)
+    self.publish_with(stage, anchor, url, receipts, false, None, cancelled)
   }
 
   /// `fresh`: the user asked to download again, so never reuse a saved copy; take the next free name.
+  #[allow(clippy::too_many_arguments)]
   pub fn publish_with(
     &self,
     stage: &Path,
@@ -70,6 +71,7 @@ impl PendingFiles {
     url: &str,
     receipts: &Path,
     fresh: bool,
+    group_dir: Option<&str>,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
     if cancelled() {
@@ -150,6 +152,13 @@ impl PendingFiles {
           .ok_or(io::ErrorKind::InvalidData)?;
         let bounded = crate::files::sanitize::limit_media_stem(stem, budget);
         target.set_file_name(format!("{bounded}.{extension}"));
+      }
+      // Saved flat before groups got their own folder: still "already saved", never downloaded twice.
+      if !fresh {
+        if let Some(saved) = saved_before_group_folders(&target, group_dir, &media, receipts) {
+          results.push(saved);
+          continue;
+        }
       }
       let published = publish_file_with(&source, &target, &media, receipts, fresh, &cancelled)?;
       // Every sidecar keeps its full suffix and follows the primary's collision suffix.
@@ -294,6 +303,27 @@ fn new_receipt(path: &Path) -> io::Result<fs::File> {
     options.mode(0o600);
   }
   options.open(path)
+}
+
+/// The same media saved at the flat path the old default would have used for `target` (its group folder removed).
+fn saved_before_group_folders(
+  target: &Path,
+  group_dir: Option<&str>,
+  media: &str,
+  receipts: &Path,
+) -> Option<Published> {
+  let parent = target.parent()?;
+  if parent.file_name()?.to_str()? != group_dir? {
+    return None;
+  }
+  let flat = parent.parent()?.join(target.file_name()?);
+  let owner = read_owner(&receipt_path(receipts, &flat).ok()?)
+    .or_else(|| read_owner(&legacy_receipt(&flat).ok()?))?;
+  let identity = regular_file_identity(&flat)?;
+  (owner.media == media && owner.identity.as_ref() == Some(&identity)).then_some(Published {
+    path: flat,
+    reused: true,
+  })
 }
 
 #[cfg(test)]
@@ -502,6 +532,31 @@ mod tests {
         assert!(name.ends_with(suffix), "{name}");
       }
     }
+  }
+
+  #[test]
+  fn one_bad_item_fails_a_shared_publish_after_earlier_items_moved() {
+    // Why the Instagram hand-off publishes item by item: a shared publish reports nothing
+    // for files it already moved when a later item fails.
+    let root = Staging::new().unwrap();
+    let stage = root.path.join("stage");
+    let saved = root.path.join("saved");
+    fs::create_dir_all(stage.join("bad.mp4")).unwrap();
+    fs::write(stage.join("good.mp4"), "video").unwrap();
+    let item = |name: &str, id: &str| (stage.join(name), Some("Instagram".into()), Some(id.into()));
+    let shared = PendingFiles(vec![item("good.mp4", "one"), item("bad.mp4", "two")]);
+    assert!(shared
+      .publish(&stage, &saved, "post", &root.path.join("r"), || false)
+      .is_err());
+    assert!(saved.join("good.mp4").is_file());
+    fs::write(stage.join("good2.mp4"), "video").unwrap();
+    let alone = PendingFiles(vec![item("good2.mp4", "three")]);
+    let Ok(PublishOutcome::Files(files)) =
+      alone.publish(&stage, &saved, "post", &root.path.join("r"), || false)
+    else {
+      panic!("a single good item publishes");
+    };
+    assert_eq!(files.len(), 1);
   }
 
   #[test]
@@ -816,6 +871,35 @@ mod tests {
       }
       assert!(source.exists());
     }
+  }
+
+  #[test]
+  fn flat_saves_from_before_group_folders_count_as_saved_and_same_titles_never_overwrite() {
+    let root = Staging::new().unwrap();
+    let receipts = root.path.join("receipts");
+    let source = root.path.join("source");
+    fs::write(&source, b"media").unwrap();
+    let flat = root.path.join("saved/Clip-001.jpg");
+    publish_file(&source, &flat, "one", &receipts, &|| false).unwrap();
+    let grouped = root.path.join("saved/Trip/Clip-001.jpg");
+    // Same media, group folder now in effect: the flat copy is the saved one.
+    let found = saved_before_group_folders(&grouped, Some("Trip"), "one", &receipts).unwrap();
+    assert_eq!((found.path, found.reused), (flat.clone(), true));
+    // Another media, another layout, or no group folder: not reused.
+    assert!(saved_before_group_folders(&grouped, Some("Trip"), "two", &receipts).is_none());
+    assert!(saved_before_group_folders(&grouped, Some("Other"), "one", &receipts).is_none());
+    assert!(saved_before_group_folders(&grouped, None, "one", &receipts).is_none());
+    assert!(!grouped.exists());
+    // Two groups with one title: the second file takes the next free name, the first is untouched.
+    let _ = fs::remove_file(&source);
+    fs::write(&source, b"media").unwrap();
+    let first = publish_file(&source, &grouped, "one", &receipts, &|| false).unwrap();
+    let _ = fs::remove_file(&source);
+    fs::write(&source, b"other").unwrap();
+    let second = publish_file(&source, &grouped, "two", &receipts, &|| false).unwrap();
+    assert_eq!(first.path, grouped);
+    assert_eq!(second.path, root.path.join("saved/Trip/Clip-001-001.jpg"));
+    assert_eq!(fs::read(&grouped).unwrap(), b"media");
   }
 
   #[test]

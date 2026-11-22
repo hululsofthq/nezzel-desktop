@@ -146,6 +146,10 @@ pub async fn resolve(url: &str) -> Resolution {
 }
 
 pub(crate) async fn resolve_with_limit(url: &str, limit: Duration) -> Resolution {
+  // Readers fetch without the proxy: with one on, the engines read the link instead.
+  if crate::net::proxied() {
+    return Resolution::Passthrough(url.into());
+  }
   match tokio::time::timeout(limit, read_site(url, &http::PublicHttp)).await {
     Ok(verdict) => verdict.resolution(url),
     Err(_) => resolution_timeout(url),
@@ -181,7 +185,11 @@ async fn read_site<T: http::Transport>(url: &str, transport: &T) -> Verdict {
     return Verdict::Verified(Resolution::Passthrough(player));
   }
   let mut unknown = false;
-  for reader in readers(url) {
+  let readers = readers(url);
+  if !readers.contains(&ReaderId::Reddit) {
+    let _ = reddit::log_skipped(url);
+  }
+  for reader in readers {
     let result = match reader {
       ReaderId::Reddit => reddit::read(url, transport).await,
       ReaderId::Snapchat => snapchat::read(url, transport).await,
@@ -419,6 +427,9 @@ pub async fn after_unsupported(url: &str, stderr: &str) -> Option<Resolution> {
 /// Fetch-chain fallback after engine extraction failures, including inconclusive site readers.
 /// The caller supplies the last resolved URL; candidate URLs retain read_generic's admission gate.
 pub(crate) async fn generic_scan(resolved_url: &str) -> Option<Resolution> {
+  if crate::net::proxied() {
+    return None;
+  }
   match tokio::time::timeout(
     Duration::from_secs(20),
     read_generic(resolved_url, &http::PublicHttp),

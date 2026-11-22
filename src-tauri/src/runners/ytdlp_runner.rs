@@ -292,6 +292,23 @@ impl<'a> YtdlpRunner<'a> {
     (output_settings, path_preferences, fallback_dir)
   }
 
+  /// Group folder name while the folder layout is the default (empty); `None` for a chosen layout or a single file.
+  /// Files saved flat before the group default sit one level up from it.
+  pub fn default_group_dir(
+    &self,
+    track_type: &TrackType,
+    template_context: &TemplateContext,
+  ) -> Option<String> {
+    let layout = match track_type {
+      TrackType::Both | TrackType::Video => &self.prefs.paths.video_directory_template,
+      TrackType::Audio => &self.prefs.paths.audio_directory_template,
+    };
+    layout
+      .is_empty()
+      .then(|| super::ytdlp_args::group_dir_name(template_context))
+      .flatten()
+  }
+
   /// Folder this download is saved under; "Delete file" only trashes files inside it.
   pub fn output_root(
     &self,

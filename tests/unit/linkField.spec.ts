@@ -163,13 +163,15 @@ describe('LinkField', () => {
     expect(downloadSearchQuery.value).toBe('');
   });
 
-  it('queues several links without opening the options sheet', async () => {
+  it.each(['submit', 'enter'])('downloads several pasted links straight away on %s, without the options sheet', async (via) => {
     const { wrapper } = await mountField();
     await wrapper.get('#queue-url-input').setValue('https://example.com/a https://example.com/b');
+    if (via === 'enter') await wrapper.get('#queue-url-input').trigger('keydown', { key: 'Enter' });
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 
-    expect(addUrlBatch).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b']);
+    expect(addUrlBatchAndDownload).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b'], false, true);
+    expect(addUrlBatch).not.toHaveBeenCalled();
     expect(useDownloadSheetStore().open).toBe(false);
     expect((wrapper.get('#queue-url-input').element as HTMLInputElement).value).toBe('');
   });
@@ -196,7 +198,7 @@ describe('LinkField', () => {
     }
     await wrapper.get('form').trigger('submit');
     await flushPromises();
-    expect(addUrlBatch).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b']);
+    expect(addUrlBatchAndDownload).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b'], false, true);
     wrapper.unmount();
   });
 

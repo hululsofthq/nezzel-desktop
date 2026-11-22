@@ -84,6 +84,7 @@ mod tests {
       (GalleryError::Refused("redditNetworkBlocked"), false),
       (GalleryError::Login, true),
       (GalleryError::Refused("rateLimited429"), true),
+      (GalleryError::Refused("sharedApiLimit"), true),
     ] {
       assert_eq!(retry_gallery_login(&error), retry, "{error:?}");
     }

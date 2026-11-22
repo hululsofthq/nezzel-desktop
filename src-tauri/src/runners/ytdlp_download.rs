@@ -608,6 +608,115 @@ fn instagram_needs_gallery(
     })
 }
 
+/// Which carousel positions a whole-post yt-dlp run saved ("item N of M", then its publish line).
+#[derive(Default)]
+struct CarouselItems {
+  current: Option<(usize, usize)>,
+  /// Position and its publish line, in run order.
+  saved: Vec<(usize, String)>,
+}
+impl CarouselItems {
+  fn record(&mut self, line: &str) {
+    let line = line.trim();
+    if let Some((item, count)) = line
+      .strip_prefix("[download] Downloading item ")
+      .and_then(|rest| rest.split_once(" of "))
+    {
+      if let (Ok(item), Ok(count)) = (item.parse(), count.trim().parse()) {
+        self.current = Some((item, count));
+      }
+    } else if line.starts_with("NEZZEL_PUBLISH|") {
+      if let Some((item, _)) = self
+        .current
+        .filter(|(item, _)| !self.saved.iter().any(|(saved, _)| saved == item))
+      {
+        self.saved.push((item, line.to_owned()));
+      }
+    }
+  }
+}
+
+/// Saves what a whole-post yt-dlp run finished, one item at a time. An item that cannot be
+/// published is left to gallery-dl, and no error here skips the hand-off.
+#[allow(clippy::too_many_arguments)]
+async fn publish_kept(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  carousel: CarouselItems,
+  stage: std::path::PathBuf,
+  anchor: std::path::PathBuf,
+  group_dir: Option<String>,
+  fresh: bool,
+  cancel: &watch::Receiver<bool>,
+) -> Option<crate::scheduling::download_pipeline::KeptCarousel> {
+  let (_, count) = carousel.current?;
+  let receipts = super::ytdlp_files::receipt_directory(app).ok()?;
+  let mut positions = Vec::new();
+  for (position, line) in carousel.saved {
+    let mut pending = super::ytdlp_files::PendingFiles::default();
+    pending.record(&line);
+    let (stage, anchor, url, receipts, group_dir, cancel) = (
+      stage.clone(),
+      anchor.clone(),
+      entry.url.clone(),
+      receipts.clone(),
+      group_dir.clone(),
+      cancel.clone(),
+    );
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+      pending.publish_with(
+        &stage,
+        &anchor,
+        &url,
+        &receipts,
+        fresh,
+        group_dir.as_deref(),
+        || is_cancelled_now(&cancel),
+      )
+    })
+    .await;
+    if let Ok(Ok(super::ytdlp_files::PublishOutcome::Files(files))) = outcome {
+      announce_published(app, entry, files);
+      positions.push(position);
+    }
+  }
+  kept_positions(count, positions)
+}
+
+fn kept_positions(
+  count: usize,
+  positions: Vec<usize>,
+) -> Option<crate::scheduling::download_pipeline::KeptCarousel> {
+  (!positions.is_empty()).then_some(crate::scheduling::download_pipeline::KeptCarousel {
+    count,
+    positions,
+    login_failed: false,
+  })
+}
+
+fn announce_published(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  published: Vec<super::ytdlp_files::Published>,
+) {
+  for file in published {
+    let destination = crate::models::MediaDestination {
+      id: entry.id.clone(),
+      group_id: entry.group_id.clone(),
+      is_merged: false,
+      destination: crate::models::progress::MediaDestinationPath {
+        path: file.path.to_string_lossy().into_owned(),
+        confidence: 100,
+        already_downloaded: file.reused,
+      },
+    };
+    if let Some(records) = app.try_state::<DownloadRecords>() {
+      records.record_item(&entry.group_id, &entry.id, &destination.destination.path);
+    }
+    crate::events::emit(app, crate::events::MEDIA_DESTINATION, destination);
+  }
+}
+
 /// The gallery's video children reuse this item's id: they must open a fresh partial directory,
 /// not adopt the failed yt-dlp one, which the first child's completion would mark discarded
 /// while this attempt still holds it.
@@ -644,6 +753,7 @@ async fn retry_instagram_with_gallery(
   login: &LoginSession,
   input: &ResolvedInput,
   held: Option<std::sync::Arc<DownloadPartial>>,
+  kept: Option<crate::scheduling::download_pipeline::KeptCarousel>,
 ) -> Result<(), YtdlpDownloadError> {
   tracing::info!("Instagram post had no video formats; retrying through gallery-dl");
   release_partial_for_handoff(&PARTIAL_DOWNLOADS, &entry.group_id, &entry.id, held);
@@ -656,6 +766,7 @@ async fn retry_instagram_with_gallery(
   entry.media_kind = None;
   entry.login_browser = handoff_browser(&entry, &original_url, login.browser.clone());
   entry.login_was_accepted = entry.login_browser.is_some();
+  entry.kept_carousel = kept;
   Box::pin(crate::runners::gallery::run_media_download(app, entry)).await
 }
 
@@ -1199,7 +1310,7 @@ async fn run_download_attempts(
               continue 'attempt;
             }
             if instagram_needs_gallery(&entry, &input, &diagnostics) {
-              return retry_instagram_with_gallery(app, entry, &login, &input, None).await;
+              return retry_instagram_with_gallery(app, entry, &login, &input, None, None).await;
             }
             let reason = if login.has_session {
               (failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
@@ -1363,6 +1474,7 @@ async fn run_download_attempts(
       "NezzelDisk:when=before_dl".into(),
     ]);
     let _thumbnail_stage = stage_thumbnails(&mut output_args)?;
+    let group_dir = runner.default_group_dir(&entry.format.track_type, &entry.template_context);
     let runner = runner.with_args(selected_video_args(&entry));
     let mut sponsor_removed = super::ytdlp_sponsorblock::RemovedSegments::new(
       runner.sponsorblock_removed(entry.overrides.as_ref()),
@@ -1380,6 +1492,7 @@ async fn run_download_attempts(
       )
       .with_temporary_files(temporary.clone());
     let mut pending_files = super::ytdlp_files::PendingFiles::default();
+    let mut carousel = CarouselItems::default();
     // Refresh the source immediately before transfer. Snapchat's opaque CDN suffix is
     // not a file format; normalize only that provider's video/thumbnail metadata.
     let snapchat_info = if snapchat_media_page(&entry.url) {
@@ -1528,6 +1641,7 @@ async fn run_download_attempts(
             YtdlpCommandEvent::Stdout(line) => {
               let line_str = String::from_utf8_lossy(&line);
               pending_files.record(&line_str);
+              carousel.record(&line_str);
               sponsor_removed.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               store_log_line(&line_str, &entry, log_state, &app);
@@ -1591,9 +1705,10 @@ async fn run_download_attempts(
                 let receipts = super::ytdlp_files::receipt_directory(&app)
                   .map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
                 let publish_cancel = cancel_rx.clone();
+                let group_dir = group_dir.clone();
                 let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
                 let outcome = tauri::async_runtime::spawn_blocking(move || {
-                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, || is_cancelled_now(&publish_cancel))
+                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, group_dir.as_deref(), || is_cancelled_now(&publish_cancel))
                 }).await.map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
                 let published = match outcome {
                   Ok(super::ytdlp_files::PublishOutcome::Files(files)) => files,
@@ -1614,18 +1729,7 @@ async fn run_download_attempts(
                     return Err(YtdlpDownloadError::RunnerError(error.to_string()));
                   }
                 };
-                for file in published {
-                  let destination = crate::models::MediaDestination {
-                    id: entry.id.clone(), group_id: entry.group_id.clone(), is_merged: false,
-                    destination: crate::models::progress::MediaDestinationPath {
-                      path: file.path.to_string_lossy().into_owned(), confidence: 100, already_downloaded: file.reused,
-                    },
-                  };
-                  if let Some(records) = app.try_state::<DownloadRecords>() {
-                    records.record_item(&entry.group_id, &entry.id, &destination.destination.path);
-                  }
-                  crate::events::emit(&app, crate::events::MEDIA_DESTINATION, destination);
-                }
+                announce_published(&app, &entry, published);
                 if let Some(records) = app.try_state::<DownloadRecords>() {
                   records.seal(&entry.group_id);
                 }
@@ -1692,7 +1796,13 @@ async fn run_download_attempts(
                 (cookie_failure == CookieFetchFailure::Refused).then(|| "signInRequired".to_owned())
               } else { login_reason };
               if expired && input.retry_original("HTTP Error 403") { continue 'attempt; }
-              if instagram_needs_gallery(&entry, &input, &diagnostics) { return retry_instagram_with_gallery(app, entry, &login, &input, Some(temporary)).await; }
+              if instagram_needs_gallery(&entry, &input, &diagnostics) {
+                // Items yt-dlp finished (the post's videos) are saved before gallery-dl reads the rest.
+                let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
+                let kept = publish_kept(&app, &entry, carousel, temporary.path.join("output"), publication_anchor.clone(), group_dir.clone(), fresh, &cancel_rx).await;
+                // Also on cancel: the hand-off releases the partial once, as before; gallery-dl then stops.
+                return retry_instagram_with_gallery(app, entry, &login, &input, Some(temporary), kept).await;
+              }
               login.record_failure(&diagnostics, false);
               match login.failed(&app, LoginRequest::Download(entry.login_request_entry()), login_reason.as_deref(), transport_denied, is_cancelled_now(&cancel_rx)) {
                 RetryAction::Native | RetryAction::Browser | RetryAction::Anonymous => continue 'attempt,
@@ -2621,6 +2731,42 @@ mod tests {
       ),
       None
     );
+    // Recorded anonymous run of the mixed post (1 video + 3 photos): the video's position is kept.
+    let mut carousel = CarouselItems::default();
+    for line in [
+      "[download] Downloading playlist: Post by natgeo",
+      "[Instagram] Playlist Post by natgeo: Downloading 4 items of 4",
+      "[download] Downloading item 1 of 4",
+      "NEZZEL_PUBLISH|[\"/tmp/p/output/v.mp4\",\"Instagram\",\"DfxRe6XAF0-\"]",
+      "[download] Downloading item 2 of 4",
+      "[download] Downloading item 3 of 4",
+      "[download] Downloading item 4 of 4",
+      "[download] Finished downloading playlist: Post by natgeo",
+    ] {
+      carousel.record(line);
+    }
+    assert_eq!(carousel.current.map(|(_, count)| count), Some(4));
+    assert_eq!(
+      carousel
+        .saved
+        .iter()
+        .map(|(item, _)| *item)
+        .collect::<Vec<_>>(),
+      [1]
+    );
+    // Only positions whose files were published are kept; none published means today's plain retry.
+    assert_eq!(
+      kept_positions(4, vec![1]),
+      Some(crate::scheduling::download_pipeline::KeptCarousel {
+        count: 4,
+        positions: vec![1],
+        login_failed: false
+      })
+    );
+    assert_eq!(kept_positions(4, Vec::new()), None);
+    let mut nothing = CarouselItems::default();
+    nothing.record("[download] Downloading item 1 of 3");
+    assert!(nothing.saved.is_empty());
   }
 
   #[test]

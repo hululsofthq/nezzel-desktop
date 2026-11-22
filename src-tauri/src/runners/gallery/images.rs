@@ -206,6 +206,31 @@ pub(super) async fn filename(
   image_destination(PathBuf::from(rendered), asset.index, multiple, extension)
 }
 
+/// The same photo saved flat before groups got their own folder: reused instead of saved a second time.
+pub(super) fn flat_copy_before_group_folders(
+  destination: &Path,
+  group_dir: Option<&str>,
+  bytes: &[u8],
+) -> Option<PathBuf> {
+  let parent = destination.parent()?;
+  if parent.file_name()?.to_str()? != group_dir? {
+    return None;
+  }
+  let flat = parent.parent()?.join(destination.file_name()?);
+  // A regular file inside the folder itself: a symlink to an identical file elsewhere is not "saved here".
+  if !std::fs::symlink_metadata(&flat).ok()?.is_file() {
+    return None;
+  }
+  if !flat
+    .canonicalize()
+    .ok()?
+    .starts_with(parent.parent()?.canonicalize().ok()?)
+  {
+    return None;
+  }
+  (std::fs::read(&flat).ok()? == bytes).then_some(flat)
+}
+
 pub(super) fn image_destination(
   path: PathBuf,
   index: usize,
@@ -286,6 +311,41 @@ mod tests {
       })
       .collect::<Vec<_>>()
       .join("\n")
+  }
+
+  #[test]
+  fn flat_photo_from_before_group_folders_is_reused_only_for_identical_bytes() {
+    let dir = std::env::temp_dir().join(format!("nezzel-flat-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = {
+      let mut b = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+      b.extend_from_slice(&[0; 32]);
+      b
+    };
+    std::fs::write(dir.join("Trip-001.png"), &png).unwrap();
+    let grouped = dir.join("Trip/Trip-001.png");
+    assert_eq!(
+      flat_copy_before_group_folders(&grouped, Some("Trip"), &png),
+      Some(dir.join("Trip-001.png"))
+    );
+    assert_eq!(
+      flat_copy_before_group_folders(&grouped, Some("Trip"), b"x"),
+      None
+    );
+    assert_eq!(flat_copy_before_group_folders(&grouped, None, &png), None);
+    #[cfg(unix)]
+    {
+      let outside = std::env::temp_dir().join(format!("nezzel-out-{}", uuid::Uuid::new_v4()));
+      std::fs::write(&outside, &png).unwrap();
+      let linked = dir.join("Link-001.png");
+      std::os::unix::fs::symlink(&outside, &linked).unwrap();
+      assert_eq!(
+        flat_copy_before_group_folders(&dir.join("Trip/Link-001.png"), Some("Trip"), &png),
+        None
+      );
+      std::fs::remove_file(&outside).unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
   }
 
   #[test]
