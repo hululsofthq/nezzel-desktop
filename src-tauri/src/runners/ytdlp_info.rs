@@ -609,7 +609,7 @@ fn reader_handoff(
       stage.record_code(reason.code(), "", has_session, start);
       if matches!(
         reason,
-        Reason::NoMedia | Reason::TextOnly | Reason::LinkOnly
+        Reason::NoMedia | Reason::TextOnly | Reason::LinkOnly | Reason::AppPost
       ) {
         if let (Some(attempt), Some(reader)) = (
           stage.attempts.last_mut(),

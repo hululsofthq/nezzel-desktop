@@ -84,6 +84,7 @@ pub const FAILURE_CODES: &[&str] = &[
   "fileState",
   "accessForbidden403",
   "accountAccessDenied",
+  "appPost",
   "blockedGeneric",
   "browserCookiesUnreadable",
   "browserDatabaseLocked",

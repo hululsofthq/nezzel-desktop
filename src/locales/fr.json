@@ -1203,6 +1203,11 @@
         "message": "Cette publication Reddit n’a ni photo ni vidéo propre. Copiez plutôt le lien vers lequel elle pointe.",
         "action": "Ouvrir la publication sur Reddit"
       },
+      "appPost": {
+        "shortMessage": "Cette publication est une application Reddit",
+        "message": "Elle fonctionne dans Reddit et n'a ni vidéo ni photo à enregistrer.",
+        "action": "Ouvrir la publication sur Reddit"
+      },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit a bloqué cette requête",
         "message": "Reddit a refusé ce téléchargement depuis votre réseau. Réessayez plus tard ou ouvrez la publication dans votre navigateur.",

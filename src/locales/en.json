@@ -1304,6 +1304,11 @@
         "message": "This Reddit post has no photo or video of its own. Copy the link it points to instead.",
         "action": "Open the post on Reddit"
       },
+      "appPost": {
+        "shortMessage": "This post is a Reddit app",
+        "message": "It runs inside Reddit and has no video or photo to save.",
+        "action": "Open the post on Reddit"
+      },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit blocked this request",
         "message": "Reddit refused this download from your network. Try again later, or open the post in your browser.",

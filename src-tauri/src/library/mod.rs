@@ -73,7 +73,7 @@ fn take_metadata(data: &mut LibraryData, group_id: &str, id: &str) -> Completion
 
 fn configured_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
   app
-    .state::<SharedConfig>()
+    .try_state::<SharedConfig>()?
     .load()
     .output
     .download_dir
@@ -140,29 +140,17 @@ fn apply_engine_facts(
 
 /// What a post saved: the probe's attachments, widened by the files on disk when more were saved
 /// (an Instagram post yt-dlp read as one video, whose photos gallery-dl added).
-fn saved_summary(
-  selected: &[&crate::models::parsed::MediaAttachment],
-  paths: &[std::path::PathBuf],
-) -> AttachmentSummary {
-  use crate::models::parsed::AttachmentKind;
-  let probed = AttachmentSummary {
-    photos: selected
-      .iter()
-      .filter(|a| matches!(a.kind, AttachmentKind::Image))
-      .count() as u32,
-    videos: selected
-      .iter()
-      .filter(|a| matches!(a.kind, AttachmentKind::Video))
-      .count() as u32,
-  };
-  if paths.len() <= (probed.photos + probed.videos) as usize {
+fn saved_summary(probed: AttachmentSummary, paths: &[PathBuf]) -> AttachmentSummary {
+  if paths.len() <= probed.photos as usize + probed.videos as usize {
     return probed;
   }
-  let on_disk = |wanted: &str| paths.iter().filter(|p| kind(p) == wanted).count() as u32;
-  AttachmentSummary {
-    photos: on_disk("image").max(probed.photos),
-    videos: on_disk("video").max(probed.videos),
-  }
+  // The files are the truth once more were saved: a failed leg must not keep its probed count.
+  let photos = paths.iter().filter(|p| kind(p) == "image").count() as u32;
+  let videos = paths
+    .iter()
+    .filter(|p| matches!(kind(p), "video" | "audio"))
+    .count() as u32;
+  AttachmentSummary { photos, videos }
 }
 
 fn persist_completion<R: Runtime>(
@@ -200,7 +188,19 @@ fn persist_completion<R: Runtime>(
     .sum();
   let kind = kind(&paths[0]).to_owned();
   apply_engine_facts(&mut metadata.display, entry, sponsor_removed_secs);
-  if !entry.attachments.is_empty() {
+  let probed = if entry.attachments.is_empty() {
+    // The gallery hand-off clears the probe's list (#101): the UI sent the probe's count.
+    let sent = metadata.display.attachment_summary.take();
+    let gallery = entry.fetch_engine == Some(crate::models::parsed::FetchEngine::Gallery);
+    // No count from the UI: a multi-file gallery post still lists its files from the paths.
+    sent.or_else(|| {
+      (gallery && paths.len() > 1).then_some(AttachmentSummary {
+        photos: 0,
+        videos: 0,
+      })
+    })
+  } else {
+    use crate::models::parsed::AttachmentKind;
     let selected: Vec<_> = entry
       .attachments
       .iter()
@@ -211,8 +211,18 @@ fn persist_completion<R: Runtime>(
           .is_none_or(|ids| ids.contains(&a.id))
       })
       .collect();
-    metadata.display.attachment_summary = Some(saved_summary(&selected, &paths));
-  }
+    Some(AttachmentSummary {
+      photos: selected
+        .iter()
+        .filter(|a| matches!(a.kind, AttachmentKind::Image))
+        .count() as u32,
+      videos: selected
+        .iter()
+        .filter(|a| matches!(a.kind, AttachmentKind::Video))
+        .count() as u32,
+    })
+  };
+  metadata.display.attachment_summary = probed.map(|probed| saved_summary(probed, &paths));
   index.append(LibraryRecord {
     id: metadata
       .history_id
@@ -319,6 +329,12 @@ pub async fn library_list<R: Runtime>(
     let index = load_index(&mut data, &index_path(&app), root.as_deref())?;
     index.prune();
     index.merge_scan(scanned);
+    // Records written before #101 kept the probe's one-video count for a post that saved more.
+    for row in &mut index.records {
+      if let Some(summary) = row.display.attachment_summary.take() {
+        row.display.attachment_summary = Some(saved_summary(summary, &row.paths));
+      }
+    }
     index
       .save(&index_path(&app))
       .map_err(|_| "unable to save library")?;

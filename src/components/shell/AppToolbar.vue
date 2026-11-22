@@ -1,7 +1,7 @@
 <template>
   <header
     class="relative flex shrink-0 items-center gap-3 px-4"
-    :class="isSettings ? 'h-3 overflow-hidden' : 'h-[52px] border-b border-hairline'"
+    :class="isSettings ? [rtlInset ? 'h-[38px]' : 'h-3', 'overflow-hidden'] : 'h-[52px] border-b border-hairline'"
     :style="lightsInset ? { paddingLeft: `${lightsInset}px` } : undefined"
     data-tauri-drag-region
   >
@@ -37,6 +37,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import LinkField from '../downloads/LinkField.vue';
 import SidebarToggle from './SidebarToggle.vue';
 import { useUiPrefs } from '../../composables/useUiPrefs';
+import { useTrafficLightsInset } from '../../composables/useTrafficLightsInset';
 import { parseListView } from '../../helpers/listFilter';
 
 /** `lightsInset`: px of physical left padding. The macOS overlay title bar puts the traffic lights at the window's
@@ -48,6 +49,8 @@ const emit = defineEmits<{ toggleSidebar: [] }>();
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+// macOS RTL: the settings column starts under the traffic lights, so the strip is tall enough to clear them.
+const { rtlInset } = useTrafficLightsInset();
 const { compactRows, showThumbnails } = useUiPrefs();
 const field = ref<{ paste: () => Promise<void> } | null>(null);
 defineExpose({ pasteField: async () => {

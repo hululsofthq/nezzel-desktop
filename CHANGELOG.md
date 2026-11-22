@@ -2,7 +2,7 @@
 
 ## 0.1.5
 
-- Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it.
+- Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it, also after Nezzel restarts (posts saved with an earlier 0.1.5 test build are corrected at the next start).
 - Instagram: a post that was saved completely no longer shows "Showing the items found before the site stopped responding".
 - Instagram: when a post with videos and photos is saved without a sign-in, the video Nezzel can get is kept in the post's folder. On Windows it was saved in a folder at the top of the drive instead of your download folder (the row said "The other items were saved" while the folder looked empty); on macOS and Linux it was dropped.
 - An album or photo post you already saved now says "Already saved" and offers "Download again", which saves a second copy beside the first.
@@ -12,7 +12,7 @@
 - The portable Windows copy now tells you when a new version is out and opens the download page; before, it never said anything.
 - Several links at once: a link that cannot be read no longer stops the others from downloading; a message names the one that failed.
 - A download that could not be saved now says why (the disk is full, there is no permission, the name is too long) instead of one English message, and files already saved are announced. Photo saves report their real cause too.
-- Reddit: a post with only text, or one that only links to another site, says so and offers to open the post. More messages that say "Open…" now have the open button.
+- Reddit: a post with only text, one that only links to another site, or a Reddit app post (a game or tool that runs inside Reddit) says so and offers to open the post. More messages that say "Open…" now have the open button.
 - Filters: a download skipped by a saved filter names the filter (date, size or advanced); the link field's menu button shows a dot and the download options show a line while a filter is on. A download that saved nothing with no filter set is no longer described as filtered.
 - Sign-in: a sign-in that failed names the cause (the browser took too long, its cookies could not be read, the sign-in window was closed), and a second link for the same site reuses the sign-in the first one made.
 - A failed video inside a post with photos keeps its real cause (rate limit, disk full, network), and a download that fails offline or with an expired session says so, as reading the link already did.
@@ -23,6 +23,7 @@
 - Leftover partial files from a crash are removed at the next start; a failed tool download leaves nothing behind.
 - Long lists: the finished list shows 200 rows with "Show more", and actions on many rows no longer run all at once.
 - Arabic: numbers with nouns use the correct form for every count.
+- Arabic on macOS: Settings no longer scrolls under the window buttons.
 - The "could not check free disk space" and "download stopped making progress" messages no longer show two periods.
 
 ## 0.1.4

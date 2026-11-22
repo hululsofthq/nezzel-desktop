@@ -803,6 +803,14 @@ fn handoff_browser(
   .filter(|browser| browser != super::login::ANONYMOUS_BROWSER)
 }
 
+/// yt-dlp's attachment list holds only the videos it saw; gallery-dl lists the whole post.
+pub(crate) fn hand_off_to_gallery(entry: &mut DownloadEntry) {
+  entry.fetch_engine = Some(crate::models::parsed::FetchEngine::Gallery);
+  entry.attachments.clear();
+  entry.attachment_ids = None;
+  entry.media_kind = None;
+}
+
 /// One retry of the whole post through gallery-dl; its own login flow and messages take over.
 async fn retry_instagram_with_gallery(
   app: AppHandle,
@@ -816,11 +824,7 @@ async fn retry_instagram_with_gallery(
   release_partial_for_handoff(&PARTIAL_DOWNLOADS, &entry.group_id, &entry.id, held);
   // A short link (v.gd, is.gd) has been resolved: gallery-dl and the login lookup need the post.
   let original_url = std::mem::replace(&mut entry.url, input.url.clone());
-  // yt-dlp's attachment list holds only the videos it saw; gallery-dl lists the whole post.
-  entry.fetch_engine = Some(crate::models::parsed::FetchEngine::Gallery);
-  entry.attachments.clear();
-  entry.attachment_ids = None;
-  entry.media_kind = None;
+  hand_off_to_gallery(&mut entry);
   entry.login_browser = handoff_browser(&entry, &original_url, login.browser.clone());
   entry.login_was_accepted = entry.login_browser.is_some();
   entry.kept_carousel = kept;

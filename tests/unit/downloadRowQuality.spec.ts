@@ -652,6 +652,18 @@ describe('retained download progress', () => {
     } finally { host.unmount(); }
   });
 
+  it('a mixed post row reloaded after a restart reads every saved item (#101)', async () => {
+    // library_list's row for the natgeo post, in the shape the Rust record serializes to.
+    const paths = ['002.jpg', '003.jpg', '004.jpg', '001.mp4'].map(name => `/downloads/Post by natgeo/${name}`);
+    installTauriMock({ library_list: () => [{ id: 'natgeo', paths, url: 'https://www.instagram.com/p/DfxRiPZIXJo/', title: 'Instagram post by @natgeo', site: null, kind: 'image', size: 4, completedAt: 1, thumbnail: null,
+      display: { duration: null, height: null, fps: null, trackType: 'both', attachmentSummary: { photos: 3, videos: 1 } }, errorCode: null }] });
+    await useMediaStore().loadLibrary();
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(useMediaGroupStore().findGroupById('library:natgeo')!)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      expect((host.vm as unknown as { metaLine: string[] }).metaLine).toContain('4 items');
+    } finally { host.unmount(); }
+  });
+
   it('one child of a three-entry group reporting its own post count leaves the group total alone', () => {
     const groups = useMediaGroupStore();
     const child = (id: string) => ({ id, url: `https://www.instagram.com/p/${id}/`, audioCodecs: [], formats: [], filesize: 0 });

@@ -522,7 +522,7 @@ const { diagnosticDisplay: errorDisplay } = useDiagnostic(displayDiagnostic, tru
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
 /** Codes whose advice says to open the link itself; the button carries that advice as its label. */
-const OPEN_ADVICE_CODES = ['telegramAppOnly', 'storyExpired', 'accountAccessDenied', 'textOnlyPost', 'redditNetworkBlocked', 'likeeUnavailable', 'legalRestriction451', 'blockedGeneric'];
+const OPEN_ADVICE_CODES = ['telegramAppOnly', 'storyExpired', 'accountAccessDenied', 'textOnlyPost', 'appPost', 'redditNetworkBlocked', 'likeeUnavailable', 'legalRestriction451', 'blockedGeneric'];
 const errorCanOpenBrowser = computed(() => vimeoLogin.value || ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', 'drmProtected', ...OPEN_ADVICE_CODES].includes(diagnostic.value.code));
 
 const openBrowserLabel = computed(() => {

@@ -509,22 +509,176 @@ fn sponsor_removed_time_is_set_at_completion_and_absent_in_legacy_display() {
   assert_eq!(legacy.sponsor_removed_secs, None);
 }
 
+/// The owner's natgeo post (#101): yt-dlp saved the video, gallery-dl the three photos.
+fn natgeo_app(dir: &Sandbox) -> (tauri::App<tauri::test::MockRuntime>, Vec<PathBuf>) {
+  post_app(dir, &["001.mp4", "002.jpg", "003.jpg", "004.jpg"])
+}
+
+fn post_app(dir: &Sandbox, names: &[&str]) -> (tauri::App<tauri::test::MockRuntime>, Vec<PathBuf>) {
+  let app = tauri::test::mock_app();
+  app.manage(crate::paths::PathsManager::isolated(
+    dir.0.clone(),
+    dir.0.clone(),
+  ));
+  app.manage(Library::default());
+  let files: Vec<_> = names
+    .iter()
+    .map(|name| dir.file(&format!("Post by natgeo/{name}")))
+    .collect();
+  let records = DownloadRecords::default();
+  records.allow_root("g", dir.0.clone());
+  for file in &files {
+    records.record_item("g", "item", file.to_str().unwrap());
+  }
+  records.seal("g");
+  app.manage(records);
+  (app, files)
+}
+
 #[test]
-fn saved_summary_counts_the_files_a_handed_off_post_saved() {
-  use crate::models::parsed::{AttachmentKind, MediaAttachment};
-  let video: MediaAttachment = serde_json::from_value(
-    serde_json::json!({ "id": "a", "kind": "video", "url": "https://example.com/a.mp4" }),
+fn a_post_handed_off_to_gallery_reloads_with_every_saved_item() {
+  let dir = Sandbox::new();
+  let (app, _) = natgeo_app(&dir);
+  // The probe's row: yt-dlp listed the post's one video and the row selected it.
+  let item: crate::models::DownloadItem = serde_json::from_value(serde_json::json!({
+    "id": "item",
+    "url": "https://www.instagram.com/p/DfxRiPZIXJo/",
+    "format": { "trackType": "both" },
+    "attachments": [{ "id": "v1", "url": "https://www.instagram.com/p/DfxRiPZIXJo/", "kind": "video" }],
+    "attachmentIds": ["v1"],
+    "templateContext": { "values": {} }
+  }))
+  .unwrap();
+  let mut entry = DownloadEntry::from((item, "g".to_owned()));
+  crate::runners::ytdlp_download::hand_off_to_gallery(&mut entry);
+  // What the queued row sent (media.ts libraryMetadata): the probe's one video.
+  let metadata: CompletionMetadata = serde_json::from_value(serde_json::json!({
+    "historyId": "h",
+    "title": "Instagram post by @natgeo",
+    "display": { "trackType": "both", "attachmentSummary": { "photos": 0, "videos": 1 } }
+  }))
+  .unwrap();
+  app
+    .state::<Library>()
+    .remember("g", [("item".to_owned(), metadata)].into());
+  persist_completion(app.handle(), &entry, None).unwrap();
+  let saved: serde_json::Value = serde_json::from_slice(&fs::read(dir.index()).unwrap()).unwrap();
+  assert_eq!(
+    saved["records"][0]["display"]["attachmentSummary"],
+    serde_json::json!({ "photos": 3, "videos": 1 })
+  );
+}
+
+#[tokio::test]
+async fn a_record_written_with_the_probe_count_lists_every_saved_item() {
+  let dir = Sandbox::new();
+  let (app, files) = natgeo_app(&dir);
+  // The record the installed 0.1.5 draft 4 wrote: four files, a one-video summary.
+  let old = serde_json::json!({
+    "id": "16f615ce-df81-40e5-b8e3-79f9fa8e7b6f",
+    "paths": files,
+    "url": "https://www.instagram.com/p/DfxRiPZIXJo/",
+    "title": "Instagram post by @natgeo",
+    "site": null,
+    "kind": "image",
+    "size": 16,
+    "completedAt": 1,
+    "thumbnail": null,
+    "authority": [],
+    "display": { "duration": null, "height": null, "fps": null, "trackType": "both",
+      "attachmentSummary": { "photos": 0, "videos": 1 } },
+    "errorCode": null
+  });
+  fs::write(
+    dir.index(),
+    serde_json::to_vec(&serde_json::json!({ "version": 1, "records": [old] })).unwrap(),
   )
   .unwrap();
-  assert!(matches!(video.kind, AttachmentKind::Video));
+  let rows = library_list(app.handle().clone(), Some(false))
+    .await
+    .unwrap();
+  let listed = serde_json::to_value(&rows[0]).unwrap();
+  assert_eq!(
+    listed["display"]["attachmentSummary"],
+    serde_json::json!({ "photos": 3, "videos": 1 })
+  );
+}
+
+#[test]
+fn saved_summary_counts_the_files_a_handed_off_post_saved() {
   let paths = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
   // yt-dlp read one video; gallery-dl added three photos (#101).
+  let probed = AttachmentSummary {
+    photos: 0,
+    videos: 1,
+  };
   let handed_off = saved_summary(
-    &[&video],
+    probed.clone(),
     &paths(&["p/1.mp4", "p/2.jpg", "p/3.jpg", "p/4.jpg"]),
   );
   assert_eq!((handed_off.photos, handed_off.videos), (3, 1));
   // A post that saved what the probe listed keeps the probe's counts.
-  let plain = saved_summary(&[&video], &paths(&["p/1.mp4"]));
+  let plain = saved_summary(probed, &paths(&["p/1.mp4"]));
   assert_eq!((plain.photos, plain.videos), (0, 1));
+}
+
+/// Hand a probed post off to gallery-dl, complete it with `names` saved, return the stored summary.
+fn handed_off_summary(names: &[&str], ui_summary: Option<serde_json::Value>) -> serde_json::Value {
+  let dir = Sandbox::new();
+  let (app, _) = post_app(&dir, names);
+  let item: crate::models::DownloadItem = serde_json::from_value(serde_json::json!({
+    "id": "item",
+    "url": "https://www.instagram.com/p/DfxRiPZIXJo/",
+    "format": { "trackType": "both" },
+    "attachments": [{ "id": "v1", "url": "https://www.instagram.com/p/DfxRiPZIXJo/", "kind": "video" }],
+    "attachmentIds": ["v1"],
+    "templateContext": { "values": {} }
+  }))
+  .unwrap();
+  let mut entry = DownloadEntry::from((item, "g".to_owned()));
+  crate::runners::ytdlp_download::hand_off_to_gallery(&mut entry);
+  let mut display = serde_json::json!({ "trackType": "both" });
+  if let Some(summary) = ui_summary {
+    display["attachmentSummary"] = summary;
+  }
+  let metadata: CompletionMetadata = serde_json::from_value(
+    serde_json::json!({ "historyId": "h", "title": "t", "display": display }),
+  )
+  .unwrap();
+  app
+    .state::<Library>()
+    .remember("g", [("item".to_owned(), metadata)].into());
+  persist_completion(app.handle(), &entry, None).unwrap();
+  let saved: serde_json::Value = serde_json::from_slice(&fs::read(dir.index()).unwrap()).unwrap();
+  saved["records"][0]["display"]["attachmentSummary"].clone()
+}
+
+#[test]
+fn a_failed_video_leg_is_not_counted_from_the_probe() {
+  let summary = handed_off_summary(
+    &["001.jpg", "002.jpg", "003.jpg"],
+    Some(serde_json::json!({ "photos": 0, "videos": 1 })),
+  );
+  assert_eq!(summary, serde_json::json!({ "photos": 3, "videos": 0 }));
+}
+
+#[test]
+fn saved_audio_files_count_as_videos_in_the_summary() {
+  let summary = handed_off_summary(
+    &["001.m4a", "002.m4a", "003.jpg", "004.jpg"],
+    Some(serde_json::json!({ "photos": 0, "videos": 1 })),
+  );
+  assert_eq!(summary, serde_json::json!({ "photos": 2, "videos": 2 }));
+}
+
+#[test]
+fn a_gallery_post_without_a_ui_summary_still_lists_every_saved_item() {
+  let summary = handed_off_summary(&["001.jpg", "002.jpg", "003.jpg", "004.mp4"], None);
+  assert_eq!(summary, serde_json::json!({ "photos": 3, "videos": 1 }));
+}
+
+#[test]
+fn a_single_saved_video_without_a_ui_summary_keeps_no_summary() {
+  let summary = handed_off_summary(&["001.mp4"], None);
+  assert!(summary.is_null());
 }

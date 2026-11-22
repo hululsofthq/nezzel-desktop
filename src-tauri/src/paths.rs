@@ -16,7 +16,7 @@ pub struct PathsManager {
 }
 
 impl PathsManager {
-  #[cfg(feature = "link-matrix")]
+  #[cfg(any(test, feature = "link-matrix"))]
   pub(crate) fn isolated(app_dir: PathBuf, bin_dir: PathBuf) -> Self {
     Self {
       is_microsoft_store_app: false,

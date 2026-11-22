@@ -265,8 +265,15 @@ async fn reddit_profile_gallery_served_from_the_cf_preview_cdn_yields_its_pages(
 }
 
 #[tokio::test]
-async fn reddit_devvit_custom_post_is_no_media_only_with_its_own_devvit_surface() {
+async fn reddit_devvit_custom_post_is_app_post_only_with_its_own_devvit_surface() {
   for (inner, outside, expected) in [
+    // Real shape of an app post (r/ruinit, 2026-11-22): app attributes, its own permalink as
+    // content-href, and no text-body slot; the app draws itself in the browser.
+    (
+      "<devvit2-surface slot='post-media-container'></devvit2-surface>",
+      "",
+      true,
+    ),
     ("<devvit2-custom-post></devvit2-custom-post>", "", true),
     ("<devvit2-surface></devvit2-surface>", "", true),
     ("", "", false),
@@ -278,7 +285,7 @@ async fn reddit_devvit_custom_post_is_no_media_only_with_its_own_devvit_surface(
     ),
   ] {
     let body = format!(
-      "<shreddit-post id='t3_abc123' post-type='customPost'>{inner}</shreddit-post>{outside}"
+      "<shreddit-post id='t3_abc123' post-type='customPost' app-name='ruinin-it' app-slug='ruinin-it' domain='self.ruinit' content-href='https://www.reddit.com/r/ruinit/comments/abc123/title/'>{inner}</shreddit-post>{outside}"
     );
     let transport = FakeTransport(std::sync::Mutex::new(
       [(CANONICAL, reply(200, None, body.as_bytes()))].into(),
@@ -288,7 +295,7 @@ async fn reddit_devvit_custom_post_is_no_media_only_with_its_own_devvit_surface(
       result,
       if expected {
         Resolution::Unsupported {
-          reason: Reason::NoMedia,
+          reason: Reason::AppPost,
         }
       } else {
         Resolution::Passthrough(CANONICAL.into())

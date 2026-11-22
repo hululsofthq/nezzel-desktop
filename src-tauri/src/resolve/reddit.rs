@@ -243,6 +243,15 @@ pub(super) async fn read<T: http::Transport>(raw: &str, transport: &T) -> Verdic
     log.verdict = match &verdict {
       Verdict::Verified(Resolution::Attachments { .. }) => "media",
       Verdict::Verified(Resolution::PostMedia { .. }) => "videoOrLink",
+      Verdict::Verified(Resolution::Unsupported {
+        reason: Reason::AppPost,
+      }) => "appPost",
+      Verdict::Verified(Resolution::Unsupported {
+        reason: Reason::TextOnly,
+      }) => "textOnly",
+      Verdict::Verified(Resolution::Unsupported {
+        reason: Reason::LinkOnly,
+      }) => "linkOnly",
       Verdict::Verified(Resolution::Unsupported { .. }) => "noMedia",
       Verdict::Verified(_) => "handedOn",
       Verdict::Unknown => "mediaRefused",
@@ -354,6 +363,9 @@ pub(super) async fn read_logged<T: http::Transport>(
       return match result {
         Post::NoMedia => Verdict::Verified(Resolution::Unsupported {
           reason: Reason::NoMedia,
+        }),
+        Post::App => Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::AppPost,
         }),
         Post::TextOnly => Verdict::Verified(Resolution::Unsupported {
           reason: Reason::TextOnly,
@@ -510,6 +522,7 @@ fn challenge(body: &str, page: &Url) -> Option<Url> {
 
 enum Post {
   NoMedia,
+  App,
   TextOnly,
   LinkOnly,
   Video {
@@ -582,7 +595,7 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
           )
       }) =>
     {
-      Some(Post::NoMedia)
+      Some(Post::App)
     }
     "text" => {
       let images: Vec<_> = doc
