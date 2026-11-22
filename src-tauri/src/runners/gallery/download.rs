@@ -446,6 +446,12 @@ fn skip_kept<'a>(
   (remaining, kept.positions.len())
 }
 
+/// The hand-off carries kept items and at least one of them is really on disk.
+fn kept_saved(app: &AppHandle, entry: &DownloadEntry) -> bool {
+  entry.kept_carousel.is_some()
+    && crate::download_records::row_kept_file(app, &entry.group_id, &entry.id)
+}
+
 /// The hand-off saved some items and the rest cannot be read: the row ends as a partial save.
 async fn finish_kept(app: &AppHandle, entry: &DownloadEntry, has_session: bool) {
   let mut event = error_diagnostic(
@@ -527,6 +533,7 @@ pub async fn run_media_download(
     .kept_carousel
     .as_ref()
     .is_some_and(|kept| kept.login_failed)
+    && kept_saved(&app, &entry)
   {
     finish_kept(&app, &entry, false).await;
     return Ok(());
@@ -583,7 +590,7 @@ pub async fn run_media_download(
             crate::runners::reliability::cool_host(&entry.url, delay);
             continue;
           }
-          if entry.kept_carousel.is_some() {
+          if kept_saved(&app, &entry) {
             finish_kept(&app, &entry, login.has_session).await;
             return Ok(());
           }
@@ -652,7 +659,7 @@ pub async fn run_media_download(
           }
           _ => {}
         }
-        if entry.kept_carousel.is_some() {
+        if kept_saved(&app, &entry) {
           finish_kept(&app, &entry, login.has_session).await;
           return Ok(());
         }

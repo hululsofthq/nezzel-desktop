@@ -281,10 +281,23 @@ async fn automatic_schedule_browser_error_allows_later_row_to_try_next_source() 
   );
 }
 
+/// A video of the post the hand-off really kept: a recorded file on disk.
+fn keep_saved_file(app: &tauri::App<tauri::test::MockRuntime>, group: &str) {
+  let path = std::env::temp_dir().join(format!("nezzel-kept-{}.mp4", uuid::Uuid::new_v4()));
+  std::fs::write(&path, b"video").unwrap();
+  app
+    .state::<crate::download_records::DownloadRecords>()
+    .record_item(group, "post", &path.to_string_lossy());
+}
+
 #[tokio::test]
 async fn instagram_handoff_with_saved_items_finishes_partially_when_automatic_login_fails() {
   use crate::scheduling::download_pipeline::{DownloadRequest, KeptCarousel};
   let mut fixture = AutomaticFixture::new(&["firefox:first"]);
+  fixture
+    .app
+    .manage(crate::download_records::DownloadRecords::default());
+  keep_saved_file(&fixture.app, &fixture.group);
   *fixture
     .app
     .state::<AutomaticIo>()
@@ -384,6 +397,8 @@ async fn instagram_handoff_rows_resume_instead_of_failing_on_every_login_end() {
   let (download_tx, mut downloads) = tokio::sync::mpsc::unbounded_channel();
   app.manage(DownloadSender(download_tx));
   app.manage(FetchSender(tokio::sync::mpsc::unbounded_channel().0));
+  app.manage(crate::download_records::DownloadRecords::default());
+  keep_saved_file(&app, &group);
   let fatals = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
   let counter = fatals.clone();
   tauri::Listener::listen(&app, crate::events::MEDIA_FATAL, move |_| {
@@ -447,6 +462,58 @@ async fn instagram_handoff_rows_resume_instead_of_failing_on_every_login_end() {
     assert_eq!(resumed(), kept);
     assert_eq!(fatal_count(), fatals_after);
   }
+  crate::scheduling::group_state::remove_group(&group);
+}
+
+#[tokio::test]
+async fn instagram_handoff_without_a_kept_file_ends_like_a_row_with_nothing_saved() {
+  use crate::scheduling::download_pipeline::{DownloadRequest, KeptCarousel};
+  let group = uuid::Uuid::new_v4().to_string();
+  crate::scheduling::group_state::ensure_group_running(&group);
+  let app = tauri::test::mock_app();
+  let (download_tx, mut downloads) = tokio::sync::mpsc::unbounded_channel();
+  app.manage(DownloadSender(download_tx));
+  app.manage(FetchSender(tokio::sync::mpsc::unbounded_channel().0));
+  app.manage(crate::download_records::DownloadRecords::default());
+  let fatals = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+  let counter = fatals.clone();
+  tauri::Listener::listen(&app, crate::events::MEDIA_FATAL, move |_| {
+    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+  });
+  // The carousel names a kept position, but no file of the post is on disk (recorded or not).
+  let row = || {
+    let item = serde_json::from_value(serde_json::json!({
+      "id":"post","url":"https://www.instagram.com/p/abc/","format":{"trackType":"both"},"fetchEngine":"gallery","templateContext":{"values":{}}
+    }))
+    .unwrap();
+    let mut entry = DownloadEntry::from((item, group.clone()));
+    entry.kept_carousel = Some(KeptCarousel {
+      count: 4,
+      positions: vec![1],
+      login_failed: false,
+    });
+    LoginRequest::Download(entry)
+  };
+  let missing = std::env::temp_dir().join(format!("nezzel-gone-{}.mp4", uuid::Uuid::new_v4()));
+  app
+    .state::<crate::download_records::DownloadRecords>()
+    .record_item(&group, "post", &missing.to_string_lossy());
+  row().fail(app.handle(), "Browser login could not be used");
+  assert!(!matches!(
+    downloads.try_recv(),
+    Ok(DispatchRequest::Pipeline(DownloadRequest::Resume(_)))
+  ));
+  assert_eq!(fatals.load(std::sync::atomic::Ordering::SeqCst), 1);
+  let token = uuid::Uuid::new_v4().to_string();
+  let mut parked = pending(&group);
+  parked.request = row();
+  PENDING.lock().unwrap().insert(token.clone(), parked);
+  dismiss_pending(app.handle(), &token);
+  assert!(!matches!(
+    downloads.try_recv(),
+    Ok(DispatchRequest::Pipeline(DownloadRequest::Resume(_)))
+  ));
+  assert_eq!(fatals.load(std::sync::atomic::Ordering::SeqCst), 2);
   crate::scheduling::group_state::remove_group(&group);
 }
 

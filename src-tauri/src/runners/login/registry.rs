@@ -168,7 +168,10 @@ impl LoginRequest {
     let Some(kept) = entry.kept_carousel.as_ref() else {
       return false;
     };
-    if !is_group_running(&entry.group_id) {
+    // "The other items were saved" is only said when a file of this post is really on disk.
+    if !is_group_running(&entry.group_id)
+      || !crate::download_records::row_kept_file(app, &entry.group_id, &entry.id)
+    {
       return false;
     }
     let mut entry = entry.clone();

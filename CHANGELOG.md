@@ -7,7 +7,7 @@
 - The items of a playlist or of a post with several videos each keep their own preview picture in the list, and the saved videos listed under a finished download show a preview like saved photos do.
 - With a proxy set in Settings, every page Nezzel reads goes through the proxy; before, some built-in page readers connected directly.
 - A large photo album keeps downloading while photos are still arriving instead of stopping at the time limit.
-- Instagram: a post with videos and photos is saved in one folder with numbered files, and it keeps the videos it already saved when the photos need a sign-in.
+- Instagram: a post with videos and photos is saved in one folder, and it keeps the videos it already saved when the photos need a sign-in.
 - Facebook: a "share/p" link to a photo post is saved after you sign in.
 - Tumblr: saved photos get readable file names, and when Tumblr refuses the page the message says so instead of asking you to wait.
 

@@ -7,9 +7,11 @@ pub(crate) fn required(estimate: Option<u64>) -> u64 {
     .unwrap_or(200 * 1024 * 1024)
 }
 pub(crate) fn check(path: &Path, estimate: Option<u64>) -> Result<(), &'static str> {
+  // A folder, never the file itself: Windows only answers for a directory, and a file that is
+  // already there (saved before) would read as "cannot tell".
   let existing = path
     .ancestors()
-    .find(|path| path.exists())
+    .find(|path| path.is_dir())
     .ok_or("diskSpaceUnavailable")?;
   let free = available(existing).map_err(|_| "diskSpaceUnavailable")?;
   check_available(free, estimate)
@@ -81,6 +83,18 @@ pub(crate) fn plugin(root: &Path) -> Result<crate::runners::gallery_files::Stagi
 #[cfg(test)]
 mod tests {
   use super::*;
+  /// Runs on every system; it only fails without the folder rule on Windows, where the
+  /// free-space call refuses a file path.
+  #[test]
+  fn a_destination_file_that_already_exists_is_checked_by_its_folder() {
+    let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir(&root).unwrap();
+    let saved = root.join("saved.jpg");
+    std::fs::write(&saved, b"photo").unwrap();
+    assert_eq!(check(&saved, Some(5)), Ok(()));
+    assert_eq!(check(&root.join("new folder/new.jpg"), Some(5)), Ok(()));
+    std::fs::remove_dir_all(&root).unwrap();
+  }
   #[cfg(unix)]
   #[test]
   fn plugin_checks_the_original_non_utf8_volume_path() {

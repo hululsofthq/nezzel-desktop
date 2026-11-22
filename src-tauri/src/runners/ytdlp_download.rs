@@ -715,8 +715,11 @@ async fn publish_kept(
     })
     .await;
     if let Ok(Ok(super::ytdlp_files::PublishOutcome::Files(files))) = outcome {
+      let kept = files.iter().any(|file| file.path.is_file());
       announce_published(app, entry, files);
-      positions.push(position);
+      if kept {
+        positions.push(position);
+      }
     }
   }
   kept_positions(count, positions)
