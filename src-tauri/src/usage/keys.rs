@@ -129,6 +129,7 @@ pub const FAILURE_CODES: &[&str] = &[
   "profileNotSupported",
   "playlistPrivateOrMissing",
   "rateLimited429",
+  "redditNetworkBlocked",
   "rejectedByFilter",
   "requestedFormatUnavailable",
   "server5xx",
@@ -581,7 +582,11 @@ mod failure_code_coverage {
     }
     // A new local remedy does not widen the server vocabulary.
     assert_eq!(failure_code(Some("browserDpapiFailed")), "unknown");
-    for reason in ["browserAppBound", "browserLoginFailed"] {
+    for reason in [
+      "browserAppBound",
+      "browserLoginFailed",
+      "redditNetworkBlocked",
+    ] {
       assert!(
         FAILURE_CODES.contains(&reason),
         "{reason} missing from FAILURE_CODES"

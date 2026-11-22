@@ -174,6 +174,15 @@ impl LoginRequest {
     {
       return false;
     }
+    let (recorded, existing) =
+      crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
+    tracing::info!(
+      branch = "login_closed_resume_kept",
+      recorded,
+      existing,
+      kept_items = kept.positions.len(),
+      "Instagram row resumes to end as partly saved"
+    );
     let mut entry = entry.clone();
     entry.kept_carousel = Some(crate::scheduling::download_pipeline::KeptCarousel {
       login_failed: true,

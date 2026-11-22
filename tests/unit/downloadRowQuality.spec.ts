@@ -597,6 +597,29 @@ describe('retained download progress', () => {
     } finally { host.unmount(); }
   });
 
+  it('a mixed post handed to the gallery listing shows the listing count once the engine reports it', () => {
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'mixed-post', url: 'https://www.instagram.com/p/abc/', total: 1, processed: 1, errored: 0, isCombined: true,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://www.instagram.com/p/abc/', audioCodecs: [], formats: [], filesize: 0 } } });
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById('mixed-post')!)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { columns: { quality: string } };
+      expect(vm.columns.quality).toBe('1 item');
+      useMediaStore().processMediaGroupTotalPayload({ groupId: 'unknown-group', total: 9 });
+      useMediaStore().processMediaGroupTotalPayload({ groupId: 'mixed-post', total: 4 });
+      expect(vm.columns.quality).toBe('4 items');
+    } finally { host.unmount(); }
+  });
+
+  it('one child of a three-entry group reporting its own post count leaves the group total alone', () => {
+    const groups = useMediaGroupStore();
+    const child = (id: string) => ({ id, url: `https://www.instagram.com/p/${id}/`, audioCodecs: [], formats: [], filesize: 0 });
+    groups.createGroup({ id: 'batch', url: 'https://example.com/list', total: 3, processed: 3, errored: 0, isCombined: true,
+      audioCodecs: [], formats: [], filesize: 0, items: { leader: { ...child('leader'), isLeader: true, entries: [] }, a: child('a'), b: child('b'), c: child('c') } });
+    useMediaStore().processMediaGroupTotalPayload({ groupId: 'batch', total: 4 });
+    expect(groups.findGroupById('batch')!.total).toBe(3);
+  });
+
   it('retains a paused percentage while queued and resuming, then accepts new progress', async () => {
     installTauriMock({});
     const groups = useMediaGroupStore();

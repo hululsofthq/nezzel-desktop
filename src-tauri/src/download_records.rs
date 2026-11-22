@@ -118,24 +118,34 @@ pub(crate) fn recorded_files(record: &GroupRecord, item_id: &str) -> Vec<FileAut
   files
 }
 
+/// How many paths are recorded for the row and how many of them are a file on disk right now.
+pub(crate) fn row_file_counts<R: tauri::Runtime>(
+  app: &tauri::AppHandle<R>,
+  group_id: &str,
+  item_id: &str,
+) -> (usize, usize) {
+  use tauri::Manager;
+  app
+    .try_state::<DownloadRecords>()
+    .map_or((0, 0), |records| {
+      let record = records.get(group_id);
+      record.item_files.get(item_id).map_or((0, 0), |paths| {
+        let existing = paths
+          .iter()
+          .filter(|path| regular_file_identity(path).is_some())
+          .count();
+        (paths.len(), existing)
+      })
+    })
+}
+
 /// Whether this attempt really kept a file for the row: a recorded path that is a file on disk.
 pub(crate) fn row_kept_file<R: tauri::Runtime>(
   app: &tauri::AppHandle<R>,
   group_id: &str,
   item_id: &str,
 ) -> bool {
-  use tauri::Manager;
-  app.try_state::<DownloadRecords>().is_some_and(|records| {
-    records
-      .get(group_id)
-      .item_files
-      .get(item_id)
-      .is_some_and(|paths| {
-        paths
-          .iter()
-          .any(|path| regular_file_identity(path).is_some())
-      })
-  })
+  row_file_counts(app, group_id, item_id).1 > 0
 }
 
 /// Per download group: the folder it was told to save into, and the files yt-dlp reported writing

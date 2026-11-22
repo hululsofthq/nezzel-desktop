@@ -10,6 +10,7 @@ pub(crate) const MEDIA_COMPLETE: &str = "media_complete";
 pub(crate) const MEDIA_DESTINATION: &str = "media_destination";
 pub(crate) const MEDIA_DIAGNOSTIC: &str = "media_diagnostic";
 pub(crate) const MEDIA_FATAL: &str = "media_fatal";
+pub(crate) const MEDIA_GROUP_TOTAL: &str = "media_group_total";
 pub(crate) const MEDIA_LOGIN_NEEDED: &str = "media_login_needed";
 pub(crate) const MEDIA_LOGIN_NOTICE: &str = "media_login_notice";
 pub(crate) const MEDIA_LOGIN_USING: &str = "media_login_using";
@@ -19,12 +20,13 @@ pub(crate) const MEDIA_TRANSPORT: &str = "media_transport";
 
 /// Every name above, as (TS key, wire name), for `contract.rs`.
 #[cfg(test)]
-pub(crate) const ALL: [(&str, &str); 11] = [
+pub(crate) const ALL: [(&str, &str); 12] = [
   ("mediaAttempts", MEDIA_ATTEMPTS),
   ("mediaComplete", MEDIA_COMPLETE),
   ("mediaDestination", MEDIA_DESTINATION),
   ("mediaDiagnostic", MEDIA_DIAGNOSTIC),
   ("mediaFatal", MEDIA_FATAL),
+  ("mediaGroupTotal", MEDIA_GROUP_TOTAL),
   ("mediaLoginNeeded", MEDIA_LOGIN_NEEDED),
   ("mediaLoginUsing", MEDIA_LOGIN_USING),
   ("mediaLoginNotice", MEDIA_LOGIN_NOTICE),

@@ -1,4 +1,5 @@
 use crate::commands::UpdateStore;
+use crate::net::OwnProxy;
 use crate::paths::PathsManager;
 use tauri::{AppHandle, State};
 use tauri_plugin_updater::{Config, Error, Result as UpdaterResult, Update, UpdaterExt};
@@ -26,7 +27,30 @@ fn manifest_status(status: u16) -> ManifestStatus {
   }
 }
 
-async fn check_published_release(app: &AppHandle) -> UpdaterResult<Option<Update>> {
+fn release_client(proxy: &OwnProxy) -> UpdaterResult<Option<reqwest::Client>> {
+  let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
+  match proxy {
+    OwnProxy::Direct => {}
+    OwnProxy::Via(url) => builder = builder.proxy(reqwest::Proxy::all(url)?),
+    OwnProxy::Blocked => return Ok(None),
+  }
+  Ok(Some(builder.build()?))
+}
+
+/// The proxy for the plugin's own check and download requests (they follow the Update it returns).
+/// Passed through `configure_client`, not `UpdaterBuilder::proxy`: the plugin logs that one's raw URL
+/// (user:password included).
+fn updater_proxy(proxy: &OwnProxy) -> Option<reqwest::Proxy> {
+  match proxy {
+    OwnProxy::Via(url) => reqwest::Proxy::all(url).ok(),
+    _ => None,
+  }
+}
+
+async fn check_published_release(
+  app: &AppHandle,
+  proxy: &OwnProxy,
+) -> UpdaterResult<Option<Update>> {
   let config: Config = app
     .config()
     .plugins
@@ -39,9 +63,10 @@ async fn check_published_release(app: &AppHandle) -> UpdaterResult<Option<Update
   if config.endpoints.is_empty() {
     return Ok(None);
   }
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(10))
-    .build()?;
+  // Proxy on without an address: no request leaves the app (the tool downloads do the same).
+  let Some(client) = release_client(proxy)? else {
+    return Ok(None);
+  };
   for endpoint in config.endpoints {
     // The plugin erases all non-2xx statuses into ReleaseNotFound. Only a confirmed 404
     // means "not published"; transport, permission and server failures must remain errors.
@@ -52,12 +77,16 @@ async fn check_published_release(app: &AppHandle) -> UpdaterResult<Option<Update
       ManifestStatus::Check => {
         // Probe and check the same endpoint. A later failure is still an error (including
         // ReleaseNotFound if the response changes between the two GETs).
-        return app
-          .updater_builder()
-          .endpoints(vec![endpoint])?
-          .build()?
-          .check()
-          .await;
+        let mut updater = app.updater_builder().endpoints(vec![endpoint])?;
+        match (proxy, updater_proxy(proxy)) {
+          (_, Some(proxy)) => {
+            updater = updater.configure_client(move |builder| builder.proxy(proxy.clone()))
+          }
+          (OwnProxy::Direct, None) => {}
+          // An address the plugin cannot take: never fall back to a direct connection.
+          _ => return Ok(None),
+        }
+        return updater.build()?.check().await;
       }
     }
   }
@@ -79,13 +108,15 @@ pub async fn updater_check(
       available_version: None,
     });
   }
-  let checked = check_published_release(&app).await?;
+  let proxy = crate::net::own_proxy();
+  let checked = check_published_release(&app, &proxy).await?;
   if let Some(update) = checked {
     tracing::info!("[updater] Update available: {}", update.version);
     crate::usage::update_offered(&app, &update.version);
     let mut s = store.lock().await;
     s.bytes = None;
     s.update = Some(update.clone());
+    s.checked_with = Some(proxy);
     Ok(UpdateCheck {
       available: true,
       current_version: current,
@@ -95,6 +126,7 @@ pub async fn updater_check(
     let mut s = store.lock().await;
     s.bytes = None;
     s.update = None;
+    s.checked_with = None;
     Ok(UpdateCheck {
       available: false,
       current_version: current,
@@ -106,6 +138,40 @@ pub async fn updater_check(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn update_check_requests_use_the_proxy_only_when_set() {
+    use tokio::io::AsyncReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let via = OwnProxy::Via(format!("http://{address}"));
+    assert!(updater_proxy(&via).is_some());
+    assert!(updater_proxy(&OwnProxy::Via("http://[bad".into())).is_none());
+    assert!(updater_proxy(&OwnProxy::Direct).is_none());
+    assert!(release_client(&OwnProxy::Blocked).unwrap().is_none());
+    let seen = tokio::spawn(async move {
+      let (mut socket, _) = listener.accept().await.unwrap();
+      let mut buf = [0u8; 256];
+      let n = socket.read(&mut buf).await.unwrap();
+      String::from_utf8_lossy(&buf[..n]).into_owned()
+    });
+    let client = release_client(&via).unwrap().unwrap();
+    let _ = client
+      .get("http://updates.invalid/latest.json")
+      .send()
+      .await;
+    assert!(seen
+      .await
+      .unwrap()
+      .starts_with("GET http://updates.invalid/latest.json"));
+    // No proxy: a direct lookup of a name that never resolves.
+    let client = release_client(&OwnProxy::Direct).unwrap().unwrap();
+    assert!(client
+      .get("http://updates.invalid/latest.json")
+      .send()
+      .await
+      .is_err());
+  }
 
   #[test]
   fn only_missing_manifests_are_latest_and_successes_reach_the_plugin() {

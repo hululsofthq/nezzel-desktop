@@ -161,6 +161,7 @@ pub(super) async fn filename(
   bytes: &[u8],
   multiple: bool,
   post: &GalleryPost,
+  base: Option<&str>,
 ) -> Result<PathBuf, GalleryError> {
   let extension = image_type(bytes)?;
   // Both gallery-dl and yt-dlp photo posts use this destination renderer. Parent video
@@ -177,6 +178,9 @@ pub(super) async fn filename(
       .unwrap_or_default(),
   );
   context.insert("fps", "");
+  if let Some(base) = base {
+    context.insert("title", base);
+  }
   let stage = Staging::new()?;
   let info = stage.json("image.json", &json!({"id":asset.item.id,"title":post.title.as_deref().unwrap_or(&asset.item.id),"uploader":post.uploader,"webpage_url":post.source,"url":asset.item.url,"ext":extension,"width":asset.item.width,"height":asset.item.height,
     "formats":[{"format_id":"image","url":asset.item.url,"ext":extension,"protocol":"https","vcodec":"unknown","acodec":"none"}]}))?;

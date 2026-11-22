@@ -299,11 +299,9 @@ pub(crate) async fn execute_listing(
             .code()
             .unwrap_or(1),
           Err(Interrupted::Cancelled) => return Err(GalleryError::Cancelled),
-          Err(Interrupted::Timeout) => {
-            truncated = true;
-            budget_exhausted = true;
-            0
-          }
+          // The stream ended cleanly, so every record arrived: a slow exit does not make the
+          // listing partial. The dropped process is killed below.
+          Err(Interrupted::Timeout) => 0,
         };
         break;
       }
@@ -430,6 +428,15 @@ mod tests {
   #[tokio::test(start_paused = true)]
   #[cfg(unix)]
   async fn recorded_partial_listing_keeps_budget_exhaustion_evidence() {
+    // The budget ran out while records were still being read, or only while the process
+    // lingered after its output ended (a complete listing).
+    for stream_ended in [false, true] {
+      partial_listing_case(stream_ended).await;
+    }
+  }
+
+  #[cfg(unix)]
+  async fn partial_listing_case(stream_ended: bool) {
     let staging = crate::runners::gallery_files::Staging::new().unwrap();
     let fixture: serde_json::Value = serde_json::from_slice(include_bytes!(
       "../parsers/fixtures/gallery-recorded-bluesky-listing.json"
@@ -452,7 +459,12 @@ mod tests {
         Path::new("/bin/sh"),
         &[
           "-c".into(),
-          "cat \"$1\"; echo ready > \"$2\"; exec 1>&-; exec /usr/bin/tail -f /dev/null".into(),
+          if stream_ended {
+            "cat \"$1\"; echo ready > \"$2\"; exec 1>&- 2>&-; exec /usr/bin/tail -f /dev/null"
+          } else {
+            "cat \"$1\"; echo ready > \"$2\"; exec /usr/bin/tail -f /dev/null"
+          }
+          .into(),
           "gallery".into(),
           records.to_string_lossy().into_owned(),
           child_marker.to_string_lossy().into_owned(),
@@ -470,9 +482,14 @@ mod tests {
       );
       tokio::task::yield_now().await;
     }
-    tokio::time::advance(Duration::from_secs(30)).await;
+    if !stream_ended {
+      tokio::time::advance(Duration::from_secs(30)).await;
+    }
+    // Ended case: no manual advance, which could fire the budget before the collector drained
+    // the buffered records. Both pipes are closed, so the clock auto-advances only once the
+    // blocking readers are done, i.e. after the collector saw end-of-stream.
     let (output, truncated) = running.await.unwrap().unwrap();
-    assert!(truncated);
+    assert_eq!(truncated, !stream_ended);
     let post = crate::parsers::gallery::parse_output(
       output.code,
       &output.stdout,
@@ -481,8 +498,9 @@ mod tests {
     )
     .unwrap();
     assert_eq!(post.assets.len(), 1);
-    assert!(
+    assert_eq!(
       String::from_utf8_lossy(&output.stderr).contains("budget ran out"),
+      !stream_ended,
       "partial success must explain why enumeration stopped: {:?}",
       output.stderr
     );

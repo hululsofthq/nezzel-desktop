@@ -61,6 +61,8 @@ describe('download error copy', () => {
     expect(copy.action?.trim()).toBeTruthy();
     expect(copy.action).not.toBe(copy.shortMessage);
     for (const text of [copy.shortMessage, copy.action, copy.message]) expect(text ?? '').not.toMatch(ENGINE_WORDS);
+    // errors.rowLine adds the period between shortMessage and action.
+    expect(copy.shortMessage).not.toMatch(/[.!?؟。…]$/);
   });
 
   it('provides every new failure and update-notice key in all shipped locales', () => {

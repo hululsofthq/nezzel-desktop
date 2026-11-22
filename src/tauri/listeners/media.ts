@@ -1,7 +1,8 @@
 import { listen } from '@tauri-apps/api/event';
 import { useMediaStore } from '../../stores/media/media';
 import { useMediaSizeStore } from '../../stores/media/size';
-import { MediaAddPayload, MediaAddWithFormatPayload } from '../types/media';
+import { ROW_EVENTS } from '../../generated/contract';
+import { MediaAddPayload, MediaAddWithFormatPayload, MediaGroupTotalPayload } from '../types/media';
 
 export function registerMediaListeners() {
   const mediaStore = useMediaStore();
@@ -10,6 +11,10 @@ export function registerMediaListeners() {
   void listen<MediaAddPayload>('media_add', (event) => {
     mediaStore.processMediaAddPayload(event.payload);
     sizeStore.processMediaAddPayload(event.payload);
+  });
+
+  void listen<MediaGroupTotalPayload>(ROW_EVENTS.mediaGroupTotal, (event) => {
+    mediaStore.processMediaGroupTotalPayload(event.payload);
   });
 
   void listen<MediaAddWithFormatPayload>('media_size', (event) => {

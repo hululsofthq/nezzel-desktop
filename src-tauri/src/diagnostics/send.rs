@@ -60,8 +60,92 @@ pub fn init(raw: Option<&str>) -> Option<sentry::ClientInitGuard> {
   let dsn = build_dsn(raw)?;
   Some(sentry::init(sentry::ClientOptions {
     dsn: Some(dsn),
+    transport: Some(Arc::new(|options: &sentry::ClientOptions| {
+      Arc::new(ProxiedTransport::new(options.clone())) as Arc<dyn sentry::Transport>
+    })),
     ..client_options()
   }))
+}
+
+/// The report transport for the user's proxy. The SDK logs an unusable proxy and then connects
+/// directly, so the proxy client is built here instead; None (unusable proxy, or on with no
+/// address) sends nothing. reqwest is one crate with `socks` on, so socks5/socks5h are supported.
+fn report_transport(
+  base: &sentry::ClientOptions,
+  proxy: &crate::net::OwnProxy,
+) -> Option<Arc<dyn sentry::Transport>> {
+  use crate::net::OwnProxy;
+  Some(match proxy {
+    OwnProxy::Direct => Arc::new(sentry::transports::ReqwestHttpTransport::new(base)),
+    OwnProxy::Via(url) => {
+      let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(url).ok()?)
+        .build()
+        .ok()?;
+      Arc::new(sentry::transports::ReqwestHttpTransport::with_client(
+        base, client,
+      ))
+    }
+    OwnProxy::Blocked => return None,
+  })
+}
+
+type Built = Option<(crate::net::OwnProxy, Option<Arc<dyn sentry::Transport>>)>;
+
+struct ProxiedTransport {
+  base: sentry::ClientOptions,
+  current: Mutex<Built>,
+}
+
+impl ProxiedTransport {
+  fn new(base: sentry::ClientOptions) -> Self {
+    Self {
+      base,
+      current: Mutex::new(None),
+    }
+  }
+
+  fn transport(&self) -> Option<Arc<dyn sentry::Transport>> {
+    let proxy = crate::net::own_proxy();
+    let (transport, old) = {
+      let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+      if let Some((built_for, transport)) = current.as_ref() {
+        if *built_for == proxy {
+          return transport.clone();
+        }
+      }
+      let transport = report_transport(&self.base, &proxy);
+      let old = current.replace((proxy, transport.clone()));
+      (transport, old)
+    };
+    // Events already queued still leave through the old transport; the wait is off this thread.
+    if let Some((_, Some(old))) = old {
+      std::thread::spawn(move || {
+        old.shutdown(Duration::from_secs(2));
+      });
+    }
+    transport
+  }
+}
+
+impl sentry::Transport for ProxiedTransport {
+  fn send_envelope(&self, envelope: sentry::Envelope) {
+    if let Some(transport) = self.transport() {
+      transport.send_envelope(envelope);
+    }
+  }
+
+  fn flush(&self, timeout: Duration) -> bool {
+    self.transport().is_none_or(|t| t.flush(timeout))
+  }
+
+  fn shutdown(&self, timeout: Duration) -> bool {
+    let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+    match current.take() {
+      Some((_, Some(transport))) => transport.shutdown(timeout),
+      _ => true,
+    }
+  }
 }
 
 /// Build-time marker set only by the publish workflow (`NEZZEL_SENTRY_ENV=production`).
@@ -517,6 +601,49 @@ mod tests {
   use super::super::report::{self, ReportInput};
   use super::super::Draft;
   use super::*;
+
+  // Stand-in proxy: reports what the transport sends to it, if anything.
+  fn seen_by_proxy(proxy: crate::net::OwnProxy, address: Option<std::net::TcpListener>) -> Vec<u8> {
+    use std::io::Read;
+    let options = sentry::ClientOptions {
+      dsn: Some("https://key@o1.ingest.invalid/1".parse().unwrap()),
+      ..Default::default()
+    };
+    let Some(transport) = report_transport(&options, &proxy) else {
+      return Vec::new();
+    };
+    transport.send_envelope(sentry::protocol::Envelope::from(Event::default()));
+    let Some(listener) = address else {
+      return Vec::new();
+    };
+    let (mut socket, _) = listener.accept().unwrap();
+    let mut buf = [0u8; 64];
+    let n = socket.read(&mut buf).unwrap();
+    buf[..n].to_vec()
+  }
+
+  #[test]
+  fn report_transport_goes_through_the_proxy_and_never_direct() {
+    use crate::net::OwnProxy;
+    let listen = || std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let http = listen();
+    let url = format!("http://{}", http.local_addr().unwrap());
+    let first = seen_by_proxy(OwnProxy::Via(url), Some(http));
+    assert!(first.starts_with(b"CONNECT o1.ingest.invalid:443"));
+    // socks5h: the proxy resolves the name (plain socks5 resolves it here first, which `.invalid` fails).
+    let socks = listen();
+    let url = format!("socks5h://{}", socks.local_addr().unwrap());
+    assert_eq!(seen_by_proxy(OwnProxy::Via(url), Some(socks))[0], 5);
+    // Unusable or switched-on-without-address: no transport at all, so nothing can go direct.
+    let base = sentry::ClientOptions {
+      dsn: Some("https://key@o1.ingest.invalid/1".parse().unwrap()),
+      ..Default::default()
+    };
+    for proxy in [OwnProxy::Via("http://[bad".into()), OwnProxy::Blocked] {
+      assert!(report_transport(&base, &proxy).is_none(), "{proxy:?}");
+    }
+    assert!(report_transport(&base, &OwnProxy::Direct).is_some());
+  }
 
   fn names() -> Vec<String> {
     vec!["samira".into()]

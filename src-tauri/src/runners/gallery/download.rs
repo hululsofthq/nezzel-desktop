@@ -7,6 +7,7 @@ use super::{
   runner::GalleryRunner,
 };
 use crate::models::parsed::{AttachmentKind, FetchEngine};
+use crate::models::payloads::MediaGroupTotal;
 use crate::models::progress::{
   MediaDestination, MediaDestinationPath, MediaProgress, ProgressCategory,
 };
@@ -144,6 +145,25 @@ pub(super) fn video_request(
   Ok(video)
 }
 
+/// One name base for every item of a mixed Instagram post saved in its group folder: the folder's
+/// own name, so photos and videos read `<folder>-NNN` whichever engine saved them.
+pub(super) fn group_item_base(post: &GalleryPost, group_dir: Option<&str>) -> Option<String> {
+  let instagram = reqwest::Url::parse(&post.source)
+    .is_ok_and(|url| url.host_str().and_then(site_by_domain) == Some(SiteId::Instagram));
+  group_dir
+    .filter(|_| instagram && post.assets.len() > 1)
+    .map(str::to_owned)
+}
+
+/// The post's video, saved by position under the post's name base, like the kept yt-dlp video.
+fn name_video_by_position(video: &mut DownloadEntry, base: &str, position: usize) {
+  let name = format!("{base}-{position:03}");
+  video.template_context.insert("title", name.clone());
+  video.template_context.insert("fulltitle", name);
+  // No quality suffix: the position is the last part of the name.
+  video.template_context.insert("height", "");
+}
+
 /// The Instagram hand-off names a group (title) before the post's size is known; the listing
 /// completes it so photos, and any video children, land in the group folder.
 fn widened_for_post(entry: &DownloadEntry, items: usize) -> DownloadEntry {
@@ -161,6 +181,12 @@ fn widened_for_post(entry: &DownloadEntry, items: usize) -> DownloadEntry {
     );
   }
   widened
+}
+
+/// `Some(selected)` when the gallery listing selects a different number of items than the row was
+/// created with (`counted`: the hand-off's group file count, one when it names none).
+fn group_total_update(counted: Option<usize>, selected: usize) -> Option<usize> {
+  (selected > 0 && selected != counted.unwrap_or(1)).then_some(selected)
 }
 
 pub(super) async fn download_attempt(
@@ -218,7 +244,8 @@ pub(super) async fn download_attempt(
       }
       resolution => {
         let (target, title) = match resolution {
-          crate::resolve::Resolution::Passthrough(url) => (url, None),
+          crate::resolve::Resolution::Passthrough(url)
+          | crate::resolve::Resolution::Refused { url } => (url, None),
           crate::resolve::Resolution::PostMedia { url, title, .. } => (url, title),
           _ => (entry.url.clone(), None),
         };
@@ -262,9 +289,30 @@ pub(super) async fn download_attempt(
   } else {
     image_post(post)?.ok_or(GalleryError::Unsupported)?
   };
+  let original = entry;
   let widened = widened_for_post(entry, post.assets.len());
   let entry = &widened;
   let selected = post.selected(entry.attachment_ids.as_deref())?;
+  // A frontend that already listed the attachments counted them; only the bare hand-off is unknown.
+  if let Some(total) = group_total_update(
+    original
+      .template_context
+      .values
+      .get("nezzel_group_files")
+      .and_then(|files| files.parse().ok()),
+    selected.len(),
+  )
+  .filter(|_| original.attachment_ids.is_none())
+  {
+    crate::events::emit(
+      app,
+      crate::events::MEDIA_GROUP_TOTAL,
+      MediaGroupTotal {
+        group_id: entry.group_id.clone(),
+        total,
+      },
+    );
+  }
   let (selected, kept) = skip_kept(entry, &post, selected);
   if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
     records.allow_root(
@@ -277,6 +325,12 @@ pub(super) async fn download_attempt(
   let staging = crate::runners::gallery_files::Staging::in_root(&root)?;
   let group_dir =
     YtdlpRunner::new(app).default_group_dir(&TrackType::Video, &entry.template_context);
+  let fresh = entry
+    .overrides
+    .as_ref()
+    .and_then(|o| o.output.as_ref())
+    .and_then(|o| o.keep_both)
+    .unwrap_or(false);
   let mut images = Vec::new();
   let mut skipped = 0;
   let mut last_failure = GalleryError::Refused("imageSourceUnavailable");
@@ -310,10 +364,24 @@ pub(super) async fn download_attempt(
         continue;
       }
     };
-    let destination = filename(app, entry, asset, &bytes, post.assets.len() > 1, &post).await?;
-    let destination =
+    let base = group_item_base(&post, group_dir.as_deref());
+    let destination = filename(
+      app,
+      entry,
+      asset,
+      &bytes,
+      post.assets.len() > 1,
+      &post,
+      base.as_deref(),
+    )
+    .await?;
+    // "Download again" (keepBoth) never reuses a saved copy: finalize_fresh takes the next free name.
+    let destination = if fresh {
+      destination
+    } else {
       super::images::flat_copy_before_group_folders(&destination, group_dir.as_deref(), &bytes)
-        .unwrap_or(destination);
+        .unwrap_or(destination)
+    };
     images.push((source, destination));
   }
   // Only a group folder this attempt created may be removed again on cancel.
@@ -327,13 +395,23 @@ pub(super) async fn download_attempt(
     if let Some(dir) = destination.parent().filter(|_| group_dir.is_some()) {
       made_group_dir |= !dir.exists();
     }
-    if let Err(error) = finalize(source, destination, || !is_group_running(&entry.group_id)) {
-      if error == GalleryError::Cancelled {
-        // A cancelled group leaves no empty group folder behind (remove_dir only takes empty ones).
-        remove_created_group_dir(destination, group_dir.as_deref(), made_group_dir);
+    let cancelled = || !is_group_running(&entry.group_id);
+    let saved = if fresh {
+      crate::runners::gallery_files::finalize_fresh(source, destination, cancelled)
+        .map(|path| (path, false))
+    } else {
+      finalize(source, destination, cancelled).map(|reused| (destination.clone(), reused))
+    };
+    let (destination, reused) = match saved {
+      Ok(saved) => saved,
+      Err(error) => {
+        if error == GalleryError::Cancelled {
+          // A cancelled group leaves no empty group folder behind (remove_dir only takes empty ones).
+          remove_created_group_dir(destination, group_dir.as_deref(), made_group_dir);
+        }
+        return Err(error);
       }
-      return Err(error);
-    }
+    };
     if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
       records.record_item(&entry.group_id, &entry.id, &destination.to_string_lossy());
     }
@@ -347,7 +425,7 @@ pub(super) async fn download_attempt(
         destination: MediaDestinationPath {
           confidence: 100,
           path: destination.to_string_lossy().into_owned(),
-          already_downloaded: false,
+          already_downloaded: reused,
         },
       },
     );
@@ -364,11 +442,16 @@ pub(super) async fn download_attempt(
       },
     );
   }
-  let mut saved = images.len() + kept;
+  // A kept hand-off position counts only while a file of this row is really on disk.
+  let mut saved = saved_items(images.len(), kept, kept_saved(app, entry), 0);
   // Photos are committed before a video can request login or fail.
   for asset in &selected {
     if matches!(asset.item.kind, AttachmentKind::Video) {
-      let video = video_request(entry, &post, asset, login.browser.clone())?;
+      let mut video = video_request(entry, &post, asset, login.browser.clone())?;
+      if let Some(base) = group_item_base(&post, group_dir.as_deref()) {
+        name_video_by_position(&mut video, &base, asset.index);
+      }
+      let before = crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
       match crate::events::ATTACHMENT_ATTEMPT
         .scope(
           (),
@@ -377,7 +460,11 @@ pub(super) async fn download_attempt(
         .await
       {
         Ok(()) => {
-          saved += 1;
+          // An `Ok` that was a cancel or a no-op published nothing and is not a saved item.
+          let after = crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
+          if video_published(before, after) {
+            saved += 1;
+          }
         }
         Err(YtdlpDownloadError::LoginPending) => {
           return Err(GalleryError::Refused("imageLoginPending"))
@@ -397,6 +484,18 @@ pub(super) async fn download_attempt(
     return Err(last_failure);
   }
   if skipped > 0 {
+    let (recorded, existing) =
+      crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
+    tracing::info!(
+      branch = "attempt_skipped_items",
+      saved,
+      skipped,
+      kept,
+      recorded,
+      existing,
+      has_session = login.has_session,
+      "Gallery row ends with skipped items"
+    );
     let mut event = error_diagnostic(
       &entry.group_id,
       &entry.id,
@@ -453,7 +552,21 @@ fn kept_saved(app: &AppHandle, entry: &DownloadEntry) -> bool {
 }
 
 /// The hand-off saved some items and the rest cannot be read: the row ends as a partial save.
-async fn finish_kept(app: &AppHandle, entry: &DownloadEntry, has_session: bool) {
+async fn finish_kept(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  has_session: bool,
+  branch: &'static str,
+) {
+  let (recorded, existing) =
+    crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
+  tracing::info!(
+    branch,
+    recorded,
+    existing,
+    has_session,
+    "Instagram row ends as partly saved"
+  );
   let mut event = error_diagnostic(
     &entry.group_id,
     &entry.id,
@@ -470,6 +583,19 @@ async fn finish_kept(app: &AppHandle, entry: &DownloadEntry, has_session: bool) 
     records.seal(&entry.group_id);
   }
   crate::library::complete(app, entry).await;
+}
+
+/// Items that really count as saved: photos finalized this attempt, the hand-off's kept items
+/// only when one of their files is on disk, and videos that published a file.
+fn saved_items(images: usize, kept: usize, kept_file: bool, videos: usize) -> usize {
+  images + if kept_file { kept } else { 0 } + videos
+}
+
+/// A finished video child counts as saved while a recorded file of the row is on disk. An
+/// already-saved video is recorded again under the same path, so the counts need not grow; an
+/// `Ok` with no file of the row on disk (a cancel, a no-op) never counts.
+fn video_published(_before: (usize, usize), after: (usize, usize)) -> bool {
+  after.1 > 0
 }
 
 /// "The other items were saved" is only true when most were; a CDN burst limit is named instead.
@@ -535,7 +661,7 @@ pub async fn run_media_download(
     .is_some_and(|kept| kept.login_failed)
     && kept_saved(&app, &entry)
   {
-    finish_kept(&app, &entry, false).await;
+    finish_kept(&app, &entry, false, "resumed_after_login_failed").await;
     return Ok(());
   }
   let mut login = LoginSession::new(
@@ -591,7 +717,7 @@ pub async fn run_media_download(
             continue;
           }
           if kept_saved(&app, &entry) {
-            finish_kept(&app, &entry, login.has_session).await;
+            finish_kept(&app, &entry, login.has_session, "rate_limited").await;
             return Ok(());
           }
           crate::runners::reliability::fatal(&app, &entry, "rateLimited429");
@@ -660,7 +786,7 @@ pub async fn run_media_download(
           _ => {}
         }
         if kept_saved(&app, &entry) {
-          finish_kept(&app, &entry, login.has_session).await;
+          finish_kept(&app, &entry, login.has_session, "attempt_failed").await;
           return Ok(());
         }
         for event in login.failure_diagnostics(diagnostics) {
@@ -713,6 +839,35 @@ mod tests {
   use crate::runners::gallery::images::verified_image;
   use crate::runners::gallery_files::Staging;
   use serde_json::json;
+
+  #[test]
+  fn group_total_is_sent_only_when_the_listing_count_differs() {
+    assert_eq!(group_total_update(None, 4), Some(4), "probe counted one");
+    assert_eq!(group_total_update(Some(3), 4), Some(4));
+    assert_eq!(group_total_update(None, 1), None);
+    assert_eq!(group_total_update(Some(4), 4), None);
+    assert_eq!(group_total_update(Some(4), 0), None);
+  }
+
+  #[test]
+  fn kept_position_without_a_file_is_not_a_saved_item() {
+    // Nothing saved: the attempt fails (`saved == 0`) instead of warning and completing.
+    assert_eq!(saved_items(0, 1, false, 0), 0);
+    // A kept file on disk, or one really saved photo, keeps the partial-save outcome.
+    assert_eq!(saved_items(0, 1, true, 0), 1);
+    assert_eq!(saved_items(1, 1, false, 0), 1);
+    assert_eq!(saved_items(1, 0, false, 1), 2);
+  }
+
+  #[test]
+  fn video_child_counts_only_when_it_published_a_file() {
+    assert!(!video_published((0, 0), (0, 0)));
+    assert!(!video_published((1, 0), (1, 0)));
+    assert!(video_published((0, 0), (1, 1)));
+    // Already saved before: recorded again under the same path, still a saved item.
+    assert!(video_published((1, 1), (1, 1)));
+    assert!(video_published((0, 1), (1, 1)));
+  }
 
   #[test]
   fn mostly_rate_limited_gallery_names_the_limit_instead_of_saying_the_rest_were_saved() {
@@ -1265,5 +1420,16 @@ if [ -f "$(dirname "$0")/skip" ]; then echo 'ERROR: HTTP Error 404: Not Found' >
       request.resolved.as_ref().unwrap().url,
       "https://cdn.example/second.mp4"
     );
+    // A mixed Instagram post saved in its group folder names every item after the folder and its
+    // position; any other site keeps its own scheme.
+    assert_eq!(group_item_base(&post, Some("Post title")), None);
+    let mut instagram = post.clone();
+    instagram.source = "https://www.instagram.com/p/DfxRe6XAF0-/".into();
+    assert_eq!(group_item_base(&instagram, None), None);
+    let base = group_item_base(&instagram, Some("Post by natgeo")).unwrap();
+    let mut video = request;
+    name_video_by_position(&mut video, &base, 1);
+    assert_eq!(video.template_context.values["height"], "");
+    assert_eq!(video.template_context.values["title"], "Post by natgeo-001");
   }
 }

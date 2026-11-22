@@ -207,6 +207,11 @@ export interface MediaAddPayload {
   item: MediaItem;
 }
 
+export interface MediaGroupTotalPayload {
+  groupId: string;
+  total: number;
+}
+
 export type MediaAddWithFormatPayload = MediaAddPayload & {
   format: DownloadOptions;
 };

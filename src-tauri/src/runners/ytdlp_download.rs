@@ -690,6 +690,7 @@ async fn publish_kept(
   let (_, count) = carousel.current?;
   let receipts = super::ytdlp_files::receipt_directory(app).ok()?;
   let mut positions = Vec::new();
+  let reported = carousel.saved.len();
   for (position, line) in carousel.saved {
     let mut pending = super::ytdlp_files::PendingFiles::default();
     pending.record(&line);
@@ -722,6 +723,12 @@ async fn publish_kept(
       }
     }
   }
+  tracing::info!(
+    reported,
+    kept = positions.len(),
+    count,
+    "Instagram hand-off published the videos yt-dlp saved"
+  );
   kept_positions(count, positions)
 }
 
@@ -1102,7 +1109,7 @@ async fn run_download_attempts(
           entry.resolved = Some(Box::new(input));
           return Box::pin(crate::runners::gallery::run_media_download(app, entry)).await;
         }
-        Resolution::Passthrough(url) => input.rewrite(url),
+        Resolution::Passthrough(url) | Resolution::Refused { url } => input.rewrite(url),
         Resolution::PostMedia { url, title, .. } => {
           if let Some(title) = title {
             entry

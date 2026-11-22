@@ -271,6 +271,26 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
   ))
 }
 
+/// The code a failed row shows. A sign-in outcome after Reddit refused the page reader (403/429)
+/// is the network's refusal, not a missing login (#68). Login decisions mid-chain keep using
+/// `final_code`, so a browser login is still tried first.
+pub fn terminal_code(attempts: &[Attempt]) -> Option<&'static str> {
+  let code = final_code(attempts)?;
+  let reader_refused = attempts.iter().any(|attempt| {
+    attempt.stage == StageId::Reader(ReaderId::Reddit)
+      && attempt
+        .code
+        .is_some_and(|code| code.as_str() == "redditNetworkBlocked")
+  });
+  Some(
+    if reader_refused && matches!(code, "signInRequired" | "accountAccessDenied") {
+      "redditNetworkBlocked"
+    } else {
+      code
+    },
+  )
+}
+
 fn is_timeout(attempt: &Attempt) -> bool {
   attempt
     .code
@@ -360,6 +380,62 @@ mod tests {
     assert_eq!(
       final_code(&[failed("urlNotSupported"), blocked]),
       Some("redditNetworkBlocked")
+    );
+  }
+
+  #[test]
+  fn refused_reddit_reader_turns_a_failed_sign_in_into_the_network_block() {
+    let mut refused = failed("redditNetworkBlocked");
+    refused.stage = StageId::Reader(ReaderId::Reddit);
+    let mut login_failed = failed("accountAccessDenied");
+    login_failed.auth = AuthUsed::Browser;
+    // (a) refused reader + sign-in outcome (anonymous, or after the browser login failed too).
+    assert_eq!(
+      terminal_code(&[refused, failed("signInRequired")]),
+      Some("redditNetworkBlocked")
+    );
+    assert_eq!(
+      terminal_code(&[refused, failed("signInRequired"), login_failed]),
+      Some("redditNetworkBlocked")
+    );
+    // The login decision mid-chain still sees the sign-in wall.
+    assert_eq!(
+      final_code(&[refused, failed("signInRequired")]),
+      Some("signInRequired")
+    );
+    // (b) a sign-in wall on a network Reddit did not refuse stays "sign in".
+    assert_eq!(
+      terminal_code(&[failed("signInRequired")]),
+      Some("signInRequired")
+    );
+    let mut reader_wall = failed("signInRequired");
+    reader_wall.stage = StageId::Reader(ReaderId::Reddit);
+    assert_eq!(
+      terminal_code(&[reader_wall, failed("signInRequired")]),
+      Some("signInRequired")
+    );
+    // (c) the logged-in attempt saved the post: no error at all.
+    let mut saved = failed("signInRequired");
+    saved.auth = AuthUsed::Browser;
+    saved.outcome = Outcome::Verified;
+    saved.code = None;
+    assert_eq!(
+      terminal_code(&[refused, failed("signInRequired"), saved]),
+      None
+    );
+    // A 403 that carried a page leaves no reader refusal (private/quarantined community).
+    assert_eq!(
+      terminal_code(&[failed("signInRequired")]),
+      Some("signInRequired")
+    );
+    assert_eq!(
+      terminal_code(&[failed("accountAccessDenied")]),
+      Some("accountAccessDenied")
+    );
+    // Other causes are not rewritten.
+    assert_eq!(
+      terminal_code(&[refused, failed("notFound404")]),
+      Some("notFound404")
     );
   }
 

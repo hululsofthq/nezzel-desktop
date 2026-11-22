@@ -1053,12 +1053,12 @@
         "action": "Ouvrez la page sur le site pour en savoir plus"
       },
       "diskSpaceUnavailable": {
-        "shortMessage": "Impossible de vérifier l’espace libre.",
+        "shortMessage": "Impossible de vérifier l’espace libre",
         "message": "Impossible de vérifier l’espace libre.",
         "action": "Choisissez un dossier accessible."
       },
       "downloadStalled": {
-        "shortMessage": "Le téléchargement ne progresse plus.",
+        "shortMessage": "Le téléchargement ne progresse plus",
         "message": "Le téléchargement ne progresse plus.",
         "action": "Réessayez lorsque la connexion est stable."
       },
@@ -1184,7 +1184,7 @@
       },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit a bloqué cette requête",
-        "message": "Reddit a refusé ce téléchargement depuis votre réseau. Ouvrez la publication sur Reddit pour la voir.",
+        "message": "Reddit a refusé ce téléchargement depuis votre réseau. Réessayez plus tard ou ouvrez la publication dans votre navigateur.",
         "action": "Ouvrir la publication sur Reddit"
       },
       "accessForbidden403": {

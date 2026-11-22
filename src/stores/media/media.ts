@@ -13,7 +13,7 @@ import { useMediaGroupStore } from './group';
 import { useMediaDestinationStore } from './destination';
 import { useMediaProgressStore } from './progress';
 import { useMediaOptionsStore } from './options';
-import { DownloadOptions, DownloadOverrides, EntryItem, MediaAddPayload, MediaItem, TrackType } from '../../tauri/types/media';
+import { DownloadOptions, DownloadOverrides, EntryItem, MediaAddPayload, MediaGroupTotalPayload, MediaItem, TrackType } from '../../tauri/types/media';
 import { usePlaylistStore } from './playlist';
 import { createLimiter, ENGINE_FANOUT, runLimited } from '../../helpers/runLimited';
 import { useMediaSizeStore } from './size.ts';
@@ -523,6 +523,18 @@ export const useMediaStore = defineStore('media', () => {
       ? MediaState.fetchingList
       : MediaState.configure;
     stateStore.setState(item.id, next);
+  }
+
+  /**
+   * The engine's listing found a different item count than the probe (a mixed post handed to gallery-dl).
+   * Only a group of exactly one entry is the post itself; in a group of several entries each child
+   * reports its own post, which must not replace the group's count.
+   */
+  function processMediaGroupTotalPayload({ groupId, total }: MediaGroupTotalPayload) {
+    const group = groupStore.findGroupById(groupId);
+    if (!group || total <= 0) return;
+    if (Object.values(group.items).filter(item => !item.entries).length !== 1) return;
+    group.total = total;
   }
 
   async function expandPlaylistGroup(groupId: string, selection: PlaylistSelection) {
@@ -1124,6 +1136,7 @@ export const useMediaStore = defineStore('media', () => {
     loadLibrary,
     processMediaDestinationPayload,
     processMediaAddPayload,
+    processMediaGroupTotalPayload,
     finalizePlaylistGroup,
     dispatchMediaInfoFetch,
     createCaptureGroup,

@@ -199,6 +199,10 @@ async fn run_attempts(
   let mut post_metadata = None;
   match resolution {
     Resolution::Passthrough(url) => input.rewrite(url),
+    Resolution::Refused { url } => {
+      record_reader_refusal(stage, start);
+      input.rewrite(url);
+    }
     Resolution::PostMedia {
       url,
       title,
@@ -564,6 +568,15 @@ async fn run_attempts(
   }
 }
 
+/// Reddit refused the page reader; the engines still run, and a later sign-in outcome is reported
+/// as the network's refusal (`extract::precedence::terminal_code`).
+pub(crate) fn record_reader_refusal(stage: &mut StageResult, start: Instant) {
+  stage.record_code("redditNetworkBlocked", "", false, start);
+  if let Some(attempt) = stage.attempts.last_mut() {
+    attempt.stage = StageId::Reader(crate::routing::ReaderId::Reddit);
+  }
+}
+
 fn reader_handoff(
   original: &str,
   resolution: &Resolution,
@@ -749,6 +762,37 @@ mod tests {
         path.contains("/posts/").then_some(target.as_str())
       );
     }
+  }
+
+  /// #68: a refused Reddit reader keeps the engines running; only the final sign-in outcome changes.
+  #[test]
+  fn refused_reddit_reader_records_the_block_and_hands_the_link_on() {
+    let url = "https://www.reddit.com/comments/abc123/";
+    let refused = Resolution::Refused { url: url.into() };
+    let mut stage = StageResult::new(StageId::Ytdlp, Confidence::Medium);
+    assert!(!reader_handoff(
+      url,
+      &refused,
+      &mut stage,
+      false,
+      Instant::now()
+    ));
+    assert!(stage.attempts.is_empty() && !stage.terminal);
+    record_reader_refusal(&mut stage, Instant::now());
+    assert_eq!(
+      stage.attempts[0].stage,
+      StageId::Reader(crate::routing::ReaderId::Reddit)
+    );
+    assert_eq!(
+      stage.attempts[0].code.unwrap().as_str(),
+      "redditNetworkBlocked"
+    );
+    // Mid-chain the sign-in wall still decides, so the browser login is tried first.
+    stage.record_code("signInRequired", "", false, Instant::now());
+    assert_eq!(
+      crate::extract::precedence::final_code(&stage.attempts),
+      Some("signInRequired")
+    );
   }
 
   #[test]

@@ -1154,12 +1154,12 @@
         "action": "Open the page on the site for details"
       },
       "diskSpaceUnavailable": {
-        "shortMessage": "Could not check free disk space.",
+        "shortMessage": "Could not check free disk space",
         "message": "Could not check free disk space.",
         "action": "Choose an accessible download folder."
       },
       "downloadStalled": {
-        "shortMessage": "The download stopped making progress.",
+        "shortMessage": "The download stopped making progress",
         "message": "The download stopped making progress.",
         "action": "Try again when the connection is stable."
       },
@@ -1285,7 +1285,7 @@
       },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit blocked this request",
-        "message": "Reddit refused this download from your network. Open the post on Reddit to view it.",
+        "message": "Reddit refused this download from your network. Try again later, or open the post in your browser.",
         "action": "Open the post on Reddit"
       },
       "accessForbidden403": {

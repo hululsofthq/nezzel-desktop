@@ -54,6 +54,11 @@ pub(crate) async fn admit_post_attachments(
 #[derive(Clone, PartialEq, Eq)]
 pub enum Resolution {
   Passthrough(String),
+  /// Reddit refused the page reader (HTTP 429, or 403 with an empty body): the engines still get the link, and the
+  /// chain remembers the refusal so a failed sign-in is not reported as a missing login (#68).
+  Refused {
+    url: String,
+  },
   PostMedia {
     url: String,
     title: Option<String>,
@@ -130,6 +135,7 @@ impl std::fmt::Debug for Resolution {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Passthrough(_) => f.write_str("Passthrough(redacted)"),
+      Self::Refused { .. } => f.write_str("Refused(redacted)"),
       Self::PostMedia { .. } => f.write_str("PostMedia(redacted)"),
       Self::Attachments { .. } => f.write_str("Attachments(redacted)"),
       Self::Failed { failure } => f.debug_tuple("Failed").field(failure).finish(),
@@ -472,7 +478,9 @@ async fn admit_resolution<T: http::Transport>(transport: &T, resolution: &Resolu
     }
   }
   match resolution {
-    Resolution::Passthrough(target) => admit(transport, target).await,
+    Resolution::Passthrough(target) | Resolution::Refused { url: target } => {
+      admit(transport, target).await
+    }
     Resolution::PostMedia { url, thumbnail, .. } => {
       admit(transport, url).await
         && match thumbnail {

@@ -1,5 +1,5 @@
 //! Terminal row events: the attempt trail, and one diagnostic plus fatal pair per failed row.
-use super::{outcome::*, precedence::final_code};
+use super::{outcome::*, precedence::terminal_code};
 use crate::models::{error::DiagnosticLevel, MediaDiagnosticPayload, MediaFatalPayload};
 use serde::Serialize;
 use tauri::AppHandle;
@@ -71,7 +71,7 @@ pub(super) fn emit_attempts(app: &AppHandle, id: &str, group_id: &str, attempts:
       group_id,
       attempts: attempts.iter().map(AttemptPayload::from).collect(),
       winner: attempts.iter().position(|a| a.outcome == Outcome::Verified),
-      final_code: final_code(attempts),
+      final_code: terminal_code(attempts),
     },
   );
 }
@@ -83,7 +83,7 @@ pub(crate) fn publish_terminal(
   message: impl FnOnce(&str) -> String,
   mut emit: impl FnMut(MediaDiagnosticPayload, MediaFatalPayload),
 ) -> bool {
-  let Some(code) = final_code(attempts) else {
+  let Some(code) = terminal_code(attempts) else {
     return false;
   };
   let message = message(code);

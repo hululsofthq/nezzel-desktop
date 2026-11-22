@@ -179,7 +179,8 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
       }
       Engine::Reader => {
         match crate::resolve::resolve_with_limit(&value.url, value.read_limit()).await {
-          crate::resolve::Resolution::Passthrough(url) => target.rewrite(url),
+          crate::resolve::Resolution::Passthrough(url)
+          | crate::resolve::Resolution::Refused { url } => target.rewrite(url),
           crate::resolve::Resolution::PostMedia { url, title, .. } => {
             post_title = title;
             target.rewrite(url);

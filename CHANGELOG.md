@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+- Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it.
+- Instagram: a post that was saved completely no longer shows "Showing the items found before the site stopped responding".
+- Instagram: a post that needs a sign-in no longer ends with "The other items were saved" when nothing was saved.
+- An album or photo post you already saved now says "Already saved" and offers "Download again", which saves a second copy beside the first.
+- Reddit: when Reddit refuses downloads from your network, the message says so and offers to open the post on Reddit, instead of asking you to sign in.
+- With a proxy set in Settings, Nezzel's own connections (checking for and downloading updates, error reports, usage counts) go through the proxy too.
+- The "could not check free disk space" and "download stopped making progress" messages no longer show two periods.
+
 ## 0.1.4
 
 - A link that gives two or more files (a playlist, an album, a post with several videos or photos) is now saved in one folder named after it. To keep everything in one place as before, choose "No subfolders" under "Organise downloads by" in Settings; if you had already chosen it, choose it once more.

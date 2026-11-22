@@ -106,7 +106,7 @@ export const LOGIN_REASONS = ['browserAppBound', 'changeProfile', 'browserLoginF
 export type LoginReason = (typeof LOGIN_REASONS)[number];
 
 /** Row events the engine emits to the webview (`events.rs`). */
-export const ROW_EVENTS = { mediaAttempts: 'media_attempts', mediaComplete: 'media_complete', mediaDestination: 'media_destination', mediaDiagnostic: 'media_diagnostic', mediaFatal: 'media_fatal', mediaLoginNeeded: 'media_login_needed', mediaLoginUsing: 'media_login_using', mediaLoginNotice: 'media_login_notice', mediaProgress: 'media_progress', mediaProgressStage: 'media_progress_stage', mediaTransport: 'media_transport' } as const;
+export const ROW_EVENTS = { mediaAttempts: 'media_attempts', mediaComplete: 'media_complete', mediaDestination: 'media_destination', mediaDiagnostic: 'media_diagnostic', mediaFatal: 'media_fatal', mediaGroupTotal: 'media_group_total', mediaLoginNeeded: 'media_login_needed', mediaLoginUsing: 'media_login_using', mediaLoginNotice: 'media_login_notice', mediaProgress: 'media_progress', mediaProgressStage: 'media_progress_stage', mediaTransport: 'media_transport' } as const;
 
 /** Known sites (`sites.rs`): display name, hosts (the host or a subdomain), yt-dlp extractor keys. */
 export const SITES = [

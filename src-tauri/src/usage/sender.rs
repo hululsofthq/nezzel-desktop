@@ -4,6 +4,7 @@
 
 use super::store::payload;
 use super::{now_ms, snapshot, Usage};
+use crate::net::OwnProxy;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::atomic::Ordering;
@@ -21,27 +22,42 @@ pub trait Post: Send + Sync {
 }
 
 pub struct HttpPost {
-  client: reqwest::Client,
+  user_agent: String,
   url: String,
 }
 
 impl HttpPost {
   pub fn new(url: String, version: &str) -> Option<Self> {
-    let client = reqwest::Client::builder()
+    let post = Self {
+      user_agent: format!("Nezzel-Desktop/{version}"),
+      url,
+    };
+    post.client(&OwnProxy::Direct)?;
+    Some(post)
+  }
+
+  /// Built per send (one a day) from the live proxy setting. None: proxy on without an address.
+  fn client(&self, proxy: &OwnProxy) -> Option<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
       .redirect(reqwest::redirect::Policy::none())
       .timeout(TIMEOUT)
       .connect_timeout(TIMEOUT)
-      .user_agent(format!("Nezzel-Desktop/{version}"))
-      .build()
-      .ok()?;
-    Some(Self { client, url })
+      .user_agent(&self.user_agent);
+    match proxy {
+      OwnProxy::Direct => {}
+      OwnProxy::Via(url) => builder = builder.proxy(reqwest::Proxy::all(url).ok()?),
+      OwnProxy::Blocked => return None,
+    }
+    builder.build().ok()
   }
 }
 
 impl Post for HttpPost {
   async fn post(&self, body: String) -> bool {
-    self
-      .client
+    let Some(client) = self.client(&crate::net::own_proxy()) else {
+      return false;
+    };
+    client
       .post(&self.url)
       .header(reqwest::header::CONTENT_TYPE, "application/json")
       .body(body)
@@ -182,6 +198,36 @@ mod tests {
   use std::sync::{Arc, Mutex};
 
   const T: u64 = 20_000 * DAY_MS + 3_600_000;
+
+  // A listener standing in for the user's proxy: it sees the request only if the client went to it.
+  #[tokio::test]
+  async fn usage_post_goes_through_the_proxy_only_when_set() {
+    use tokio::io::AsyncReadExt;
+    let post = HttpPost::new("http://usage.invalid/api/usage".into(), "0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let via = OwnProxy::Via(format!("http://{}", listener.local_addr().unwrap()));
+    let seen = tokio::spawn(async move {
+      let (mut socket, _) = listener.accept().await.unwrap();
+      let mut buf = [0u8; 256];
+      let n = socket.read(&mut buf).await.unwrap();
+      String::from_utf8_lossy(&buf[..n]).into_owned()
+    });
+    let client = post.client(&via).unwrap();
+    let _ = client.post(&post.url).body("x").send().await;
+    assert!(seen
+      .await
+      .unwrap()
+      .starts_with("POST http://usage.invalid/api/usage"));
+    // No proxy: the host is looked up directly (`.invalid` never resolves), nothing reaches a proxy.
+    let error = post
+      .client(&OwnProxy::Direct)
+      .unwrap()
+      .post(&post.url)
+      .send()
+      .await;
+    assert!(error.is_err());
+    assert!(post.client(&OwnProxy::Blocked).is_none());
+  }
 
   #[derive(Default)]
   struct Mock {

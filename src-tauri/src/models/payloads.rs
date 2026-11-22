@@ -10,6 +10,14 @@ pub struct MediaAddPayload<Item> {
   pub item: Item,
 }
 
+/// The real item count of a group, once the gallery listing knows it (the probe may have counted fewer).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaGroupTotal {
+  pub group_id: String,
+  pub total: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaAddWithFormatPayload<Item> {

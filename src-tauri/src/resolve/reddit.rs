@@ -414,6 +414,13 @@ pub(super) async fn read_logged<T: http::Transport>(
   if log.verdict == "interrupted" {
     log.verdict = "mediaRefused";
   }
+  // Measured network refusal (#68): 429, or 403 with an empty body. A 403 that carries a page
+  // (private, quarantined or banned community) is not proof of a network block.
+  if log.verdict == "status"
+    && (log.status == Some(429) || (log.status == Some(403) && log.bytes == 0))
+  {
+    return Verdict::Verified(Resolution::Refused { url: fallback });
+  }
   Verdict::Verified(Resolution::Passthrough(fallback))
 }
 

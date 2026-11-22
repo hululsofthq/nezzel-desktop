@@ -222,11 +222,59 @@ pub fn read_image(path: &Path) -> Result<Vec<u8>, GalleryError> {
   Ok(bytes)
 }
 
+/// "Download again": the next free `<stem>-NNN.<ext>` name (the scheme saved videos use) when `destination` is taken.
+pub fn next_free_name(destination: &Path) -> PathBuf {
+  let (Some(stem), Some(parent)) = (destination.file_stem(), destination.parent()) else {
+    return destination.to_path_buf();
+  };
+  let extension = destination
+    .extension()
+    .map(|e| format!(".{}", e.to_string_lossy()))
+    .unwrap_or_default();
+  let mut path = destination.to_path_buf();
+  for number in 1..10_000 {
+    if std::fs::symlink_metadata(&path).is_err() {
+      break;
+    }
+    path = parent.join(format!("{}-{number:03}{extension}", stem.to_string_lossy()));
+  }
+  path
+}
+
+/// "Download again": saves a new copy under the next free numbered name and returns its path. A name taken
+/// between choosing and saving (a second "Download again" running) is skipped, never reported as reused.
+pub fn finalize_fresh(
+  source: &Path,
+  destination: &Path,
+  cancelled: impl Fn() -> bool,
+) -> Result<PathBuf, GalleryError> {
+  finalize_fresh_with(source, destination, cancelled, next_free_name)
+}
+
+fn finalize_fresh_with(
+  source: &Path,
+  destination: &Path,
+  cancelled: impl Fn() -> bool,
+  first: impl FnOnce(&Path) -> PathBuf,
+) -> Result<PathBuf, GalleryError> {
+  let mut candidate = first(destination);
+  for _ in 0..100 {
+    match finalize(source, &candidate, &cancelled) {
+      Ok(false) => return Ok(candidate),
+      Ok(true) | Err(GalleryError::Refused("imageFileConflict")) => {
+        candidate = next_free_name(destination);
+      }
+      Err(error) => return Err(error),
+    }
+  }
+  Err(GalleryError::Refused("imageFileConflict"))
+}
+
 pub fn finalize(
   source: &Path,
   destination: &Path,
   cancelled: impl Fn() -> bool,
-) -> Result<(), GalleryError> {
+) -> Result<bool, GalleryError> {
   finalize_with_link(source, destination, cancelled, |from, to| {
     std::fs::hard_link(from, to)
   })
@@ -237,7 +285,7 @@ fn finalize_with_link(
   destination: &Path,
   cancelled: impl Fn() -> bool,
   link: impl Fn(&Path, &Path) -> std::io::Result<()>,
-) -> Result<(), GalleryError> {
+) -> Result<bool, GalleryError> {
   if cancelled() {
     return Err(GalleryError::Cancelled);
   }
@@ -260,14 +308,14 @@ fn finalize_with_link(
     }
     // An atomic create without replacement: an existing file/symlink is never overwritten.
     match link(&temp, destination) {
-      Ok(()) => Ok(()),
+      Ok(()) => Ok(false),
       Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
         // A retry can recognize its own completed file without changing any existing bytes.
         if std::fs::symlink_metadata(destination)
           .is_ok_and(|meta| meta.is_file() && meta.len() == bytes.len() as u64)
           && read_image(destination).is_ok_and(|previous| previous == bytes)
         {
-          Ok(())
+          Ok(true)
         } else {
           Err(GalleryError::Refused("imageFileConflict"))
         }
@@ -286,7 +334,7 @@ fn finalize_with_link(
               .is_ok_and(|m| m.is_file() && m.len() == bytes.len() as u64)
               && read_image(destination).is_ok_and(|previous| previous == bytes)
             {
-              Ok(())
+              Ok(true)
             } else {
               Err(GalleryError::Refused("imageFileConflict"))
             };
@@ -308,7 +356,7 @@ fn finalize_with_link(
           if cancelled() {
             return Err(GalleryError::Cancelled);
           }
-          Ok(())
+          Ok(false)
         })();
         drop(final_file);
         if copied.is_err() {
@@ -420,9 +468,10 @@ mod tests {
     let png = include_bytes!("../../../src/assets/placeholder.png");
     std::fs::write(&source, png).unwrap();
     assert_eq!(image_type(png).unwrap(), "png");
-    finalize(&source, &destination, || false).unwrap();
+    assert!(!finalize(&source, &destination, || false).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), png);
-    finalize(&source, &destination, || false).unwrap();
+    // An identical existing file is reported as reused, not as a new save.
+    assert!(finalize(&source, &destination, || false).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), png);
     std::fs::write(&destination, b"an unrelated existing file").unwrap();
     assert!(finalize(&source, &destination, || false).is_err());
@@ -439,6 +488,38 @@ mod tests {
   }
 
   #[test]
+  fn download_again_takes_the_next_free_numbered_name() {
+    let stage = Staging::new().unwrap();
+    let saved = stage.path.join("Post-001.png");
+    assert_eq!(next_free_name(&saved), saved);
+    std::fs::write(&saved, b"x").unwrap();
+    assert_eq!(next_free_name(&saved), stage.path.join("Post-001-001.png"));
+    std::fs::write(stage.path.join("Post-001-001.png"), b"x").unwrap();
+    assert_eq!(next_free_name(&saved), stage.path.join("Post-001-002.png"));
+  }
+
+  #[test]
+  fn download_again_skips_a_name_taken_after_it_was_chosen() {
+    let stage = Staging::new().unwrap();
+    let source = stage.path.join("source.png");
+    let destination = stage.path.join("saved.png");
+    let png = include_bytes!("../../../src/assets/placeholder.png");
+    std::fs::write(&source, png).unwrap();
+    std::fs::write(&destination, png).unwrap();
+    // Another "Download again" already wrote the name this one chose: identical bytes, then different bytes.
+    let taken = stage.path.join("saved-001.png");
+    std::fs::write(&taken, png).unwrap();
+    let saved = finalize_fresh_with(&source, &destination, || false, |_| taken.clone()).unwrap();
+    assert_eq!(saved, stage.path.join("saved-002.png"));
+    let other = stage.path.join("saved-003.png");
+    std::fs::write(&other, b"another file").unwrap();
+    let saved = finalize_fresh_with(&source, &destination, || false, |_| other.clone()).unwrap();
+    assert_eq!(saved, stage.path.join("saved-004.png"));
+    assert_eq!(std::fs::read(&other).unwrap(), b"another file");
+    assert_eq!(std::fs::read(&taken).unwrap(), png);
+  }
+
+  #[test]
   fn filesystems_without_hard_links_can_save_without_replacing_existing_files() {
     let stage = Staging::new().unwrap();
     let source = stage.path.join("source.png");
@@ -446,9 +527,9 @@ mod tests {
     let png = include_bytes!("../../../src/assets/placeholder.png");
     std::fs::write(&source, png).unwrap();
     let no_links = |_: &Path, _: &Path| Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
-    finalize_with_link(&source, &destination, || false, no_links).unwrap();
+    assert!(!finalize_with_link(&source, &destination, || false, no_links).unwrap());
     assert_eq!(std::fs::read(&destination).unwrap(), png);
-    finalize_with_link(&source, &destination, || false, no_links).unwrap();
+    assert!(finalize_with_link(&source, &destination, || false, no_links).unwrap());
     std::fs::write(&destination, b"unrelated").unwrap();
     assert!(finalize_with_link(&source, &destination, || false, no_links).is_err());
     assert_eq!(std::fs::read(&destination).unwrap(), b"unrelated");

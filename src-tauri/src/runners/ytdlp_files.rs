@@ -161,13 +161,15 @@ impl PendingFiles {
           continue;
         }
       }
-      // One item of a multi-item post carries its position, like the post's photos ("-002").
+      // One item of a multi-item post carries its position, like the post's photos ("-002"), under
+      // the group folder's name when it is saved there, as the gallery-dl items are.
       if let Some(number) = item_number {
         let name = target
           .file_name()
           .and_then(|n| n.to_str())
           .ok_or(io::ErrorKind::InvalidData)?;
         let (stem, extension) = name.rsplit_once('.').ok_or(io::ErrorKind::InvalidData)?;
+        let stem = group_dir.unwrap_or(stem);
         target.set_file_name(crate::files::sanitize::limit_media_name(&format!(
           "{stem}-{number:03}.{extension}"
         )));
@@ -780,7 +782,7 @@ mod tests {
     };
     let publish = |number, group_dir| {
       let mut pending = PendingFiles::default();
-      pending.record(&line("Post by natgeo.mp4"));
+      pending.record(&line("Presented by Rolex.mp4"));
       let anchor = if group_dir {
         group.clone()
       } else {
@@ -805,8 +807,8 @@ mod tests {
     };
     // Single-item post: name unchanged.
     let single = publish(None, false);
-    assert_eq!(single[0].path, saved.join("Post by natgeo.mp4"));
-    // 2+ items: numbered, inside the group folder.
+    assert_eq!(single[0].path, saved.join("Presented by Rolex.mp4"));
+    // 2+ items: inside the group folder, named after it plus the position, like the photos.
     fs::remove_file(&single[0].path).unwrap();
     let numbered = publish(Some(1), true);
     assert_eq!(numbered[0].path, group.join("Post by natgeo-001.mp4"));

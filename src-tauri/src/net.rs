@@ -48,6 +48,35 @@ pub(crate) fn proxied() -> bool {
     .is_some_and(|config| config.load().network.enable_proxy == Some(true))
 }
 
+/// How the app's own clients (reports, usage counts, update check) reach the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OwnProxy {
+  Direct,
+  /// The user's proxy, always with a scheme (a bare `host:port` means `http://`).
+  Via(String),
+  /// The proxy is switched on with no address: send nothing (same as the tool downloads).
+  Blocked,
+}
+
+pub(crate) fn own_proxy_for(enabled: Option<bool>, proxy: Option<&str>) -> OwnProxy {
+  if enabled != Some(true) {
+    return OwnProxy::Direct;
+  }
+  match proxy.map(str::trim).filter(|value| !value.is_empty()) {
+    None => OwnProxy::Blocked,
+    Some(value) if value.contains("://") => OwnProxy::Via(value.into()),
+    Some(value) => OwnProxy::Via(format!("http://{value}")),
+  }
+}
+
+/// The live Settings proxy for the app's own clients; read per request, so a change applies at once.
+pub(crate) fn own_proxy() -> OwnProxy {
+  CONFIG.get().map_or(OwnProxy::Direct, |config| {
+    let config = config.load();
+    own_proxy_for(config.network.enable_proxy, config.network.proxy.as_deref())
+  })
+}
+
 pub(crate) fn setup(config: crate::SharedConfig) {
   let _ = CONFIG.set(config);
 }
@@ -165,6 +194,25 @@ pub(crate) fn public_address(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn own_proxy_follows_the_setting() {
+    assert_eq!(own_proxy_for(None, Some("1.2.3.4:80")), OwnProxy::Direct);
+    assert_eq!(
+      own_proxy_for(Some(false), Some("1.2.3.4:80")),
+      OwnProxy::Direct
+    );
+    assert_eq!(own_proxy_for(Some(true), None), OwnProxy::Blocked);
+    assert_eq!(own_proxy_for(Some(true), Some(" ")), OwnProxy::Blocked);
+    assert_eq!(
+      own_proxy_for(Some(true), Some("127.0.0.1:8888")),
+      OwnProxy::Via("http://127.0.0.1:8888".into())
+    );
+    assert_eq!(
+      own_proxy_for(Some(true), Some("socks5://h:1")),
+      OwnProxy::Via("socks5://h:1".into())
+    );
+  }
 
   #[test]
   fn public_address_rejects_private_android_ranges() {

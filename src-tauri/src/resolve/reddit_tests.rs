@@ -29,7 +29,9 @@ async fn reddit_normalizes_post_aliases_before_fallback() {
     ));
     assert_eq!(
       read_site(source, &transport).await.resolution(source),
-      Resolution::Passthrough(CANONICAL.into()),
+      Resolution::Refused {
+        url: CANONICAL.into()
+      },
       "{source}"
     );
   }
@@ -57,7 +59,9 @@ async fn reddit_share_redirect_resolves_to_the_post_before_fallback() {
   ));
   assert_eq!(
     read_site(source, &transport).await.resolution(source),
-    Resolution::Passthrough(CANONICAL.into())
+    Resolution::Refused {
+      url: CANONICAL.into()
+    }
   );
 }
 
@@ -674,7 +678,7 @@ async fn reddit_reader_records_its_verdict_with_the_link_shape_only() {
     let verdict = crate::resolve::reddit::read_logged(source, &transport, &mut log).await;
     assert!(matches!(
       verdict,
-      Verdict::Verified(Resolution::Passthrough(_))
+      Verdict::Verified(Resolution::Passthrough(_) | Resolution::Refused { .. })
     ));
     assert_eq!(
       (
@@ -709,4 +713,50 @@ async fn reddit_reader_records_its_verdict_with_the_link_shape_only() {
   assert!(!crate::resolve::reddit::log_skipped(
     "https://example.com/r/test/"
   ));
+}
+
+#[tokio::test]
+async fn only_a_429_or_an_empty_403_marks_the_reader_refused() {
+  let page: &[u8] = b"<html>private community</html>";
+  for (status, body, refused) in [
+    (403, &b""[..], true),
+    (429, &b""[..], true),
+    (429, page, true),
+    (403, page, false),
+    (404, &b""[..], false),
+    (500, &b""[..], false),
+  ] {
+    let transport = FakeTransport(std::sync::Mutex::new(
+      [(CANONICAL, reply(status, None, body))].into(),
+    ));
+    let expected = if refused {
+      Resolution::Refused {
+        url: CANONICAL.into(),
+      }
+    } else {
+      Resolution::Passthrough(CANONICAL.into())
+    };
+    assert_eq!(
+      read_site(CANONICAL, &transport).await.resolution(CANONICAL),
+      expected,
+      "{status} {}",
+      body.len()
+    );
+  }
+}
+
+/// #68 end to end as far as no AppHandle allows: HTTP answer, reader verdict, recorded attempt,
+/// terminal code. Not covered here: `run_attempts` calling the helper and the chain's stage loop.
+#[tokio::test]
+async fn empty_403_reaches_the_row_as_the_network_block_after_a_sign_in_failure() {
+  use crate::extract::{chain::StageResult, outcome::*, precedence::terminal_code};
+  let transport = FakeTransport(std::sync::Mutex::new(
+    [(CANONICAL, reply(403, None, b""))].into(),
+  ));
+  let resolution = read_site(CANONICAL, &transport).await.resolution(CANONICAL);
+  assert!(matches!(resolution, Resolution::Refused { .. }));
+  let mut stage = StageResult::new(StageId::Ytdlp, Confidence::Medium);
+  crate::runners::ytdlp_info::record_reader_refusal(&mut stage, std::time::Instant::now());
+  stage.record_code("signInRequired", "", false, std::time::Instant::now());
+  assert_eq!(terminal_code(&stage.attempts), Some("redditNetworkBlocked"));
 }
