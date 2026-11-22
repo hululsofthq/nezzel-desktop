@@ -5,7 +5,10 @@ import { UpdaterCheckPayload, UpdaterDownloadProgressPayload } from '../../../sr
 export type UpdaterMockData = {
   available?: boolean;
   currentVersion?: string;
-  availableVersion?: string;
+  version?: string;
+  notes?: string;
+  manual?: boolean;
+  channel?: 'store' | 'snap';
   /** updater_check never settles ('pending') or rejects ('fail'). */
   check?: 'pending' | 'fail';
 };
@@ -17,7 +20,10 @@ export const updateHandlers: Record<string, IPCHandler> = {
     return {
       available: window.E2E.updater?.available ?? false,
       currentVersion: window.E2E.updater?.currentVersion ?? '1.0.0',
-      availableVersion: window.E2E.updater?.availableVersion,
+      version: window.E2E.updater?.version,
+      notes: window.E2E.updater?.notes,
+      manual: window.E2E.updater?.manual ?? false,
+      channel: window.E2E.updater?.channel,
     };
   },
   updater_download: async (): Promise<void> => {

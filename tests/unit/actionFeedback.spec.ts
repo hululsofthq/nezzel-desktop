@@ -106,10 +106,10 @@ describe('action failure feedback', () => {
 
   it.each([
     ['download', 'Download', 'Couldn\'t download the update'],
-    ['install', 'Install', 'Couldn\'t install the update'],
+    ['install', 'Install and restart', 'Couldn\'t install the update'],
   ] as const)('keeps updater %s errors visible and retries the operation', async (operation, label, message) => {
     const store = useUpdaterStore();
-    store.checkResult = { available: true, currentVersion: '1', availableVersion: '2' };
+    store.checkResult = { available: true, currentVersion: '1', version: '2', manual: false };
     store.isNeedingRestart = operation === 'install';
     installTauriMock({ [`updater_${operation}`]: () => Promise.reject('offline') });
     const wrapper = mount(TheUpdater, { global: { plugins: [i18n] } });
@@ -130,7 +130,7 @@ describe('action failure feedback', () => {
 
   it('keeps an updater error event visible instead of dismissing the card', async () => {
     const store = useUpdaterStore();
-    store.checkResult = { available: true, currentVersion: '1' };
+    store.checkResult = { available: true, currentVersion: '1', manual: false };
     store.isUpdating = true;
     const wrapper = mount(TheUpdater, { global: { plugins: [i18n] } });
     store.processUpdaterError('connection lost');

@@ -22,6 +22,8 @@ use store::{End, Origin, State};
 use tauri::{AppHandle, Listener, Manager};
 
 const FILE: &str = "usage.json";
+/// A file of this name next to `usage.json` marks a team test machine: it never sends usage counts.
+const TEST_MARKER: &str = "test-machine";
 
 pub struct Usage {
   path: Option<PathBuf>,
@@ -36,6 +38,8 @@ pub struct Usage {
   cancel: tokio::sync::Notify,
   /// One send at a time (the 6-hour tick and the quit path): a second caller waits, then finds the day sent.
   sending: tokio::sync::Mutex<()>,
+  /// The test-machine log line is written once per run.
+  marker_logged: AtomicBool,
   /// Per running job: speed samples (sum, n) and when its link was received. Memory only.
   speeds: Mutex<HashMap<String, (f64, u32)>>,
   links: Mutex<HashMap<String, (Instant, String)>>,
@@ -76,6 +80,7 @@ impl Usage {
       generation: AtomicU64::new(0),
       cancel: tokio::sync::Notify::new(),
       sending: tokio::sync::Mutex::new(()),
+      marker_logged: AtomicBool::new(false),
       speeds: Mutex::default(),
       links: Mutex::default(),
       failures: Mutex::default(),
@@ -84,6 +89,15 @@ impl Usage {
 
   pub fn configured(&self) -> bool {
     self.endpoint.is_some()
+  }
+
+  /// A regular file `test-machine` in the app data dir (checked per send, so it needs no restart).
+  fn test_machine(&self) -> bool {
+    self
+      .path
+      .as_ref()
+      .and_then(|path| path.parent())
+      .is_some_and(|dir| dir.join(TEST_MARKER).is_file())
   }
 
   fn persist(&self, state: &State) {

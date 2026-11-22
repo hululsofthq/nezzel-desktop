@@ -15,7 +15,7 @@ import { expect, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { test } from './utils/fixtures';
+import { test, WHATS_NEW_SEEN } from './utils/fixtures';
 import type { MockData } from './utils/mockData';
 import { MAIN_PANE_ID, LIST_SEARCH_ID, ROW_SELECTOR } from '../../src/helpers/domIds';
 
@@ -168,7 +168,11 @@ const ALL_STATES: GalleryState[] = [
   { name: 'settings-about-idle', seed: 'settings-about', act: async page => page.getByTestId('about-check').scrollIntoViewIfNeeded() },
   { name: 'settings-about-checking', seed: 'settings-about', mockData: { updater: { check: 'pending' } }, act: aboutCheck },
   { name: 'settings-about-latest', seed: 'settings-about', act: aboutCheck },
-  { name: 'settings-about-available', seed: 'settings-about', mockData: { updater: { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' } }, act: aboutCheck },
+  { name: 'settings-about-available', seed: 'settings-about', mockData: { updater: { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: false } }, act: aboutCheck },
+  { name: 'settings-about-whats-new', seed: 'settings-about', act: async (page) => {
+    await page.getByTestId('about-whats-new').scrollIntoViewIfNeeded();
+    await page.getByTestId('about-whats-new-0.1.4').click();
+  } },
   { name: 'settings-about-error', seed: 'settings-about', mockData: { updater: { check: 'fail' } }, act: aboutCheck },
   { name: 'report-dialog', seed: 'settings-about', act: async page => page.getByTestId('about-report').click() },
   { name: 'report-crash', seed: false, mockData: { crash: 'pending' } },
@@ -184,7 +188,7 @@ const ALL_STATES: GalleryState[] = [
   { name: 'install-done', seed: false, mockData: { binaries: { check: ['yt-dlp', 'ffmpeg'], ensure: true } }, advanceMs: 4_200 },
 
   // Updater card, toasts, drop overlay
-  ...seedsOnly(['updater-available', 'updater-downloading', 'updater-restart', 'updater-error', 'toast-success', 'toast-error', 'toast-undo', 'drop-overlay']),
+  ...seedsOnly(['updater-available', 'updater-manual', 'whats-new-line', 'updater-downloading', 'updater-restart', 'updater-error', 'toast-success', 'toast-error', 'toast-undo', 'drop-overlay']),
 
   // Capture bar (quick bar) and copied-link card
   ...(['capture-bar', 'capture-card'] as const).flatMap(window => [
@@ -280,7 +284,7 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
         await expect(page).toHaveURL(/settings\/about/);
         await expect(page.getByTestId('about-report')).toBeVisible();
         const external = page.locator('a[target=_blank]:not([data-slot=button])');
-        await expect(external).toHaveCount(3);
+        await expect(external).toHaveCount(4);
         for (const link of await external.all()) {
           await expect(link.locator('svg')).toBeVisible();
           expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(52);
@@ -324,10 +328,11 @@ for (const state of STATES) {
 
     for (const locale of LOCALES) {
       const data: MockData = { ...(typeof state.mockData === 'function' ? state.mockData(locale) : state.mockData), ...(process.env.NZ_PLATFORM ? { platform: process.env.NZ_PLATFORM as MockData['platform'] } : {}), settings: { appearance: { language: locale, theme: 'light' } } };
-      await page.addInitScript((d) => {
+      await page.addInitScript(({ d, seen }) => {
         window.E2E = d;
         localStorage.clear(); // each load starts fresh (cleared rows, UI prefs persist otherwise)
-      }, data);
+        localStorage.setItem(seen.key, seen.version);
+      }, { d: data, seen: WHATS_NEW_SEEN });
       await page.setViewportSize(state.window ? CAPTURE_SIZES[state.window] : SIZES.default);
       await page.goto(state.window ? `/?window=${state.window}` : (state.path ?? '/'));
       await expect(page.locator('html')).toHaveAttribute('lang', locale);

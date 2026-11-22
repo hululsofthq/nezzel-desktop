@@ -10,13 +10,14 @@
         leave-to-class="translate-y-4 opacity-0"
     >
       <div
-          v-if="!isIgnored && checkResult?.available"
+          v-if="showCard"
           role="alert"
           data-testid="updater-alert"
           class="m-4 flex w-80 max-w-[calc(100vw-2rem)] items-start gap-3 rounded-xl border border-hairline bg-card p-3 text-foreground shadow-lg pointer-events-auto will-change-transform"
       >
         <span class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-primary-soft text-primary-soft-foreground" aria-hidden="true">
-          <RefreshCw class="size-4" :class="{ 'animate-spin motion-reduce:animate-none': isUpdating }" />
+          <Check v-if="isNeedingRestart && !isUpdating && !lastError" class="size-4" />
+          <RefreshCw v-else class="size-4" :class="{ 'animate-spin motion-reduce:animate-none': isUpdating }" />
         </span>
         <div class="min-w-0 flex-1">
           <template v-if="lastError">
@@ -26,31 +27,54 @@
               <Button @click="updaterStore.retry()">{{ t('common.retry') }}</Button>
             </div>
           </template>
+          <template v-else-if="info?.manual">
+            <h3 :class="titleCls">{{ availableTitle }}</h3>
+            <p :class="subCls">{{ t('updater.manualSub') }}</p>
+            <div class="mt-2.5 flex items-center justify-end gap-2">
+              <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
+              <Button as="a" :href="pageUrl" target="_blank" rel="noopener" data-testid="updater-open-page">
+                {{ t('updater.openPage') }}<ExternalLink aria-hidden="true" />
+              </Button>
+            </div>
+          </template>
           <template v-else-if="!isUpdating && !isNeedingRestart">
-            <h3 class="text-[13px] font-medium leading-7">{{ t('updater.available') }}</h3>
-            <div class="mt-2 flex justify-end gap-2">
+            <h3 :class="titleCls">{{ availableTitle }}</h3>
+            <p v-if="info?.currentVersion && info.version" :class="subCls">{{ t('updater.youHave', { version: isolate(info.currentVersion) }) }}</p>
+            <ul v-if="lines.length" class="mt-1 flex flex-col gap-0.5" data-testid="updater-notes">
+              <li v-for="line in lines" :key="line" class="flex gap-2 text-[12.5px] leading-normal text-pretty before:mt-[0.6lh] before:size-1 before:shrink-0 before:rounded-full before:bg-muted-foreground/70 rtl:text-[13px]">
+                <span class="min-w-0">{{ line }}</span>
+              </li>
+            </ul>
+            <div class="mt-2.5 flex items-center justify-end gap-2">
+              <button
+                v-if="info?.version"
+                type="button"
+                class="me-auto rounded-[4px] text-[12px] text-muted-foreground underline decoration-input underline-offset-3 outline-none transition-colors duration-100 hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)] rtl:text-[12.5px]"
+                data-testid="updater-skip"
+                @click="updaterStore.skip()"
+              >{{ t('updater.skip') }}</button>
               <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
               <Button @click="updaterStore.download()">{{ t('common.download') }}</Button>
             </div>
           </template>
           <template v-else-if="isNeedingRestart && !isUpdating">
-            <h3 class="text-[13px] font-medium leading-7">{{ t('updater.install.title') }}</h3>
-            <p class="text-[12px] text-muted-foreground">{{ t('updater.install.subtitle') }}</p>
-            <div class="mt-2 flex justify-end gap-2">
+            <h3 :class="titleCls">{{ info?.version ? t('updater.ready', { version: isolate(info.version) }) : t('updater.install.title') }}</h3>
+            <p :class="subCls">{{ info?.version ? t('updater.readySub') : t('updater.install.subtitle') }}</p>
+            <div class="mt-2.5 flex justify-end gap-2">
               <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
-              <Button @click="updaterStore.install()">{{ t('common.install') }}</Button>
+              <Button @click="updaterStore.install()">{{ info?.version ? t('updater.installRestart') : t('common.install') }}</Button>
             </div>
           </template>
           <template v-else>
-            <h3 class="text-[13px] font-medium leading-7">{{ t(lastOperation === 'install' ? 'common.pleaseWait' : 'updater.downloading') }}</h3>
-            <div v-if="lastOperation === 'download'" class="flex items-center gap-2">
+            <h3 :class="titleCls">{{ downloadingTitle }}</h3>
+            <div v-if="lastOperation === 'download'" class="mt-1.5 flex items-center gap-2">
               <div
                   class="flex-1"
                   role="progressbar"
                   aria-valuemin="0"
                   aria-valuemax="100"
                   :aria-valuenow="progress == null ? undefined : Math.round(progress)"
-                  :aria-label="t('updater.downloading')"
+                  :aria-label="downloadingTitle"
               >
                 <Progress :value="progress" />
               </div>
@@ -64,17 +88,32 @@
 </template>
 
 <script setup lang="ts">
-import { RefreshCw } from '@lucide/vue';
+import { Check, ExternalLink, RefreshCw } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useUpdaterStore } from '../stores/updater';
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
+import { usePlatform } from '../composables/usePlatform';
+import { downloadPageUrl, summaryLines } from '../helpers/updateCheck';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const updaterStore = useUpdaterStore();
-const { checkResult, downloadProgress, isIgnored, isUpdating, isNeedingRestart, lastError, lastOperation } = storeToRefs(updaterStore);
+const { checkResult: info, showCard, downloadProgress, isUpdating, isNeedingRestart, lastError, lastOperation } = storeToRefs(updaterStore);
+const { platform } = usePlatform();
+
+const titleCls = 'text-[13px] font-medium leading-6 rtl:text-[14px]';
+const subCls = 'text-[12px] text-muted-foreground rtl:text-[12.5px]';
+/** Version numbers stay LTR inside Arabic sentences. */
+const isolate = (version: string) => `\u2066${version}\u2069`;
+const availableTitle = computed(() => (info.value?.version ? t('updater.availableVersion', { version: isolate(info.value.version) }) : t('updater.available')));
+const downloadingTitle = computed(() => {
+  if (lastOperation.value === 'install') return t('common.pleaseWait');
+  return info.value?.version ? t('updater.downloadingVersion', { version: isolate(info.value.version) }) : t('updater.downloading');
+});
+const lines = computed(() => summaryLines(info.value?.notes, locale.value));
+const pageUrl = computed(() => downloadPageUrl(platform.value, locale.value));
 
 /** 0–100, or null (indeterminate) until the server says how big the update is. */
 const progress = computed<number | null>(() => {

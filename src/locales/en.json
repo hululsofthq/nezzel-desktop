@@ -1068,7 +1068,16 @@
       "title": "Install update",
       "subtitle": "This will restart the app"
     },
-    "downloading": "Downloading update…"
+    "downloading": "Downloading update…",
+    "availableVersion": "Version {version} is available",
+    "youHave": "You have {version}",
+    "skip": "Skip this version",
+    "downloadingVersion": "Downloading {version}…",
+    "ready": "Version {version} is ready",
+    "readySub": "Nezzel restarts to finish installing",
+    "installRestart": "Install and restart",
+    "manualSub": "This copy doesn't update from inside the app",
+    "openPage": "Open download page"
   },
   "install": {
     "title": {
@@ -1558,10 +1567,23 @@
       "checking": "Checking…",
       "latest": "You have the latest version",
       "available": "A new version is available",
-      "failed": "Couldn't check for updates. Try again later"
+      "failed": "Couldn't check for updates. Try again later",
+      "availableVersion": "Version {version} is available",
+      "fromStore": "Updates come from the Store",
+      "fromSnap": "Updates come from the Snap Store"
+    },
+    "whatsNew": {
+      "title": "What's new",
+      "current": "Current version",
+      "allChanges": "All changes on GitHub"
     }
   },
   "shell": {
+    "whatsNew": {
+      "updated": "Updated to {version}",
+      "see": "See what's new",
+      "dismiss": "Dismiss"
+    },
     "brand": "Nezzel",
     "nav": {
       "label": "Main",

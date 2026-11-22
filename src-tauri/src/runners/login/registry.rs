@@ -128,6 +128,19 @@ impl LoginRequest {
       Self::Download(e) => &e.url,
     }
   }
+  /// #68: the fetch's earlier stages show Reddit refused the page reader and sign-in is the only
+  /// other outcome, so a failed login must end as the network's refusal, not a login card.
+  pub(super) fn network_refusal(&self) -> Option<&[crate::extract::outcome::Attempt]> {
+    match self {
+      Self::Fetch(e)
+        if crate::extract::precedence::terminal_code(&e.prior_attempts)
+          == Some("redditNetworkBlocked") =>
+      {
+        Some(&e.prior_attempts)
+      }
+      _ => None,
+    }
+  }
   pub(super) fn ids(&self) -> (&str, &str) {
     match self {
       Self::Fetch(e) => (&e.id, &e.group_id),

@@ -154,6 +154,18 @@ impl PendingFiles {
         let bounded = crate::files::sanitize::limit_media_stem(stem, budget);
         target.set_file_name(format!("{bounded}.{extension}"));
       }
+      // An item of a post whose group folder was named after yt-dlp ran goes into that folder
+      // beside where yt-dlp's template put it. Never under `anchor`: that is the filesystem root.
+      if let (Some(_), Some(group)) = (item_number, group_dir) {
+        if target.parent().and_then(Path::file_name) != Some(std::ffi::OsStr::new(group)) {
+          let name = target
+            .file_name()
+            .ok_or(io::ErrorKind::InvalidData)?
+            .to_owned();
+          target.set_file_name(group);
+          target.push(name);
+        }
+      }
       // Saved flat before groups got their own folder: still "already saved", never downloaded twice.
       if !fresh {
         if let Some(saved) = saved_before_group_folders(&target, group_dir, &media, receipts) {
@@ -821,6 +833,50 @@ mod tests {
       (flat[0].path.clone(), true)
     );
     assert!(!group.exists());
+  }
+
+  /// #105: the stage mirrors the full path below the filesystem root (the publication anchor), so
+  /// the hand-off's group folder must go next to the file. Joined to the anchor, Windows saved the
+  /// video to `C:\<group>\Users\…` and the row said "the other items were saved".
+  #[test]
+  fn handed_off_item_lands_in_the_group_folder_inside_the_download_folder() {
+    let root = Staging::new().unwrap();
+    let receipts = root.path.join("receipts");
+    let downloads = root.path.join("Downloads/Nezzel");
+    let stage = root.path.join("stage");
+    let location = crate::runners::ytdlp_args::temporary_location_args(
+      downloads.join("%(title)s.%(ext)s").to_str().unwrap(),
+      &stage,
+    );
+    let output = stage.join("output");
+    let source = output.join(location.args[5].replace("%(title)s.%(ext)s", "Rolex.mp4"));
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(&source, b"video").unwrap();
+    let mut pending = PendingFiles::default();
+    pending.record(&format!(
+      "NEZZEL_PUBLISH|{}",
+      serde_json::json!([source, "Instagram", "DfxRiPZIXJo"])
+    ));
+    let PublishOutcome::Files(files) = pending
+      .publish_with(
+        &output,
+        &location.anchor,
+        "u",
+        &receipts,
+        false,
+        Some("Post by natgeo"),
+        Some(1),
+        || false,
+      )
+      .unwrap()
+    else {
+      panic!("unexpected filter")
+    };
+    assert_eq!(
+      files[0].path,
+      downloads.join("Post by natgeo/Post by natgeo-001.mp4")
+    );
+    assert!(!location.anchor.join("Post by natgeo").exists());
   }
 
   #[test]

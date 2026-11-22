@@ -1068,7 +1068,16 @@
       "title": "تثبيت التحديث",
       "subtitle": "سيؤدي هذا إلى إعادة تشغيل التطبيق"
     },
-    "downloading": "جارٍ تنزيل التحديث…"
+    "downloading": "جارٍ تنزيل التحديث…",
+    "availableVersion": "يتوفر الإصدار {version}",
+    "youHave": "لديك {version}",
+    "skip": "تخطَّ هذا الإصدار",
+    "downloadingVersion": "جارٍ تنزيل الإصدار {version}…",
+    "ready": "الإصدار {version} جاهز",
+    "readySub": "يُعاد تشغيل Nezzel لإكمال التثبيت",
+    "installRestart": "التثبيت وإعادة التشغيل",
+    "manualSub": "هذه النسخة لا تُحدَّث من داخل التطبيق",
+    "openPage": "فتح صفحة التنزيل"
   },
   "install": {
     "title": {
@@ -1558,10 +1567,23 @@
       "checking": "جارٍ التحقق…",
       "latest": "لديك أحدث إصدار",
       "available": "يتوفر إصدار جديد",
-      "failed": "تعذّر التحقق من التحديثات. أعد المحاولة لاحقًا"
+      "failed": "تعذّر التحقق من التحديثات. أعد المحاولة لاحقًا",
+      "availableVersion": "يتوفر الإصدار {version}",
+      "fromStore": "التحديثات تصل من المتجر",
+      "fromSnap": "التحديثات تصل من متجر Snap"
+    },
+    "whatsNew": {
+      "title": "ما الجديد",
+      "current": "الإصدار الحالي",
+      "allChanges": "كل التغييرات على GitHub"
     }
   },
   "shell": {
+    "whatsNew": {
+      "updated": "تم التحديث إلى {version}",
+      "see": "ما الجديد",
+      "dismiss": "إغلاق"
+    },
     "brand": "Nezzel",
     "nav": {
       "label": "الرئيسية",

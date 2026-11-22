@@ -21,6 +21,8 @@ import { useToastStore } from '../../../src/stores/toast';
 import { useDragDropStore } from '../../../src/stores/dragDrop';
 import { useUpdaterStore } from '../../../src/stores/updater';
 import { useSettingsStore } from '../../../src/stores/settings';
+import { useWhatsNew } from '../../../src/composables/useWhatsNew';
+import { RELEASE_NOTES } from '../../../src/helpers/releaseNotes';
 import { useDownloadSelection } from '../../../src/composables/useDownloadSelection';
 import { ProgressCategory, ProgressStage } from '../../../src/tauri/types/progress';
 import { TrackType, type MediaAttachment, type MediaFormat, type SourceMediaKind } from '../../../src/tauri/types/media';
@@ -397,22 +399,29 @@ export const seeds: Record<string, () => unknown> = {
   'settings-about': () => router().push({ name: 'settings.about' }),
 
   'updater-available': () => {
-    useUpdaterStore().checkResult = { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' };
+    useUpdaterStore().checkResult = { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: false, notes: SUMMARY_NOTES() };
+  },
+  'updater-manual': () => {
+    useUpdaterStore().checkResult = { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: true, notes: SUMMARY_NOTES() };
+  },
+  'whats-new-line': () => {
+    mixedList();
+    useWhatsNew().lastSeen.value = '0.0.1';
   },
   'updater-downloading': () => {
     const updater = useUpdaterStore();
-    updater.checkResult = { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' };
+    updater.checkResult = { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: false };
     updater.isUpdating = true;
     updater.downloadProgress = { received: 31_000_000, total: 52_000_000 };
   },
   'updater-restart': () => {
     const updater = useUpdaterStore();
-    updater.checkResult = { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' };
+    updater.checkResult = { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: false };
     updater.isNeedingRestart = true;
   },
   'updater-error': () => {
     const updater = useUpdaterStore();
-    updater.checkResult = { available: true, currentVersion: '1.0.0', availableVersion: '1.1.0' };
+    updater.checkResult = { available: true, currentVersion: '1.0.0', version: '1.1.0', manual: false };
     updater.lastError = 'network error';
   },
   'toast-success': () => (mixedList(), useToastStore().showToast(i18n.global.t('feedback.started', { n: 3 }), { style: 'success', duration: 0 })),
@@ -423,6 +432,12 @@ export const seeds: Record<string, () => unknown> = {
     useDragDropStore().isOver = true;
   },
 };
+
+/** latest.json `notes` as the release writes it: summary lines per language. */
+function SUMMARY_NOTES() {
+  const notes = RELEASE_NOTES['0.1.5'];
+  return JSON.stringify(Object.fromEntries(Object.entries(notes).map(([lang, n]) => [lang, n.summary])));
+}
 
 export async function seed(name: string) {
   const run = seeds[name];

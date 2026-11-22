@@ -668,10 +668,9 @@ fn handoff_group(
   let group = count
     .filter(|_| !counted)
     .and_then(|_| runner.default_group_dir(&entry.format.track_type, &context));
-  match group {
-    Some(dir) => (context, anchor.join(&dir), Some(dir)),
-    None => (context, anchor.to_path_buf(), None),
-  }
+  // The anchor is the filesystem root (`/`, `C:\`): the item is put in the group folder when it is
+  // published, next to its download folder (#105).
+  (context, anchor.to_path_buf(), group)
 }
 
 /// Saves what a whole-post yt-dlp run finished, one item at a time. An item that cannot be

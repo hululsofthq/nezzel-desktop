@@ -32,6 +32,32 @@
 
       <!-- Bottom row shares the status bar's 28px line so both read as one edge. -->
       <div class="mt-auto flex flex-col pt-4" :class="collapsed && 'items-center'">
+        <!-- After an update, once: "Updated to X · See what's new" (leads to Settings → About). Rail: the icon alone. -->
+        <template v-if="whatsNew.showLine.value">
+          <tooltip v-if="collapsed" :content="`${updatedText} · ${t('shell.whatsNew.see')}`" :side="tipSide">
+            <button type="button" :class="linkCls(false, true)" class="mb-1.5" data-testid="sidebar-whats-new" :aria-label="`${updatedText}, ${t('shell.whatsNew.see')}`" @click="openWhatsNew">
+              <circle-arrow-up class="size-[18px] shrink-0 text-primary" aria-hidden="true" />
+            </button>
+          </tooltip>
+          <div v-else class="mb-1 flex items-start gap-2 rounded-[6px] py-1.5 ps-2 pe-1" data-testid="sidebar-whats-new">
+            <circle-arrow-up class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <p class="min-w-0 flex-1 text-[12px] leading-normal rtl:text-[12.5px] rtl:leading-relaxed">
+              {{ updatedText }}<br>
+              <button type="button" class="rounded-[4px] font-medium text-primary outline-none hover:underline hover:underline-offset-3 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]" @click="openWhatsNew">{{ t('shell.whatsNew.see') }}</button>
+            </p>
+            <tooltip :content="t('shell.whatsNew.dismiss')" :side="tipSide">
+              <button
+                type="button"
+                class="grid size-[22px] shrink-0 place-items-center rounded-[5px] text-muted-foreground outline-none transition-colors duration-100 hover:bg-muted hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]"
+                :aria-label="t('shell.whatsNew.dismiss')"
+                data-testid="sidebar-whats-new-dismiss"
+                @click="whatsNew.markSeen()"
+              >
+                <x class="size-3.5" aria-hidden="true" />
+              </button>
+            </tooltip>
+          </div>
+        </template>
         <tooltip :content="t('shell.nav.settings')" :side="tipSide" :disabled="!collapsed">
           <router-link :to="{ name: 'settings.general' }" :class="linkCls(isSettings, collapsed)" :aria-current="isSettings ? 'page' : undefined" :aria-label="collapsed ? t('shell.nav.settings') : undefined">
             <settings class="shrink-0" :class="[collapsed ? 'size-[18px]' : 'size-4', isSettings ? 'text-primary' : 'text-muted-foreground']" aria-hidden="true" />
@@ -63,9 +89,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { File as FileIcon, Image as ImageIcon, LayoutGrid, Music, Settings, Video } from '@lucide/vue';
+import { CircleArrowUp, File as FileIcon, Image as ImageIcon, LayoutGrid, Music, Settings, Video, X } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import { useDownloadList } from '../../composables/useDownloadList';
@@ -73,6 +99,7 @@ import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import { parseListView, viewQuery, type TypeFilter } from '../../helpers/listFilter';
 import { usePlatform } from '../../composables/usePlatform';
 import { localeDirection } from '../../i18n';
+import { useWhatsNew } from '../../composables/useWhatsNew';
 
 defineProps<{ collapsed: boolean; canToggle: boolean }>();
 const emit = defineEmits<{ toggle: [] }>();
@@ -86,6 +113,15 @@ const { counts } = useDownloadList();
 const showBrand = computed(() => !isMac.value || localeDirection(locale.value) === 'rtl');
 const tipSide = computed(() => (localeDirection(locale.value) === 'rtl' ? 'left' : 'right'));
 const isSettings = computed(() => String(route.name ?? '').startsWith('settings'));
+
+const router = useRouter();
+const whatsNew = useWhatsNew();
+const updatedText = computed(() => t('shell.whatsNew.updated', { version: `\u2066${whatsNew.version}\u2069` }));
+function openWhatsNew() {
+  whatsNew.markSeen();
+  whatsNew.revealRequested.value = true;
+  void router.push({ name: 'settings.about' });
+}
 
 const type = computed<TypeFilter | null>(() => (route.name === 'home' ? parseListView(route.query).type : null));
 const totals = computed(() => counts('all').types);

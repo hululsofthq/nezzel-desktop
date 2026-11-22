@@ -27,6 +27,7 @@ const nodeSpecs = [
   'tests/unit/settingsIndex.spec.ts',
   'tests/unit/settingsSearch.spec.ts',
   'tests/unit/siteName.spec.ts',
+  'tests/unit/releaseNotesJson.spec.ts',
   'tests/unit/skippedDiagnostics.spec.ts',
   'tests/unit/subtitlePreferences.spec.ts',
   'tests/unit/subtitleSettings.spec.ts',

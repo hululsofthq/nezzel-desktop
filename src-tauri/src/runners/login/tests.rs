@@ -2233,3 +2233,25 @@ fn unknown_legacy_browser_login_policy_migrates_on_without_a_prompt() {
     assert_eq!(auth.browser_login_consent, Some(true));
   }
 }
+
+/// #68: a failed automatic login ends as the network's refusal only when the fetch's earlier stages
+/// show Reddit refused the page reader; a plain sign-in wall keeps the login card.
+#[test]
+fn failed_login_after_a_refused_reddit_reader_is_the_network_refusal() {
+  use crate::extract::{chain::StageResult, outcome::*};
+  let mut stage: StageResult = StageResult::new(StageId::Ytdlp, Confidence::Medium);
+  crate::runners::ytdlp_info::record_reader_refusal(&mut stage, Instant::now());
+  stage.record_code("signInRequired", "", false, Instant::now());
+  let mut refused = pending("refused-reader").request;
+  let mut plain = pending("plain-wall").request;
+  let LoginRequest::Fetch(entry) = &mut refused else {
+    unreachable!()
+  };
+  entry.prior_attempts = stage.attempts.clone();
+  let LoginRequest::Fetch(entry) = &mut plain else {
+    unreachable!()
+  };
+  entry.prior_attempts = stage.attempts[1..].to_vec();
+  assert!(refused.network_refusal().is_some());
+  assert!(plain.network_refusal().is_none());
+}

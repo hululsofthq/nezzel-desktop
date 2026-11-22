@@ -94,6 +94,16 @@ impl Usage {
     if !self.on.load(Ordering::SeqCst) {
       return Err(Sent::Off);
     }
+    // Test machine: like the switch off, whatever was counted is dropped, so removing the marker later
+    // sends none of it. The switch itself stays as the user set it.
+    if self.test_machine() {
+      if !self.marker_logged.swap(true, Ordering::SeqCst) {
+        tracing::info!("usage counts off: test-machine marker");
+      }
+      state.clear();
+      self.persist(&state);
+      return Err(Sent::Off);
+    }
     state.expire(now);
     let due = state.due(now);
     let built = due.then(|| payload(&state.counts, &once, &self.version));
@@ -345,6 +355,44 @@ mod tests {
     assert_eq!(usage.send_once(&mock, once(), T).await, Sent::Off);
     assert_eq!(mock.calls.load(Ordering::SeqCst), 0);
     assert!(usage.snapshot_state().counts.is_empty());
+  }
+
+  fn marked_usage() -> (Usage, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("nezzel-usage-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let usage = Usage::new(
+      Some(dir.join("usage.json")),
+      Some("https://x.test/api/usage".into()),
+      "0.1.0-beta.1".into(),
+    );
+    usage.set_on(true);
+    (usage, dir)
+  }
+
+  #[tokio::test]
+  async fn a_test_machine_marker_sends_nothing_and_keeps_nothing() {
+    let (usage, dir) = marked_usage();
+    count(&usage, &[keys::OPEN]);
+    std::fs::write(dir.join("test-machine"), "").unwrap();
+    let mock = ok();
+    assert_eq!(usage.send_once(&mock, once(), T).await, Sent::Off);
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 0);
+    // Removing the marker later flushes none of the test activity.
+    std::fs::remove_file(dir.join("test-machine")).unwrap();
+    assert!(usage.snapshot_state().counts.is_empty());
+    assert_eq!(usage.send_once(&mock, once(), T).await, Sent::Ok);
+    assert!(!mock.bodies.lock().unwrap()[0].contains("\"open\""));
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[tokio::test]
+  async fn without_a_marker_the_ping_goes_as_before() {
+    let (usage, dir) = marked_usage();
+    count(&usage, &[keys::OPEN]);
+    let mock = ok();
+    assert_eq!(usage.send_once(&mock, once(), T).await, Sent::Ok);
+    assert!(mock.bodies.lock().unwrap()[0].contains("\"open\""));
+    std::fs::remove_dir_all(dir).unwrap();
   }
 
   #[tokio::test]

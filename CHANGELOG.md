@@ -4,10 +4,12 @@
 
 - Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it.
 - Instagram: a post that was saved completely no longer shows "Showing the items found before the site stopped responding".
-- Instagram: a post that needs a sign-in no longer ends with "The other items were saved" when nothing was saved.
+- Instagram: when a post with videos and photos is saved without a sign-in, the video Nezzel can get is kept in the post's folder. On Windows it was saved in a folder at the top of the drive instead of your download folder (the row said "The other items were saved" while the folder looked empty); on macOS and Linux it was dropped.
 - An album or photo post you already saved now says "Already saved" and offers "Download again", which saves a second copy beside the first.
 - Reddit: when Reddit refuses downloads from your network, the message says so and offers to open the post on Reddit, instead of asking you to sign in.
 - With a proxy set in Settings, Nezzel's own connections (checking for and downloading updates, error reports, usage counts) go through the proxy too.
+- What's new: Settings → About now lists what changed in each version, in your language. The update card shows the new version and what it brings, with "Skip this version", and after an update one line in the sidebar points to the list.
+- The portable Windows copy now tells you when a new version is out and opens the download page; before, it never said anything.
 - The "could not check free disk space" and "download stopped making progress" messages no longer show two periods.
 
 ## 0.1.4

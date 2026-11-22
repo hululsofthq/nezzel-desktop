@@ -612,6 +612,8 @@ jobs:
         with:
           sparse-checkout: |
             scripts/updater-json.py
+            scripts/release-notes-json.mjs
+            src/release-notes/notes.json
             src-tauri/tauri.conf.json
           sparse-checkout-cone-mode: false
 
@@ -619,9 +621,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NOTES: 'See the assets to download this version and install. If you have an existing install, it will auto-update on launch.'
         run: |
           version=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          # Fails the job when this version has no notes or a language is missing.
+          NOTES=$(node scripts/release-notes-json.mjs "$version")
           python3 scripts/updater-json.py --repo "$GITHUB_REPOSITORY" --tag "app-v$version" --notes "$NOTES"
 
   third-party-sources:

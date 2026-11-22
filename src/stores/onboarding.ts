@@ -31,9 +31,13 @@ export const useOnboardingStore = defineStore('onboarding', () => {
   const showWelcome = ref(false);
   /** The welcome sheet carries the reports switch: whoever saw it needs no separate notice. */
   const sawReportsSwitch = ref(false);
+  /** Whether the welcome was already completed before this run (undefined until preferences load). Read before
+   *  `decide` can save it, so it tells an update from a fresh install (sidebar "Updated to X" line). */
+  const welcomeDoneBefore = ref<boolean | undefined>();
 
   /** Called once after preferences load, before the app mounts. */
   async function decide(onboarding: OnboardingPreferences | undefined): Promise<void> {
+    if (onboarding) welcomeDoneBefore.value = !!onboarding.welcomeDone;
     if (!welcomePending(onboarding)) {
       showWelcome.value = false;
       return;
@@ -65,5 +69,5 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     await usePreferencesStore().patch({ onboarding: { welcomeDone: true, reportsNoticeDone: true } }).catch(warnNotSaved);
   }
 
-  return { showWelcome, sawReportsSwitch, decide, complete };
+  return { showWelcome, sawReportsSwitch, welcomeDoneBefore, decide, complete };
 });

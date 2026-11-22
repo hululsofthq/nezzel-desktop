@@ -3,7 +3,7 @@
  * can't tell"). On = teal track, knob at the inline end; off = neutral grey track, knob at the inline start.
  */
 import { expect, type Page } from '@playwright/test';
-import { test } from './utils/fixtures';
+import { test, WHATS_NEW_SEEN } from './utils/fixtures';
 import { MAIN_PANE_ID } from '../../src/helpers/domIds';
 import { SETTINGS_INDEX } from '../../src/components/settings/settingsIndex';
 import { readFileSync } from 'node:fs';
@@ -14,10 +14,11 @@ const ar = locale('ar');
 
 async function openGeneral(page: Page, language: 'en' | 'ar') {
   await page.route(/^https?:\/\/(?!localhost)/, route => route.abort());
-  await page.addInitScript((d) => {
+  await page.addInitScript(({ d, seen }) => {
     window.E2E = d;
     localStorage.clear();
-  }, { settings: { appearance: { language, theme: 'light' } } });
+    localStorage.setItem(seen.key, seen.version);
+  }, { d: { settings: { appearance: { language, theme: 'light' } } }, seen: WHATS_NEW_SEEN });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('lang', language);
   await expect(page.locator(`#${MAIN_PANE_ID}`)).toBeVisible({ timeout: 30_000 }); // first load waits for Vite

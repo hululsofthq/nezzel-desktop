@@ -16,6 +16,10 @@ export type CaptureClaim = (typeof CAPTURE_CLAIMS)[number];
 export const FAIL_REASONS = ['login', 'unavailable', 'unsupported', 'region', 'protected', 'busy', 'network', 'slow', 'unknown'] as const;
 export type FailReason = (typeof FAIL_REASONS)[number];
 
+/** Where a build that cannot update itself gets updates (`UpdateCheck.channel`). */
+export const UPDATE_CHANNELS = ['store', 'snap'] as const;
+export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
+
 /** Native labels of the two capture windows. */
 export const CAPTURE_WINDOW = { card: 'capture-card', bar: 'capture-bar' } as const;
 export type CaptureWindow = (typeof CAPTURE_WINDOW)[keyof typeof CAPTURE_WINDOW];

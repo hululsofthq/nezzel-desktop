@@ -3,6 +3,7 @@
 //! generated file and never the reverse. Regenerate with `cargo test -- --ignored write_contract_ts`.
 
 use crate::capture::{self, Action};
+use crate::commands::UpdateChannel;
 use crate::platform;
 use std::fmt::Write;
 
@@ -115,6 +116,13 @@ pub fn render_ts() -> String {
     "FAIL_REASONS",
     "FailReason",
     words_of(&capture::preview::FailReason::ALL, |r| r.as_str()),
+  );
+
+  ts.doc("Where a build that cannot update itself gets updates (`UpdateCheck.channel`).");
+  ts.words(
+    "UPDATE_CHANNELS",
+    "UpdateChannel",
+    words_of(&UpdateChannel::ALL, UpdateChannel::as_str),
   );
 
   ts.doc("Native labels of the two capture windows.");
@@ -298,6 +306,12 @@ mod tests {
     let wire = |value: serde_json::Value| value.as_str().unwrap().to_string();
     for reason in capture::preview::FailReason::ALL {
       assert_eq!(wire(serde_json::to_value(reason).unwrap()), reason.as_str());
+    }
+    for channel in UpdateChannel::ALL {
+      assert_eq!(
+        wire(serde_json::to_value(channel).unwrap()),
+        channel.as_str()
+      );
     }
     for session in platform::Session::ALL {
       assert_eq!(

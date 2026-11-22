@@ -364,6 +364,23 @@ pub(super) fn schedule<R: LoginRuntime>(
         }
         // Instagram hand-off with saved items: no login failure is shown, the row finishes partially.
         _ if row.request.resume_kept(&app) => {}
+        // #68: no card or sign-in diagnostic; the row ends as the network's refusal.
+        _ if !expired && row.request.network_refusal().is_some() => {
+          let (id, group) = row.request.ids();
+          if let Some(attempts) = row.request.network_refusal() {
+            crate::extract::terminal::publish_terminal(
+              attempts,
+              group,
+              id,
+              |code| format!("Couldn't get media from this link ({code})"),
+              |diagnostic, fatal| {
+                crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, diagnostic);
+                crate::events::emit(&app, crate::events::MEDIA_FATAL, fatal);
+              },
+            );
+          }
+          row.request.release(&app);
+        }
         _ => {
           let (id, group) = row.request.ids();
           crate::events::emit(

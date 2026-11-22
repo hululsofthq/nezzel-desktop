@@ -1,4 +1,6 @@
+use super::updater_check::UpdateMode;
 use crate::net::OwnProxy;
+use crate::paths::PathsManager;
 use std::io;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Result, Update};
@@ -24,7 +26,14 @@ fn stale(checked_with: &Option<OwnProxy>, live: &OwnProxy) -> bool {
 }
 
 #[tauri::command]
-pub async fn updater_download(app: AppHandle, store: State<'_, Mutex<UpdateStore>>) -> Result<()> {
+pub async fn updater_download(
+  app: AppHandle,
+  store: State<'_, Mutex<UpdateStore>>,
+  paths: State<'_, PathsManager>,
+) -> Result<()> {
+  if !UpdateMode::of(&paths).can_download() {
+    return Err(io::Error::other("this build is updated outside the app").into());
+  }
   let update = {
     let s = store.lock().await;
     let update = s

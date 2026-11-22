@@ -10,6 +10,8 @@ import en from '../../src/locales/en.json';
 import ar from '../../src/locales/ar.json';
 import rustAr from '../../src-tauri/locales/ar.json';
 import fr from '../../src/locales/fr.json';
+import pkg from '../../package.json';
+import { MAX_NOTE_LINES, MAX_SUMMARY_LINES, NOTES_LANGUAGES, RELEASE_NOTES } from '../../src/helpers/releaseNotes';
 
 type RunnerCopy = { shortMessage?: string; action?: string; message?: string };
 const runnerLocales = { en, ar, fr } as unknown as Record<string, { errors: { runner: Record<string, RunnerCopy> } }>;
@@ -261,5 +263,25 @@ describe('Arabic playlist selection counts', () => {
     expect(appLanguageOptions().map(option => option.value).sort()).toEqual(['ar', 'en', 'fr']);
     expect(appLanguageOptions('de').map(option => option.value).sort()).toEqual(['ar', 'de', 'en', 'fr']);
     expect(appLanguageOptions('system').map(option => option.value).sort()).toEqual(['ar', 'en', 'fr']);
+  });
+});
+
+describe('release notes file', () => {
+  it('has an entry for the version in package.json', () => {
+    expect(Object.keys(RELEASE_NOTES)).toContain(pkg.version);
+  });
+
+  it.each(Object.entries(RELEASE_NOTES))('%s: en/ar/fr with the same shape, 1-3 summary lines, at most 6 lines', (_version, byLang) => {
+    const shape = (lang: string) => byLang[lang].groups.map(([, lines]) => lines.length);
+    for (const lang of NOTES_LANGUAGES) {
+      const notes = byLang[lang];
+      expect(notes, lang).toBeDefined();
+      expect(notes.summary.length, lang).toBeGreaterThanOrEqual(1);
+      expect(notes.summary.length, lang).toBeLessThanOrEqual(MAX_SUMMARY_LINES);
+      expect(notes.groups.flatMap(([, lines]) => lines).length, lang).toBeLessThanOrEqual(MAX_NOTE_LINES);
+      expect(shape(lang), lang).toEqual(shape('en'));
+      expect(notes.summary.length, lang).toBe(byLang.en.summary.length);
+      for (const text of [...notes.summary, ...notes.groups.flatMap(([group, lines]) => [group, ...lines])]) expect(text.trim(), lang).not.toBe('');
+    }
   });
 });

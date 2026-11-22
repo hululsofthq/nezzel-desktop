@@ -967,7 +967,16 @@
       "title": "Installer la mise à jour",
       "subtitle": "Cela redémarrera l’application"
     },
-    "downloading": "Téléchargement de la mise à jour…"
+    "downloading": "Téléchargement de la mise à jour…",
+    "availableVersion": "La version {version} est disponible",
+    "youHave": "Vous avez la version {version}",
+    "skip": "Ignorer cette version",
+    "downloadingVersion": "Téléchargement de la version {version}…",
+    "ready": "La version {version} est prête",
+    "readySub": "Nezzel redémarre pour terminer l’installation",
+    "installRestart": "Installer et redémarrer",
+    "manualSub": "Cette copie ne se met pas à jour depuis l’application",
+    "openPage": "Ouvrir la page de téléchargement"
   },
   "install": {
     "title": {
@@ -1458,7 +1467,15 @@
       "checking": "Vérification…",
       "latest": "Vous avez la dernière version",
       "available": "Une nouvelle version est disponible",
-      "failed": "Impossible de vérifier les mises à jour. Réessayez plus tard"
+      "failed": "Impossible de vérifier les mises à jour. Réessayez plus tard",
+      "availableVersion": "La version {version} est disponible",
+      "fromStore": "Les mises à jour viennent du Store",
+      "fromSnap": "Les mises à jour viennent du Snap Store"
+    },
+    "whatsNew": {
+      "title": "Nouveautés",
+      "current": "Version actuelle",
+      "allChanges": "Toutes les modifications sur GitHub"
     }
   },
   "inputFilters": {
@@ -1566,6 +1583,11 @@
     }
   },
   "shell": {
+    "whatsNew": {
+      "updated": "Mis à jour vers la version {version}",
+      "see": "Voir les nouveautés",
+      "dismiss": "Fermer"
+    },
     "brand": "Nezzel",
     "nav": {
       "label": "Principal",

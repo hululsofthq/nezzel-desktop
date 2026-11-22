@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { UpdaterCheckPayload, UpdaterDownloadProgressPayload } from '../tauri/types/updater';
 import { useSettingsStore } from './settings';
+import { cardAllowed } from '../helpers/updateCheck';
+import { persistedRef, textCodec } from '../helpers/persistedRef';
 
 export const useUpdaterStore = defineStore('updater', () => {
   const checkResult = ref<UpdaterCheckPayload | undefined>();
@@ -13,11 +15,17 @@ export const useUpdaterStore = defineStore('updater', () => {
   const lastError = ref<string | undefined>();
   const lastOperation = ref<'download' | 'install'>('download');
   const settingsStore = useSettingsStore();
+  /** "Skip this version": kept on this computer; a newer version shows the card again. */
+  const skippedVersion = persistedRef('nezzel.update.skippedVersion', textCodec, '');
+  /** The latest check was manual (About): the user asked, so even a skipped version shows the card. Applies to that result only. */
+  const manualCheck = ref(false);
+  const showCard = computed(() => !isIgnored.value && cardAllowed(checkResult.value, skippedVersion.value, manualCheck.value));
 
   /** Background check obeys the "update app" switch; a manual check (About) always runs and re-shows the card. */
   async function check(manual = false) {
     if (!manual && !settingsStore.settings.update.updateApp) return;
     checkResult.value = await invoke<UpdaterCheckPayload>('updater_check');
+    manualCheck.value = manual;
     if (manual && checkResult.value?.available) isIgnored.value = false;
     return checkResult.value;
   }
@@ -65,6 +73,11 @@ export const useUpdaterStore = defineStore('updater', () => {
     isIgnored.value = true;
   }
 
+  function skip() {
+    if (checkResult.value?.version) skippedVersion.value = checkResult.value.version;
+    isIgnored.value = true;
+  }
+
   function processUpdaterDownloadProgress(payload: UpdaterDownloadProgressPayload) {
     Object.assign(downloadProgress.value, payload);
   }
@@ -82,5 +95,5 @@ export const useUpdaterStore = defineStore('updater', () => {
     lastError.value = payload;
   }
 
-  return { checkResult, downloadProgress, isUpdating, isIgnored, isNeedingRestart, lastError, lastOperation, retry, ignore, check, download, install, processUpdaterDownloadProgress, processUpdaterFinished, processUpdaterError };
+  return { checkResult, showCard, skippedVersion, downloadProgress, isUpdating, isIgnored, isNeedingRestart, lastError, lastOperation, retry, ignore, skip, check, download, install, processUpdaterDownloadProgress, processUpdaterFinished, processUpdaterError };
 });

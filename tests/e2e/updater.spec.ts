@@ -7,7 +7,7 @@ test.describe('when it has an update available', () => {
     mockData: [{
       updater: {
         available: true,
-        availableVersion: '1.2.3',
+        version: '1.2.3',
         currentVersion: '1.2.2',
       },
     }, { scope: 'test' }],

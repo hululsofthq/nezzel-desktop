@@ -1,0 +1,186 @@
+{
+  "0.1.5": {
+    "en": {
+      "summary": [
+        "Instagram: numbered file names and the item count on the row",
+        "Reddit: a clear message when your network is blocked, with Open post",
+        "Albums you saved say “Already saved”, with “Download again”"
+      ],
+      "groups": [
+        [
+          "Instagram",
+          [
+            "Every file of a post shares one numbered name (-001, -002…), and the row shows how many items the post has",
+            "A post saved in full no longer says the site stopped responding"
+          ]
+        ],
+        [
+          "Reddit",
+          [
+            "When Reddit blocks downloads from your network, the message says so and offers to open the post on Reddit"
+          ]
+        ],
+        [
+          "General",
+          [
+            "An album you already saved says “Already saved” and offers “Download again”",
+            "With a proxy set in Settings, update checks and error reports go through it too",
+            "What changed in each version is now listed here and on the update card"
+          ]
+        ]
+      ]
+    },
+    "ar": {
+      "summary": [
+        "Instagram: ملفات المنشور بأسماء مرقّمة، وعدد عناصره ظاهر",
+        "Reddit: رسالة واضحة عندما يمنع شبكتك، مع فتح المنشور",
+        "الألبوم المحفوظ: «محفوظ مسبقًا» أو «تنزيل مرة أخرى»"
+      ],
+      "groups": [
+        [
+          "Instagram",
+          [
+            "ملفات المنشور الواحد تحمل اسمًا واحدًا مرقّمًا (-001، -002…)، ويظهر عدد عناصره قبل فتحه",
+            "المنشور المحفوظ كاملًا لم يعد يعرض رسالة «توقف الموقع عن الاستجابة»"
+          ]
+        ],
+        [
+          "Reddit",
+          [
+            "عندما يمنع Reddit التنزيل من شبكتك تقول الرسالة ذلك، وتعرض فتح المنشور في Reddit"
+          ]
+        ],
+        [
+          "عام",
+          [
+            "الألبوم الذي حفظته من قبل يظهر «محفوظ مسبقًا» مع زر «تنزيل مرة أخرى»",
+            "إذا ضبطت وكيلًا (proxy) في الإعدادات، تمرّ عبره أيضًا التحديثات وتقارير الأخطاء",
+            "ما تغيّر في كل إصدار يظهر الآن هنا وعلى بطاقة التحديث"
+          ]
+        ]
+      ]
+    },
+    "fr": {
+      "summary": [
+        "Instagram : noms de fichiers numérotés et nombre d’éléments sur la ligne",
+        "Reddit : un message clair quand votre réseau est bloqué, avec Ouvrir la publication",
+        "Les albums déjà enregistrés affichent « Déjà enregistré », avec « Télécharger à nouveau »"
+      ],
+      "groups": [
+        [
+          "Instagram",
+          [
+            "Tous les fichiers d’une publication portent le même nom numéroté (-001, -002…), et la ligne indique combien d’éléments elle contient",
+            "Une publication enregistrée en entier n’indique plus que le site a cessé de répondre"
+          ]
+        ],
+        [
+          "Reddit",
+          [
+            "Quand Reddit bloque les téléchargements depuis votre réseau, le message le dit et propose d’ouvrir la publication sur Reddit"
+          ]
+        ],
+        [
+          "Général",
+          [
+            "Un album déjà enregistré affiche « Déjà enregistré » et propose « Télécharger à nouveau »",
+            "Avec un proxy défini dans les Réglages, la recherche de mises à jour et les rapports d’erreur passent aussi par lui",
+            "Les nouveautés de chaque version sont désormais listées ici et sur la carte de mise à jour"
+          ]
+        ]
+      ]
+    }
+  },
+  "0.1.4": {
+    "en": {
+      "summary": [
+        "A link with several files is saved in one folder named after it",
+        "Several links pasted together start downloading by themselves",
+        "Each item of a playlist keeps its own preview picture"
+      ],
+      "groups": [
+        [
+          "General",
+          [
+            "A link with several files (playlist, album, post) is saved in one folder named after it",
+            "Several links pasted together start downloading by themselves",
+            "Each item of a playlist keeps its own preview picture",
+            "Large photo albums keep downloading until the last photo"
+          ]
+        ],
+        [
+          "Instagram",
+          [
+            "A post with videos and photos is saved in one folder"
+          ]
+        ],
+        [
+          "Facebook · Tumblr",
+          [
+            "“share/p” photo links save after you sign in, and Tumblr photos get readable names"
+          ]
+        ]
+      ]
+    },
+    "ar": {
+      "summary": [
+        "الرابط الذي يحوي عدة ملفات يُحفظ في مجلد واحد باسمه",
+        "عدة روابط تلصقها معًا تبدأ التنزيل وحدها",
+        "كل عنصر في قائمة التشغيل يحتفظ بصورته المصغّرة"
+      ],
+      "groups": [
+        [
+          "عام",
+          [
+            "الرابط الذي يحوي عدة ملفات (قائمة تشغيل، ألبوم، منشور) يُحفظ في مجلد واحد باسمه",
+            "عدة روابط تلصقها معًا تبدأ التنزيل وحدها",
+            "كل عنصر في قائمة التشغيل يحتفظ بصورته المصغّرة",
+            "ألبومات الصور الكبيرة تواصل التنزيل حتى آخر صورة"
+          ]
+        ],
+        [
+          "Instagram",
+          [
+            "منشور فيه فيديوهات وصور يُحفظ في مجلد واحد"
+          ]
+        ],
+        [
+          "Facebook · Tumblr",
+          [
+            "روابط صور «share/p» تُحفظ بعد تسجيل الدخول، وصور Tumblr بأسماء مقروءة"
+          ]
+        ]
+      ]
+    },
+    "fr": {
+      "summary": [
+        "Un lien à plusieurs fichiers est enregistré dans un seul dossier à son nom",
+        "Plusieurs liens collés ensemble se téléchargent d’eux-mêmes",
+        "Chaque élément d’une playlist garde sa propre miniature"
+      ],
+      "groups": [
+        [
+          "Général",
+          [
+            "Un lien qui donne plusieurs fichiers (playlist, album, publication) est enregistré dans un seul dossier à son nom",
+            "Plusieurs liens collés ensemble se téléchargent d’eux-mêmes",
+            "Chaque élément d’une playlist garde sa propre miniature",
+            "Les grands albums photo continuent de se télécharger jusqu’à la dernière photo"
+          ]
+        ],
+        [
+          "Instagram",
+          [
+            "Une publication avec des vidéos et des photos est enregistrée dans un seul dossier"
+          ]
+        ],
+        [
+          "Facebook · Tumblr",
+          [
+            "Les liens de photos « share/p » s’enregistrent après connexion, et les photos Tumblr ont des noms lisibles"
+          ]
+        ]
+      ]
+    }
+  }
+}

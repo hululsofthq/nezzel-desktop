@@ -2,6 +2,11 @@ import { Page, test as testBase } from '@playwright/test';
 import MCR, { CoverageReportOptions } from 'monocart-coverage-reports';
 import * as path from 'node:path';
 import { MockData } from './mockData';
+import { readFileSync } from 'node:fs';
+
+/** Notes of the running version count as seen, so the sidebar's "Updated to X" line stays out of every screen
+ *  except the states that ask for it (re-apply after any `localStorage.clear()`). */
+export const WHATS_NEW_SEEN = { key: 'nezzel.whatsNew.lastSeen', version: (JSON.parse(readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as { version: string }).version };
 
 export const coverageOptions: CoverageReportOptions = {
   name: 'Playwright Coverage Report',
@@ -75,9 +80,10 @@ const test = testBase.extend<Options & Fixtures>({
     auto: true,
   }],
   page: async ({ mockData, page }, use) => {
-    await page.addInitScript((mockData: MockData) => {
+    await page.addInitScript(({ mockData, seen }: { mockData: MockData; seen: typeof WHATS_NEW_SEEN }) => {
       window.E2E = mockData;
-    }, mockData);
+      localStorage.setItem(seen.key, seen.version);
+    }, { mockData, seen: WHATS_NEW_SEEN });
     await use(page);
   },
 });
