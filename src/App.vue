@@ -15,7 +15,7 @@ import WelcomeSheet from './components/welcome/WelcomeSheet.vue';
 import { useOnboardingStore } from './stores/onboarding';
 import { useBinariesStore } from './stores/binaries';
 import { useRouter } from 'vue-router';
-import { watch } from 'vue';
+import { onScopeDispose, watch } from 'vue';
 import { useUpdaterStore } from './stores/updater';
 import { useStrongholdStore } from './stores/stronghold';
 import { useDragDrop } from './composables/useDragDrop.ts';
@@ -35,14 +35,6 @@ const checkTools = async () => {
   }
 };
 
-const checkUpdates = async () => {
-  try {
-    await updaterStore.check();
-  } catch (e) {
-    console.warn('Unable to check for updates:', e);
-  }
-};
-
 void checkTools().catch(() => router.push({ path: '/install', query: { checkFailed: '1' } }));
 
 try {
@@ -51,7 +43,7 @@ try {
   console.error(e);
 }
 
-void checkUpdates();
+onScopeDispose(updaterStore.startAutoCheck());
 
 // Crash check and the one-time "reports are now on" notice wait for the welcome sheet.
 const reportStore = useReportStore();

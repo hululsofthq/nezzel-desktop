@@ -155,6 +155,8 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
     "imageEngineUnavailable" => (Outcome::ExtractFailed, "imageEngineUnavailable"),
     "imageSourceUnavailable" => (Outcome::NoMedia, "imageSourceUnavailable"),
     "noMediaFound" => (Outcome::NoMedia, "noMediaFound"),
+    "textOnlyPost" => (Outcome::NoMedia, "textOnlyPost"),
+    "linkOnlyPost" => (Outcome::NoMedia, "linkOnlyPost"),
     "playlistEmpty" => (Outcome::NoMedia, "playlistEmpty"),
     // Not permanent: the user can edit the filters and retry.
     "rejectedByFilter" => (Outcome::Unknown, "rejectedByFilter"),
@@ -191,7 +193,7 @@ pub const LOGIN_CODES: [&str; 4] = [
 /// Private, Geo, Drm, Paid, KindMismatch or NoMedia, except `imageSourceUnavailable`, whose message tells the
 /// user to try again.
 #[cfg_attr(not(test), allow(dead_code))]
-pub const PERMANENT_CODES: [&str; 23] = [
+pub const PERMANENT_CODES: [&str; 25] = [
   // Unsupported
   "liveNow",
   "telegramAppOnly",
@@ -217,6 +219,8 @@ pub const PERMANENT_CODES: [&str; 23] = [
   // KindMismatch, NoMedia
   "photosOnly",
   "noMediaFound",
+  "textOnlyPost",
+  "linkOnlyPost",
   "fileEmpty",
   "playlistEmpty",
 ];
@@ -334,6 +338,8 @@ mod tests {
       ("imageEngineUnavailable", Outcome::ExtractFailed),
       ("imageSourceUnavailable", Outcome::NoMedia),
       ("noMediaFound", Outcome::NoMedia),
+      ("textOnlyPost", Outcome::NoMedia),
+      ("linkOnlyPost", Outcome::NoMedia),
       ("urlNotSupported", Outcome::Unsupported),
       ("urlUnsupported", Outcome::Unsupported),
       ("unknownUrlType", Outcome::Unsupported),

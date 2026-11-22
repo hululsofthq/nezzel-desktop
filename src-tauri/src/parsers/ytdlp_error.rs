@@ -124,6 +124,40 @@ impl CookieReadError {
   }
 }
 
+/// Only the tool's own warning/error lines count; a SponsorBlock outage says nothing about the page.
+fn is_offline_event(event: &DiagnosticEvent) -> bool {
+  !event
+    .component
+    .as_deref()
+    .is_some_and(|c| c.eq_ignore_ascii_case("SponsorBlock"))
+    && network_down("", &event.message)
+}
+
+fn correct_final_code(event: &mut DiagnosticEvent, expired: bool, offline: bool) {
+  if expired
+    && matches!(event.level, DiagnosticLevel::Error)
+    && matches!(
+      event.code.as_str(),
+      "unknown"
+        | "unableToExtractInitialData"
+        | "unableToExtractIdOrInfo"
+        | "accountAccessDenied"
+        | "signInRequired"
+    )
+  {
+    event.code = "signInRequired".into();
+  }
+  if offline
+    && matches!(event.level, DiagnosticLevel::Error)
+    && matches!(
+      event.code.as_str(),
+      "unknown" | "unableToExtractInitialData" | "unableToExtractIdOrInfo"
+    )
+  {
+    event.code = "networkNameResolutionFailed".into();
+  }
+}
+
 /// Transport outages cannot be repaired by changing a browser session.
 pub fn network_down(code: &str, message: &str) -> bool {
   if matches!(
@@ -410,7 +444,7 @@ impl YtdlpErrorParser {
   }
 
   /// A named cookie is only a candidate session. These responses show it was not accepted.
-  fn session_expired(&self, stderr: &str, has_cookies: bool) -> bool {
+  pub(crate) fn session_expired(&self, stderr: &str, has_cookies: bool) -> bool {
     has_cookies && stderr.lines().filter_map(|line| self.parse_line(line)).any(|event| {
       let lower = event.message.to_ascii_lowercase();
       ["session has expired", "session expired", "invalid session", "cookies are no longer valid", "redirected to login page", "redirected to a login page"].iter().any(|signal| lower.contains(signal))
@@ -557,6 +591,16 @@ impl YtdlpErrorParser {
     Some(event)
   }
 
+  /// The corrections `parse_lines` makes from the whole run, for callers that classified line by line:
+  /// an expired session or an offline machine names the vague errors of the run. `expired` is
+  /// `session_expired` over any line of the run.
+  pub fn correct_run(&self, events: &mut [DiagnosticEvent], expired: bool) {
+    let offline = events.iter().any(is_offline_event);
+    for event in events {
+      correct_final_code(event, expired, offline);
+    }
+  }
+
   pub fn parse_lines(&self, lines: Vec<&str>, has_cookies: bool) -> Vec<DiagnosticEvent> {
     let expired = lines
       .iter()
@@ -565,13 +609,7 @@ impl YtdlpErrorParser {
     let offline = lines
       .iter()
       .filter_map(|line| self.parse_line(line))
-      .any(|event| {
-        !event
-          .component
-          .as_deref()
-          .is_some_and(|c| c.eq_ignore_ascii_case("SponsorBlock"))
-          && network_down("", &event.message)
-      });
+      .any(|event| is_offline_event(&event));
     // BiliIntl logs its refusal as a WARNING, then dies on a bare Python error.
     let bili_refused = lines.iter().any(|line| line.contains("BiliIntl said:"));
     let mut events = Vec::with_capacity(lines.len());
@@ -586,28 +624,7 @@ impl YtdlpErrorParser {
         {
           event.code = "unableToExtractIdOrInfo".into();
         }
-        if expired
-          && matches!(event.level, DiagnosticLevel::Error)
-          && matches!(
-            event.code.as_str(),
-            "unknown"
-              | "unableToExtractInitialData"
-              | "unableToExtractIdOrInfo"
-              | "accountAccessDenied"
-              | "signInRequired"
-          )
-        {
-          event.code = "signInRequired".into();
-        }
-        if offline
-          && matches!(event.level, DiagnosticLevel::Error)
-          && matches!(
-            event.code.as_str(),
-            "unknown" | "unableToExtractInitialData" | "unableToExtractIdOrInfo"
-          )
-        {
-          event.code = "networkNameResolutionFailed".into();
-        }
+        correct_final_code(&mut event, expired, offline);
         events.push(event);
       }
     }
@@ -1069,6 +1086,36 @@ mod tests {
       "",
       "Failed to perform, curl: (6) Could not resolve host: www.tiktok.com"
     ));
+  }
+
+  #[test]
+  fn download_path_corrections_give_the_same_final_code_as_the_fetch_path() {
+    let parser = YtdlpErrorParser::new("item", "group", DiagnosticMatcher::shared().unwrap());
+    for (stderr, cookies, expected) in [
+      (
+        "WARNING: [tiktok:user] real.mauritanie: Unable to download user webpage: Failed to perform, curl: (6) Could not resolve host: www.tiktok.com (Could not contact DNS servers).\nERROR: [tiktok:user] real.mauritanie: Unable to extract secondary user ID",
+        false,
+        "networkNameResolutionFailed",
+      ),
+      (
+        "WARNING: [facebook] Redirected to login page\nERROR: [facebook] Cannot parse data",
+        true,
+        "signInRequired",
+      ),
+    ] {
+      let fetched = parser.parse_lines(stderr.lines().collect(), cookies);
+      let mut downloaded: Vec<_> = stderr
+        .lines()
+        .filter_map(|line| parser.parse_fetch_line(line, cookies))
+        .collect();
+      let expired = stderr
+        .lines()
+        .any(|line| parser.session_expired(line, cookies));
+      assert_ne!(downloaded.last().unwrap().code, expected, "needs the correction");
+      parser.correct_run(&mut downloaded, expired);
+      assert_eq!(downloaded.last().unwrap().code, expected);
+      assert_eq!(downloaded.last().unwrap().code, fetched.last().unwrap().code);
+    }
   }
 
   #[test]

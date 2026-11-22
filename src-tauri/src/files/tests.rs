@@ -238,6 +238,34 @@ fn sidecars_reject_corruption_links_and_out_of_bounds_segments() {
       target.part.metadata().unwrap().permissions().mode() & 0o777,
       0o600
     );
+    // Published downloads get the mode a normal file gets (umask-derived), not the part file's 0600.
+    let probe = dir.join("umask-probe");
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o666)
+        .open(&probe)
+        .unwrap();
+    }
+    let normal = std::fs::metadata(&probe).unwrap().permissions().mode() & 0o777;
+    std::fs::remove_file(&probe).unwrap();
+    let published = dir.join("published.bin");
+    std::fs::write(dir.join("published.part"), b"x").unwrap();
+    std::fs::set_permissions(
+      dir.join("published.part"),
+      std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    state::publish(&dir.join("published.part"), &published).unwrap();
+    state::restore_default_mode(&published);
+    let mode = std::fs::metadata(&published).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, normal);
+    if normal != 0o600 {
+      assert_ne!(mode, 0o600);
+    }
+    std::fs::remove_file(&published).unwrap();
     let hard = dir.join("hard-state");
     std::fs::hard_link(&target.state_path, &hard).unwrap();
     assert!(state::State::load(&target.state_path, &key).is_err());

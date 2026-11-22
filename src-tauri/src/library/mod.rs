@@ -138,6 +138,33 @@ fn apply_engine_facts(
   display.sponsor_removed_secs = sponsor_removed_secs;
 }
 
+/// What a post saved: the probe's attachments, widened by the files on disk when more were saved
+/// (an Instagram post yt-dlp read as one video, whose photos gallery-dl added).
+fn saved_summary(
+  selected: &[&crate::models::parsed::MediaAttachment],
+  paths: &[std::path::PathBuf],
+) -> AttachmentSummary {
+  use crate::models::parsed::AttachmentKind;
+  let probed = AttachmentSummary {
+    photos: selected
+      .iter()
+      .filter(|a| matches!(a.kind, AttachmentKind::Image))
+      .count() as u32,
+    videos: selected
+      .iter()
+      .filter(|a| matches!(a.kind, AttachmentKind::Video))
+      .count() as u32,
+  };
+  if paths.len() <= (probed.photos + probed.videos) as usize {
+    return probed;
+  }
+  let on_disk = |wanted: &str| paths.iter().filter(|p| kind(p) == wanted).count() as u32;
+  AttachmentSummary {
+    photos: on_disk("image").max(probed.photos),
+    videos: on_disk("video").max(probed.videos),
+  }
+}
+
 fn persist_completion<R: Runtime>(
   app: &AppHandle<R>,
   entry: &DownloadEntry,
@@ -184,16 +211,7 @@ fn persist_completion<R: Runtime>(
           .is_none_or(|ids| ids.contains(&a.id))
       })
       .collect();
-    metadata.display.attachment_summary = Some(AttachmentSummary {
-      photos: selected
-        .iter()
-        .filter(|a| matches!(a.kind, crate::models::parsed::AttachmentKind::Image))
-        .count() as u32,
-      videos: selected
-        .iter()
-        .filter(|a| matches!(a.kind, crate::models::parsed::AttachmentKind::Video))
-        .count() as u32,
-    });
+    metadata.display.attachment_summary = Some(saved_summary(&selected, &paths));
   }
   index.append(LibraryRecord {
     id: metadata

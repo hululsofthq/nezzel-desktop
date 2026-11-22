@@ -66,6 +66,23 @@ export function isInputFiltersActive(value: InputFilterSettings): boolean {
   );
 }
 
+export type InputFilterKind = 'size' | 'date' | 'advanced';
+
+/**
+ * Saved filter groups that can skip a video, in the engine's order (`active_filter_kinds` in
+ * `input_filter_args.rs`). A playlist pick (`playlistItems`) and the playlist mode are the user's own choice, not a filter.
+ */
+export function activeInputFilterKinds(options: InputFilterOptions | undefined): InputFilterKind[] {
+  const set = (...values: (string | undefined)[]) => values.some(value => !!value?.trim());
+  if (!options) return [];
+  const kinds: [InputFilterKind, boolean][] = [
+    ['size', set(options.minFilesize, options.maxFilesize)],
+    ['date', set(options.date, options.datebefore, options.dateafter)],
+    ['advanced', set(options.matchFilters, options.breakMatchFilters)],
+  ];
+  return kinds.filter(([, active]) => active).map(([kind]) => kind);
+}
+
 export function settingsToInputFilterOverride(
   settings: Settings,
 ): DownloadOverrides['inputFilters'] | undefined {

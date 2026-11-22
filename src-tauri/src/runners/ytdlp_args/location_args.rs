@@ -136,13 +136,36 @@ pub fn widen_group(
 }
 
 /// Directory under the download folder: the chosen layout, or by default the group folder.
-fn directory_layout(layout: &str, context: &TemplateContext) -> PathBuf {
+/// A chosen layout is free text, so it is cut down to plain folder names: a root, drive,
+/// `.` or `..` would leave the download folder. Both `/` and `\` split on every OS.
+/// A layout with no usable folder left falls back to the default.
+pub(super) fn directory_layout(layout: &str, context: &TemplateContext) -> PathBuf {
+  let default = || {
+    group_dir_name(context)
+      .map(PathBuf::from)
+      .unwrap_or_default()
+  };
   match layout {
     NO_SUBFOLDERS => PathBuf::new(),
-    "" => group_dir_name(context)
-      .map(PathBuf::from)
-      .unwrap_or_default(),
-    chosen => PathBuf::from(chosen),
+    "" => default(),
+    chosen => {
+      let mut parts = chosen.split(['/', '\\']).peekable();
+      // A leading `C:` is a drive, not a folder name.
+      if parts.peek().is_some_and(|first| {
+        let mut chars = first.chars();
+        matches!((chars.next(), chars.next(), chars.next()), (Some(d), Some(':'), None) if d.is_ascii_alphabetic())
+      }) {
+        parts.next();
+      }
+      let safe: PathBuf = parts
+        .filter(|part| !matches!(part.trim(), "" | "." | ".."))
+        .collect();
+      if safe.as_os_str().is_empty() {
+        default()
+      } else {
+        safe
+      }
+    }
   }
 }
 

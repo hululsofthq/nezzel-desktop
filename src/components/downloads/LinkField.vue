@@ -30,18 +30,20 @@
       </tooltip>
       <input ref="fileInput" type="file" accept=".csv,.txt,text/csv,text/plain" class="hidden" @change="onFile" />
       <div ref="menuRoot" class="relative">
-        <tooltip :content="t('downloads.field.more')">
+        <tooltip :content="moreLabel">
           <Button
             size="icon-xs"
             variant="ghost"
-            class="size-6 text-muted-foreground"
-            :aria-label="t('downloads.field.more')"
+            class="relative size-6 text-muted-foreground"
+            :aria-label="moreLabel"
             aria-haspopup="menu"
             :aria-expanded="menuOpen ? 'true' : 'false'"
             @click="menuOpen = !menuOpen"
             @keydown.down.prevent="menuOpen = true"
           >
             <Ellipsis />
+            <!-- A saved filter can skip links days later: a quiet dot says one is still on. -->
+            <span v-if="filtersOnLabel" data-testid="filters-on-dot" class="pointer-events-none absolute end-0.5 top-0.5 size-1.5 rounded-full bg-primary" aria-hidden="true" />
           </Button>
         </tooltip>
         <ul
@@ -107,6 +109,7 @@ import { useCaptureShortcut } from '../../composables/useCaptureShortcut';
 import { useCapturePlatform } from '../../composables/useCapturePlatform';
 import { useSettingsStore } from '../../stores/settings';
 import { shortcutLabel } from '../../helpers/shortcut';
+import { activeInputFilterKinds, settingsToInputFilterOverride } from '../../helpers/inputFilters';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -115,6 +118,15 @@ const { isMac } = usePlatform();
 const capture = useCaptureShortcut();
 const capturePlatform = useCapturePlatform();
 const settings = useSettingsStore();
+const filterKinds = computed(() => activeInputFilterKinds(settingsToInputFilterOverride(settings.settings)));
+const filtersOnLabel = computed(() => {
+  const kinds = filterKinds.value;
+  if (kinds.length === 0) return '';
+  return kinds.length === 1 ? t(`downloads.field.filterOn.${kinds[0]}`) : t('downloads.field.filtersOnCount', { count: kinds.length }, kinds.length);
+});
+const moreLabel = computed(() => (filtersOnLabel.value
+  ? t('downloads.field.moreWithFilters', { more: t('downloads.field.more'), filters: filtersOnLabel.value })
+  : t('downloads.field.more')));
 const clipboardTip = computed(() => {
   const state = watchClipboard.enabled ? t('downloads.field.watchOnTip') : t('downloads.field.watchOffTip');
   if (capturePlatform.session === 'wayland') return state;

@@ -87,6 +87,12 @@
         <bdi class="min-w-0 flex-1 truncate font-medium text-foreground" :dir="folder ? 'ltr' : undefined" :title="folder">{{ folder ? shortFolderPath(folder) : t('prefs.general.folderDefault') }}</bdi>
         <Button size="xs" variant="ghost" class="ms-auto shrink-0 text-primary" @click="pickFolder">{{ t('prefs.general.change') }}</Button>
       </div>
+      <!-- The saved link filters this download carries; a filter set days ago must not skip it unseen (#95). -->
+      <div v-if="filtersOnLabel" class="flex items-center gap-2 border-t border-hairline px-4 py-3 text-[12.5px] text-muted-foreground">
+        <Filter class="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+        <span class="min-w-0 flex-1">{{ filtersOnLabel }}</span>
+        <Button size="xs" variant="ghost" class="ms-auto shrink-0 text-primary" @click="editFilters">{{ t('media.steps.error.filters') }}</Button>
+      </div>
     </div>
     <div v-else class="flex-1" />
 
@@ -121,7 +127,7 @@ import { ChevronDownIcon } from '@heroicons/vue/20/solid';
 import { XMarkIcon } from '@heroicons/vue/24/outline';
 import { Button } from '../ui/button';
 import Tooltip from '../ui/tooltip/Tooltip.vue';
-import { Film } from '@lucide/vue';
+import { Film, Filter } from '@lucide/vue';
 import { useToastStore } from '../../stores/toast';
 import { useOverflowTip } from '../../composables/useOverflowTip';
 import Checkbox from '../ui/checkbox/Checkbox.vue';
@@ -141,6 +147,8 @@ import { formatDuration } from '../../helpers/units';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import { useDialog } from '../../composables/useDialog';
 import { shortFolderPath } from '../../helpers/folderPath';
+import { activeInputFilterKinds } from '../../helpers/inputFilters';
+import { useRouter } from 'vue-router';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
 import type { DownloadOptions } from '../../tauri/types/media';
 import { FILES_FOLDER, SMALL_MAX_HEIGHT } from '@/generated/contract';
@@ -168,6 +176,16 @@ const panel = ref<HTMLElement | null>(null);
 const playlistPicker = ref<{ applySelection: () => Promise<boolean>; isApplying: boolean } | null>(null);
 
 const group = computed(() => (sheet.groupId ? groupStore.findGroupById(sheet.groupId) : undefined));
+const router = useRouter();
+const filtersOnLabel = computed(() => {
+  const kinds = activeInputFilterKinds(sheet.groupId ? optionsStore.getOverrides(sheet.groupId)?.inputFilters : undefined);
+  if (kinds.length === 0) return '';
+  return kinds.length === 1 ? t(`downloads.field.filterOn.${kinds[0]}`) : t('downloads.field.filtersOnCount', { count: kinds.length }, kinds.length);
+});
+function editFilters() {
+  sheet.close();
+  void router.push({ name: 'input-filters' });
+}
 const { clipped: titleClipped, measure: measureTitle } = useOverflowTip();
 const thumbFailed = ref(false);
 const thumbUrl = computed(() => (!thumbFailed.value && remoteImagesAllowed(settingsStore.settings.network, group.value?.thumbnail) && group.value?.thumbnail) || null);

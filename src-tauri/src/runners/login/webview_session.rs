@@ -2,7 +2,10 @@
 use super::automatic::enabled;
 use crate::runners::browser_cookies::{proof_cookies, site_key, CookieAccess, CookieContext};
 use std::{
-  sync::LazyLock,
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    LazyLock,
+  },
   time::{Duration, Instant},
 };
 use tauri::{
@@ -115,13 +118,51 @@ impl<F: FnOnce()> Drop for CloseOnDrop<F> {
   }
 }
 
+/// Interactive sign-ins completed per site since launch.
+static SIGN_INS: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+
+/// The sign-in count a login attempt sees before it checks for a session. Pass it to `read`
+/// so a read that waited behind another row's window can reuse the session made there.
+pub(super) fn sign_ins(host: &str) -> u64 {
+  site(host).map_or(0, |(index, _, _)| SIGN_INS[index].load(Ordering::SeqCst))
+}
+
+/// One sign-in window per site. Dropping the future (row or group cancelled) leaves the wait.
+async fn after_window<T, P, S>(
+  window: &tokio::sync::Mutex<()>,
+  sign_ins: &AtomicU64,
+  seen: u64,
+  proof: impl FnOnce() -> P,
+  sign_in: impl FnOnce() -> S,
+) -> Result<Option<T>, &'static str>
+where
+  P: std::future::Future<Output = Result<Option<T>, &'static str>>,
+  S: std::future::Future<Output = Result<Option<T>, &'static str>>,
+{
+  let _site = window.lock().await;
+  // Another row signed in while this one looked or waited: that session is fresh, so use it.
+  // Without a new sign-in, a session still on disk is the one the site refused: clear it.
+  if sign_ins.load(Ordering::SeqCst) != seen {
+    if let Ok(Some(access)) = proof().await {
+      return Ok(Some(access));
+    }
+  }
+  let result = sign_in().await;
+  if matches!(result, Ok(Some(_))) {
+    sign_ins.fetch_add(1, Ordering::SeqCst);
+  }
+  result
+}
+
+/// `sign_in`: `None` reads the saved session only; `Some(seen)` opens the sign-in window, where
+/// `seen` is what `sign_ins` returned before this attempt looked for a session.
 pub(in crate::runners) async fn read(
   app: &AppHandle,
   host: &str,
-  interactive: bool,
+  sign_in: Option<u64>,
 ) -> Result<Option<CookieAccess>, &'static str> {
   let Some((index, domain, login)) = site(host) else {
-    return if interactive {
+    return if sign_in.is_some() {
       Err("browserLoginRemedy")
     } else {
       Ok(None)
@@ -134,17 +175,48 @@ pub(in crate::runners) async fn read(
     .join("login-sessions")
     .join(domain);
   let marker = root.join("session-present");
-  if !interactive && !marker.is_file() {
-    return Ok(None);
-  }
-  let _site = WINDOWS[index].lock().await;
+  let Some(seen) = sign_in else {
+    if !marker.is_file() {
+      return Ok(None);
+    }
+    let _site = WINDOWS[index].lock().await;
+    return session(app, index, domain, login, &root, &marker, false).await;
+  };
+  after_window(
+    &WINDOWS[index],
+    &SIGN_INS[index],
+    seen,
+    || async {
+      if marker.is_file() {
+        session(app, index, domain, login, &root, &marker, false).await
+      } else {
+        Ok(None)
+      }
+    },
+    || session(app, index, domain, login, &root, &marker, true),
+  )
+  .await
+}
+
+/// Runs with the site's window lock held.
+async fn session(
+  app: &AppHandle,
+  index: usize,
+  domain: &'static str,
+  login: &'static str,
+  root: &std::path::Path,
+  marker: &std::path::Path,
+  interactive: bool,
+) -> Result<Option<CookieAccess>, &'static str> {
   if !enabled(app) {
     return Err("browserLoginDisabled");
   }
   // Restrict the directory even on platforms that keep the native store elsewhere (WKWebView).
   std::fs::create_dir_all(root.parent().ok_or("browserCookiesUnreadable")?)
     .map_err(|_| "browserCookiesUnreadable")?;
-  crate::runners::browser_cookies::session_directory(&root)?;
+  crate::runners::browser_cookies::session_directory(root)?;
+  #[cfg(not(target_os = "macos"))]
+  let root_dir = root.to_path_buf();
   let (tx, rx) = tokio::sync::oneshot::channel();
   let handle = app.clone();
   app
@@ -167,7 +239,7 @@ pub(in crate::runners) async fn read(
         #[cfg(target_os = "macos")]
         let builder = builder.data_store_identifier([0x40 + index as u8; 16]);
         #[cfg(not(target_os = "macos"))]
-        let builder = builder.data_directory(root);
+        let builder = builder.data_directory(root_dir);
         builder.build().map_err(|_| "browserCookiesUnreadable")
       };
       if let Err(Ok(window)) = tx.send(build()) {
@@ -312,7 +384,7 @@ pub(in crate::runners) async fn read(
         let access = CookieAccess::from_webview(&context, domain, &cookies, crate::net::CHROME_UA)?;
         // The marker contains no session data. The native per-site store is authoritative.
         if !marker.exists() {
-          crate::runners::browser_cookies::session_marker(&marker)?;
+          crate::runners::browser_cookies::session_marker(marker)?;
         }
         return Ok(Some(access));
       }
@@ -342,6 +414,97 @@ mod tests {
     let _ = task.await;
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
   }
+  type Read = Result<Option<&'static str>, &'static str>;
+  async fn found(session: &'static str) -> Read {
+    Ok(Some(session))
+  }
+  async fn absent() -> Read {
+    Ok(None)
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn second_row_reuses_the_sign_in_the_first_row_made_while_it_waited() {
+    let (window, count) = (tokio::sync::Mutex::new(()), AtomicU64::new(0));
+    let signed_in = std::sync::atomic::AtomicBool::new(false);
+    let windows = AtomicU64::new(0);
+    let (finish, user) = tokio::sync::oneshot::channel::<()>();
+    let seen = count.load(Ordering::SeqCst);
+    let first = after_window(&window, &count, seen, absent, || async {
+      windows.fetch_add(1, Ordering::SeqCst);
+      user.await.unwrap();
+      signed_in.store(true, Ordering::SeqCst);
+      Ok(Some("first"))
+    });
+    let second = after_window(
+      &window,
+      &count,
+      seen,
+      || async { Ok(signed_in.load(Ordering::SeqCst).then_some("first")) },
+      || async {
+        // Clearing the store here would sign the first row out.
+        windows.fetch_add(1, Ordering::SeqCst);
+        Ok(Some("second"))
+      },
+    );
+    let (a, b, ()) = tokio::join!(first, second, async {
+      tokio::time::sleep(Duration::from_secs(60)).await;
+      finish.send(()).unwrap();
+    });
+    assert_eq!((a, b), (Ok(Some("first")), Ok(Some("first"))));
+    assert_eq!(windows.load(Ordering::SeqCst), 1);
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn absent_session_still_clears_and_opens_the_sign_in_form() {
+    let (window, count) = (tokio::sync::Mutex::new(()), AtomicU64::new(0));
+    // Nobody signed in since the attempt looked: no extra read, straight to the form.
+    let opened = after_window(
+      &window,
+      &count,
+      0,
+      || async { panic!("no new sign-in, no second read") },
+      || found("new"),
+    )
+    .await;
+    assert_eq!(opened, Ok(Some("new")));
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    // Another row signed in, but its session is gone again: the form still opens.
+    let opened = after_window(&window, &count, 0, absent, || found("again")).await;
+    assert_eq!(opened, Ok(Some("again")));
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn expired_session_still_takes_the_clear_and_sign_in_path() {
+    let (window, count) = (tokio::sync::Mutex::new(()), AtomicU64::new(3));
+    // The saved session exists but the site refused it, and no sign-in happened since.
+    let result = after_window(&window, &count, 3, || found("rejected"), || found("fresh")).await;
+    assert_eq!(result, Ok(Some("fresh")));
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn cancelled_row_stops_waiting_behind_an_open_sign_in_window() {
+    let window = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    let count = std::sync::Arc::new(AtomicU64::new(0));
+    let held = window.clone().lock_owned().await; // Another row's window is open.
+    let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let waiter = tokio::spawn({
+      let (window, count, opened) = (window.clone(), count.clone(), opened.clone());
+      async move {
+        after_window(&window, &count, 0, absent, || async move {
+          opened.store(true, Ordering::SeqCst);
+          absent().await
+        })
+        .await
+      }
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    waiter.abort(); // Dropping the attempt future is how a row or group cancel reaches it.
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    drop(held);
+    assert!(window.try_lock().is_ok());
+    assert!(!opened.load(Ordering::SeqCst));
+  }
+
   #[test]
   fn unchanged_stale_proof_does_not_close_the_recovery_window() {
     let cookie = |name, value| {

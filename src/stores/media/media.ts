@@ -440,10 +440,11 @@ export const useMediaStore = defineStore('media', () => {
       duration: entry.duration, extractor: playlist.extractor, audioCodecs: [], formats: [], filesize: 0, playlistIndex: entry.index,
     };
     stateStore.setState(itemId, MediaState.error);
-    diagnosticsStore.processMediaDiagnosticPayload({
-      id: itemId, groupId: id, code: 'playlist_entry_unreadable', level: 'error', component: 'playlist',
+    // Stored directly: this child's group is created by the caller after this returns.
+    diagnosticsStore.diagnostics[itemId] = [{
+      id: itemId, groupId: id, code: 'playlistEntryUnreadable', level: 'error', component: 'playlist',
       message: 'Playlist entry could not be read', raw: '', timestamp: Date.now(),
-    });
+    }];
     return {
       ...item, total: 1, processed: 1, errored: 1, isCombined: false, items: { [itemId]: item },
       playlistTitle: playlist.title, playlistCount: playlist.entries?.length, parentIndex: entry.index,
@@ -455,7 +456,8 @@ export const useMediaStore = defineStore('media', () => {
     item.groupId = groupId;
 
     const group = groupStore.findGroupById(groupId);
-    if (!group) throw new Error('Orphaned media item found.');
+    // The row may have been removed while the engine was still reading it: drop the late event.
+    if (!group) return;
     if (!item.title?.trim()) {
       const destination = destinationStore.getPrimaryDestination(groupId);
       if (destination?.confidence === 100) item.title = destination.path.split(/[\\/]/).pop() ?? item.title;
@@ -733,6 +735,8 @@ export const useMediaStore = defineStore('media', () => {
     };
     try {
       const ready = waitForGroupReady(groupId);
+      // If the retry throws first, `ready` is never awaited: keep its rejection from going unhandled.
+      ready.catch(() => undefined);
       await retryGroup(groupId);
       await ready;
       return await downloadGroup(groupId, getDownloadOptions(groupId));
@@ -819,16 +823,19 @@ export const useMediaStore = defineStore('media', () => {
   ): Promise<string[]> {
     const initialGroupIds = await addUrlBatch(urls, fromShortcut, skipPlaylistSelection);
     if (initialGroupIds.length === 0) return [];
-    const readyGroupIds = [...new Set(
-      (await Promise.all(initialGroupIds.map(groupId => waitForGroupReady(groupId)))).flat(),
-    )];
+    // One unreadable link must not stop the rest: settle every read and download what became ready.
+    const settled = await Promise.allSettled(initialGroupIds.map(groupId => waitForGroupReady(groupId)));
+    const readyGroupIds = [...new Set(settled.flatMap(result => result.status === 'fulfilled' ? result.value : []))];
+    const failed = settled.filter(result => result.status === 'rejected');
+    if (readyGroupIds.length === 0) throw (failed[0] as PromiseRejectedResult).reason;
+    if (failed.length > 0) {
+      toastStore.showToast(i18n.global.t('feedback.linksUnreadable', failed.length), { style: 'warning' });
+    }
 
     await notify(NotificationKind.QueueDownloading, { n: readyGroupIds.length.toString() }, fromShortcut);
     const origin = readyGroupIds.length > 1 ? 'batch' : undefined;
     if (origin) countUsage('funnel.batch');
-    await Promise.all(
-      readyGroupIds.map(groupId => downloadGroup(groupId, getDownloadOptions(groupId), origin)),
-    );
+    await runLimited(readyGroupIds, ENGINE_FANOUT, groupId => downloadGroup(groupId, getDownloadOptions(groupId), origin));
 
     return readyGroupIds;
   }
@@ -1011,10 +1018,7 @@ export const useMediaStore = defineStore('media', () => {
 
     const origin = group_ids.length > 1 ? 'batch' : undefined;
     if (origin) countUsage('funnel.batch');
-    await Promise.all(group_ids.map((gid) => {
-      const opts = getDownloadOptions(gid);
-      return downloadGroup(gid, opts, origin);
-    }));
+    await runLimited(group_ids, ENGINE_FANOUT, gid => downloadGroup(gid, getDownloadOptions(gid), origin));
     await notify(NotificationKind.QueueDownloading, { n: group_ids.length.toString() }, fromShortcut);
   }
 
@@ -1054,7 +1058,7 @@ export const useMediaStore = defineStore('media', () => {
     const overrides = cloneMediaData(optionsStore.getOverrides(id));
     const attachments = optionsStore.getAttachmentSelection(id);
     const position = groupStore.groupOrder.indexOf(id);
-    const cancellation = deleteGroup(id);
+    const cancellation = deleteGroup(id, true, false);
     // Retire the engine generation immediately, keeping the row in its original list position.
     group.id = uuidv4();
     group.items = Object.fromEntries(Object.values(group.items).map((item) => {
@@ -1082,7 +1086,33 @@ export const useMediaStore = defineStore('media', () => {
     };
   }
 
-  function deleteGroup(id: string, removeHistory = true) {
+  /** Everything a row needs to come back under the same id (a removal whose engine cancel failed). */
+  function snapshotGroup(original: Group) {
+    const id = original.id;
+    const group = cloneMediaData(original);
+    const itemStates = Object.values(group.items).map(item => [item.id, stateStore.getState(item.id)] as const);
+    const destinations = cloneMediaData(destinationStore.getDestinations(id));
+    const options = cloneMediaData(optionsStore.getOptions(id));
+    const encodings = cloneMediaData(optionsStore.getEncodings(id));
+    const tracks = cloneMediaData(optionsStore.getTracks(id));
+    const overrides = cloneMediaData(optionsStore.getOverrides(id));
+    const attachments = optionsStore.getAttachmentSelection(id);
+    const position = groupStore.groupOrder.indexOf(id);
+    return () => {
+      if (groupStore.findGroupById(id)) return;
+      groupStore.groups[id] = group;
+      groupStore.groupOrder.splice(Math.max(position, 0), 0, id);
+      for (const [itemId, state] of itemStates) if (state) stateStore.setState(itemId, state);
+      for (const destination of destinations) destinationStore.addDestination(id, destination);
+      if (options) optionsStore.setOptions(id, options);
+      if (encodings) optionsStore.setEncodings(id, encodings);
+      if (tracks) optionsStore.setTracks(id, tracks);
+      if (overrides) optionsStore.setOverrides(id, overrides);
+      optionsStore.setAttachmentSelection(id, attachments);
+    };
+  }
+
+  function deleteGroup(id: string, removeHistory = true, restoreOnCancelFailure = true) {
     pendingCaptureKinds.delete(id);
     rejectPendingReadyGroup(id, new Error('Download was removed'));
     // Even when the row is already gone, a login card may still wait for it.
@@ -1090,6 +1120,9 @@ export const useMediaStore = defineStore('media', () => {
     const group = groupStore.findGroupById(id);
     if (!group) return;
     if (removeHistory && stateStore.getGroupState(id) === MediaState.error) forgetFailedGroup(id);
+    const runningState = stateStore.getGroupState(id);
+    const wasRunning = runningState === MediaState.downloading || runningState === MediaState.downloadingList;
+    const restore = wasRunning && restoreOnCancelFailure ? snapshotGroup(group) : undefined;
     const paths = destinationStore.getDestinations(id).map(d => d.path);
     if (removeHistory && paths.length && stateStore.getGroupState(id) === MediaState.done) {
       for (const path of paths) removedLibraryPaths.add(libraryPathKey(path));
@@ -1109,7 +1142,12 @@ export const useMediaStore = defineStore('media', () => {
     destinationStore.deleteDestinations(group.id);
     optionsStore.removeOptions(group.id);
     // Bounded: cancelling or removing a whole playlist must not fire hundreds of engine calls at once.
-    const cancellation = cancelLimiter(() => groupStore.cancelGroup(group.id, true)).catch(console.error);
+    const cancellation = cancelLimiter(() => groupStore.cancelGroup(group.id, true)).catch((error) => {
+      console.error(error);
+      // The tool may still be saving: bring the row back so the user can act on it.
+      if (wasRunning) toastStore.showToast(i18n.global.t('feedback.removeFailed'), { style: 'error' });
+      restore?.();
+    });
     groupStore.deleteGroup(group.id);
     playlistStore.prune(group.parentId);
     return cancellation;

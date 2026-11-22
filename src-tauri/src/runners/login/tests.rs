@@ -2255,3 +2255,52 @@ fn failed_login_after_a_refused_reddit_reader_is_the_network_refusal() {
   assert!(refused.network_refusal().is_some());
   assert!(plain.network_refusal().is_none());
 }
+
+#[test]
+fn exhausted_card_names_the_real_cause_of_a_failed_browser_phase() {
+  for (expired, site_failure, result, expected) in [
+    (
+      true,
+      false,
+      Err("browserLoginTimeout"),
+      "browserSessionExpired",
+    ),
+    (
+      false,
+      true,
+      Err("browserLoginTimeout"),
+      "browserLoginFailed",
+    ),
+    (
+      false,
+      false,
+      Err("browserLoginTimeout"),
+      "browserLoginTimeout",
+    ),
+    (
+      false,
+      false,
+      Err("browserCookiesUnreadable"),
+      "browserCookiesUnreadable",
+    ),
+    (false, false, Err("cancelled"), "browserLoginClosed"),
+    (
+      false,
+      false,
+      Err("browserLoginRemedy"),
+      "browserLoginRemedy",
+    ),
+    (
+      false,
+      false,
+      Err("browserLoginExhausted"),
+      "browserLoginRemedy",
+    ),
+    (false, false, Ok("source".to_owned()), "browserLoginRemedy"),
+  ] {
+    assert_eq!(
+      automatic::exhausted_reason(expired, site_failure, &result),
+      expected
+    );
+  }
+}

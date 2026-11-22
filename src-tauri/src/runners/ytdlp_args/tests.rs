@@ -1444,3 +1444,74 @@ fn group_folder_table() {
     "{name}"
   );
 }
+
+#[test]
+fn directory_layout_keeps_only_relative_normal_folders() {
+  let context = TemplateContext {
+    values: HashMap::new(),
+  };
+  for (layout, expected) in [
+    ("/abs/x", "abs/x"),
+    (r"C:\x\y", "x/y"),
+    (r"\x", "x"),
+    (r"..\..\x", "x"),
+    ("a/../../b", "a/b"),
+    ("..", ""),
+    ("%(uploader)s/%(playlist)s", "%(uploader)s/%(playlist)s"),
+    ("", ""),
+    (super::location_args::NO_SUBFOLDERS, ""),
+  ] {
+    assert_eq!(
+      super::location_args::directory_layout(layout, &context),
+      PathBuf::from(expected),
+      "layout {layout:?}"
+    );
+  }
+}
+
+#[test]
+fn directory_layout_invalid_falls_back_to_group_folder() {
+  let mut values = HashMap::new();
+  values.insert("nezzel_group_files".to_string(), "3".to_string());
+  values.insert("nezzel_group_title".to_string(), "Album".to_string());
+  let context = TemplateContext { values };
+  let expected = super::location_args::directory_layout("", &context);
+  assert_ne!(expected, PathBuf::new());
+  assert_eq!(
+    super::location_args::directory_layout(r"..\..", &context),
+    expected
+  );
+}
+
+#[test]
+fn location_args_escaping_layout_stays_under_base() {
+  let context = TemplateContext {
+    values: HashMap::new(),
+  };
+  let output = OutputSettings {
+    download_dir: Some("/media/base".into()),
+    ..OutputSettings::default()
+  };
+  for layout in ["/etc", r"C:\x", "../../..", r"..\..\x"] {
+    let prefs = PathPreferences {
+      video_directory_template: layout.into(),
+      ..PathPreferences::default()
+    };
+    let args = build_location_args(
+      &TrackType::Video,
+      &context,
+      &output,
+      &prefs,
+      PathBuf::from("/tmp/fallback"),
+    );
+    let temp = super::temporary_location_args(&args[1], std::path::Path::new("/tmp/t"));
+    let rendered = PathBuf::from(&args[1]);
+    assert!(rendered.starts_with("/media/base"), "{layout}: {}", args[1]);
+    assert_eq!(temp.anchor, PathBuf::from("/"), "{layout}");
+    assert!(
+      PathBuf::from(&temp.args[5]).starts_with("media/base"),
+      "{layout}: {}",
+      temp.args[5]
+    );
+  }
+}

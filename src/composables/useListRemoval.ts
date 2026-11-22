@@ -48,7 +48,8 @@ export function useListRemoval() {
    */
   function removeRows(groupIds: string[], message = 'feedback.removed') {
     const unique = [...new Set(groupIds)];
-    const done = new Set(clearDone(finishedIds(rows.value.filter(row => unique.includes(row.id)))));
+    const wanted = new Set(unique);
+    const done = new Set(clearDone(finishedIds(rows.value.filter(row => wanted.has(row.id)))));
     const ids = unique.filter(id => !done.has(id) && !visibility.isHidden(id));
     if (ids.length === 0) return;
     visibility.hide(ids);

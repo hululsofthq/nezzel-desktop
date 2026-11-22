@@ -183,10 +183,10 @@ fn widened_for_post(entry: &DownloadEntry, items: usize) -> DownloadEntry {
   widened
 }
 
-/// `Some(selected)` when the gallery listing selects a different number of items than the row was
-/// created with (`counted`: the hand-off's group file count, one when it names none).
-fn group_total_update(counted: Option<usize>, selected: usize) -> Option<usize> {
-  (selected > 0 && selected != counted.unwrap_or(1)).then_some(selected)
+/// `Some(selected)` when the gallery listing selects several items. The row was made from the probe,
+/// which counted one; the hand-off's own group file count (`nezzel_group_files`) is no proof the row has it (#101).
+fn group_total_update(selected: usize) -> Option<usize> {
+  (selected > 1).then_some(selected)
 }
 
 pub(super) async fn download_attempt(
@@ -294,15 +294,8 @@ pub(super) async fn download_attempt(
   let entry = &widened;
   let selected = post.selected(entry.attachment_ids.as_deref())?;
   // A frontend that already listed the attachments counted them; only the bare hand-off is unknown.
-  if let Some(total) = group_total_update(
-    original
-      .template_context
-      .values
-      .get("nezzel_group_files")
-      .and_then(|files| files.parse().ok()),
-    selected.len(),
-  )
-  .filter(|_| original.attachment_ids.is_none())
+  if let Some(total) =
+    group_total_update(selected.len()).filter(|_| original.attachment_ids.is_none())
   {
     crate::events::emit(
       app,
@@ -452,9 +445,10 @@ pub(super) async fn download_attempt(
         name_video_by_position(&mut video, &base, asset.index);
       }
       let before = crate::download_records::row_file_counts(app, &entry.group_id, &entry.id);
+      let attempt_code = crate::events::AttemptCode::default();
       match crate::events::ATTACHMENT_ATTEMPT
         .scope(
-          (),
+          attempt_code.clone(),
           run_ytdlp_download_with_cookies(app.clone(), video, runner._cookies.clone()),
         )
         .await
@@ -471,11 +465,8 @@ pub(super) async fn download_attempt(
         }
         Err(error) => {
           skipped += 1;
-          last_failure = if matches!(error, YtdlpDownloadError::ExpiredMedia) {
-            GalleryError::Expired
-          } else {
-            GalleryError::Refused("imageSourceUnavailable")
-          };
+          let code = attempt_code.lock().ok().and_then(|code| code.clone());
+          last_failure = video_failure(&error, code.as_deref());
         }
       }
     }
@@ -598,10 +589,47 @@ fn video_published(_before: (usize, usize), after: (usize, usize)) -> bool {
   after.1 > 0
 }
 
+/// Codes a failed video leg may carry to the group's outcome; anything else stays the generic one.
+const VIDEO_LEG_CODES: [&str; 8] = [
+  "rateLimited429",
+  "diskFull",
+  "diskSpaceUnavailable",
+  "networkTimeout",
+  "networkNameResolutionFailed",
+  "downloadStalled",
+  "server5xx",
+  "outputFileBusy",
+];
+
+fn leg_code(code: &str) -> Option<&'static str> {
+  VIDEO_LEG_CODES
+    .into_iter()
+    .chain(crate::extract::outcome::PERMANENT_CODES)
+    .find(|known| *known == code)
+}
+
+/// What a failed video leg means for the group: its real code when the runner knew one (a returned
+/// code, else the last error the suppressed child diagnostics carried), expired media as `Expired`.
+fn video_failure(error: &YtdlpDownloadError, seen_code: Option<&str>) -> GalleryError {
+  let code = match error {
+    YtdlpDownloadError::ExpiredMedia => return GalleryError::Expired,
+    YtdlpDownloadError::RunnerError(code) => {
+      leg_code(code).or_else(|| seen_code.and_then(leg_code))
+    }
+    _ => seen_code.and_then(leg_code),
+  };
+  GalleryError::Refused(code.unwrap_or("imageSourceUnavailable"))
+}
+
 /// "The other items were saved" is only true when most were; a CDN burst limit is named instead.
 fn skipped_code(saved: usize, skipped: usize, last_failure: &GalleryError) -> &'static str {
   if skipped > saved && last_failure.is_rate_limit() {
     "rateLimited429"
+  } else if skipped > saved {
+    match last_failure {
+      GalleryError::Refused(code) => leg_code(code).unwrap_or("galleryItemsSkipped"),
+      _ => "galleryItemsSkipped",
+    }
   } else {
     "galleryItemsSkipped"
   }
@@ -841,12 +869,10 @@ mod tests {
   use serde_json::json;
 
   #[test]
-  fn group_total_is_sent_only_when_the_listing_count_differs() {
-    assert_eq!(group_total_update(None, 4), Some(4), "probe counted one");
-    assert_eq!(group_total_update(Some(3), 4), Some(4));
-    assert_eq!(group_total_update(None, 1), None);
-    assert_eq!(group_total_update(Some(4), 4), None);
-    assert_eq!(group_total_update(Some(4), 0), None);
+  fn group_total_is_sent_for_a_multi_item_listing_even_when_the_hand_off_counted_it() {
+    assert_eq!(group_total_update(4), Some(4));
+    assert_eq!(group_total_update(1), None);
+    assert_eq!(group_total_update(0), None);
   }
 
   #[test]
@@ -867,6 +893,76 @@ mod tests {
     // Already saved before: recorded again under the same path, still a saved item.
     assert!(video_published((1, 1), (1, 1)));
     assert!(video_published((0, 1), (1, 1)));
+  }
+
+  #[test]
+  fn failed_video_leg_carries_its_real_cause_into_the_group_outcome() {
+    use YtdlpDownloadError as E;
+    // (error, code the suppressed child diagnostics carried, group error, warning code when 1 of 3 saved vs 3 skipped)
+    let cases: [(E, Option<&str>, GalleryError, &str, &str); 7] = [
+      (
+        E::NonZeroExit(1),
+        Some("rateLimited429"),
+        GalleryError::Refused("rateLimited429"),
+        "galleryItemsSkipped",
+        "rateLimited429",
+      ),
+      (
+        E::RunnerError("diskFull".into()),
+        None,
+        GalleryError::Refused("diskFull"),
+        "galleryItemsSkipped",
+        "diskFull",
+      ),
+      (
+        E::NonZeroExit(1),
+        Some("networkTimeout"),
+        GalleryError::Refused("networkTimeout"),
+        "galleryItemsSkipped",
+        "networkTimeout",
+      ),
+      (
+        E::RunnerError("networkTimeout".into()),
+        None,
+        GalleryError::Refused("networkTimeout"),
+        "galleryItemsSkipped",
+        "networkTimeout",
+      ),
+      (
+        E::ExpiredMedia,
+        None,
+        GalleryError::Expired,
+        "galleryItemsSkipped",
+        "galleryItemsSkipped",
+      ),
+      (
+        E::NonZeroExit(1),
+        None,
+        GalleryError::Refused("imageSourceUnavailable"),
+        "galleryItemsSkipped",
+        "galleryItemsSkipped",
+      ),
+      (
+        E::RunnerError("Err(boom)".into()),
+        Some("weird"),
+        GalleryError::Refused("imageSourceUnavailable"),
+        "galleryItemsSkipped",
+        "galleryItemsSkipped",
+      ),
+    ];
+    for (error, seen, expected, few, many) in cases {
+      let failure = video_failure(&error, seen);
+      assert_eq!(failure, expected, "{error}");
+      assert_eq!(skipped_code(2, 1, &failure), few, "{error}");
+      assert_eq!(skipped_code(1, 3, &failure), many, "{error}");
+    }
+  }
+
+  #[test]
+  fn video_leg_rate_limit_counts_for_the_outer_cool_down() {
+    let failure = video_failure(&YtdlpDownloadError::NonZeroExit(1), Some("rateLimited429"));
+    assert!(failure.is_rate_limit());
+    assert!(!video_failure(&YtdlpDownloadError::ExpiredMedia, None).is_rate_limit());
   }
 
   #[test]

@@ -98,6 +98,64 @@ pub(crate) fn sweep_image_staging(roots: &[PathBuf]) {
   }
 }
 
+const STALE_COPY_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// `.nezzel-copy-<uuid>.part` (cross-volume publish) and `.nezzel-<uuid>.part` (gallery copy).
+/// The direct-file engine's `<name>.nezzel-part` resume files never match: they have no UUID.
+fn is_copy_part_name(name: &str) -> bool {
+  name
+    .strip_prefix(".nezzel-copy-")
+    .or_else(|| name.strip_prefix(".nezzel-"))
+    .and_then(|s| s.strip_suffix(".part"))
+    .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok())
+}
+
+/// Startup only: remove partial-copy files a crash left directly inside the given folders.
+/// Regular files only (no symlinks), own files on unix, older than 24 hours. No recursion.
+pub(crate) fn sweep_stale_copy_parts(roots: &[PathBuf]) {
+  sweep_stale_copy_parts_at(roots, std::time::SystemTime::now());
+}
+
+fn sweep_stale_copy_parts_at(roots: &[PathBuf], now: std::time::SystemTime) {
+  for root in roots {
+    if !std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_dir()) {
+      continue;
+    }
+    let Ok(root) = root.canonicalize() else {
+      continue;
+    };
+    let Ok(entries) = std::fs::read_dir(root) else {
+      continue;
+    };
+    for entry in entries.flatten() {
+      if !entry.file_name().to_str().is_some_and(is_copy_part_name) {
+        continue;
+      }
+      let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+        continue;
+      };
+      if !meta.file_type().is_file() {
+        continue;
+      }
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::MetadataExt;
+        if meta.uid() != unsafe { libc::geteuid() } {
+          continue;
+        }
+      }
+      let old = meta
+        .modified()
+        .ok()
+        .and_then(|m| now.duration_since(m).ok())
+        .is_some_and(|age| age >= STALE_COPY_AGE);
+      if old {
+        let _ = std::fs::remove_file(entry.path());
+      }
+    }
+  }
+}
+
 pub fn image_type(data: &[u8]) -> Result<&'static str, GalleryError> {
   if data.len() > 128 * 1024 * 1024 {
     return Err(GalleryError::Invalid);
@@ -290,7 +348,8 @@ fn finalize_with_link(
     return Err(GalleryError::Cancelled);
   }
   let parent = destination.parent().ok_or(GalleryError::Invalid)?;
-  std::fs::create_dir_all(parent).map_err(|_| GalleryError::Refused("permissionDenied"))?;
+  std::fs::create_dir_all(parent)
+    .map_err(|error| GalleryError::Refused(crate::files::save_error_code(&error)))?;
   let temp = parent.join(format!(".nezzel-{}.part", uuid::Uuid::new_v4()));
   let result = (|| {
     let bytes = read_image(source)?;
@@ -298,11 +357,11 @@ fn finalize_with_link(
       .write(true)
       .create_new(true)
       .open(&temp)
-      .map_err(|_| GalleryError::Refused("permissionDenied"))?;
+      .map_err(|error| GalleryError::Refused(crate::files::save_error_code(&error)))?;
     file
       .write_all(&bytes)
       .and_then(|_| file.sync_all())
-      .map_err(|_| GalleryError::Refused("permissionDenied"))?;
+      .map_err(|error| GalleryError::Refused(crate::files::save_error_code(&error)))?;
     if cancelled() {
       return Err(GalleryError::Cancelled);
     }
@@ -339,7 +398,7 @@ fn finalize_with_link(
               Err(GalleryError::Refused("imageFileConflict"))
             };
           }
-          Err(_) => return Err(GalleryError::Refused("permissionDenied")),
+          Err(error) => return Err(GalleryError::Refused(crate::files::save_error_code(&error))),
         };
         let copied = (|| {
           for chunk in bytes.chunks(64 * 1024) {
@@ -348,11 +407,11 @@ fn finalize_with_link(
             }
             final_file
               .write_all(chunk)
-              .map_err(|_| GalleryError::Refused("permissionDenied"))?;
+              .map_err(|error| GalleryError::Refused(crate::files::save_error_code(&error)))?;
           }
           final_file
             .sync_all()
-            .map_err(|_| GalleryError::Refused("permissionDenied"))?;
+            .map_err(|error| GalleryError::Refused(crate::files::save_error_code(&error)))?;
           if cancelled() {
             return Err(GalleryError::Cancelled);
           }
@@ -373,6 +432,52 @@ fn finalize_with_link(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn startup_sweep_removes_only_old_partial_copy_files() {
+    let root = Staging::new().unwrap();
+    let id = uuid::Uuid::new_v4();
+    let a = root.path.join(format!(".nezzel-copy-{id}.part"));
+    let b = root
+      .path
+      .join(format!(".nezzel-{}.part", uuid::Uuid::new_v4()));
+    let keep_names = [
+      ".nezzel-copy-notauuid.part".to_string(),
+      format!(".nezzel-copy-{id}.part.bak"),
+      "movie.mp4.nezzel-part".to_string(),
+      ".nezzel-part".to_string(),
+    ];
+    for f in [&a, &b] {
+      std::fs::write(f, b"x").unwrap();
+    }
+    for n in &keep_names {
+      std::fs::write(root.path.join(n), b"x").unwrap();
+    }
+    let dir = root
+      .path
+      .join(format!(".nezzel-{}.part", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    #[cfg(unix)]
+    let link = {
+      let link = root
+        .path
+        .join(format!(".nezzel-copy-{}.part", uuid::Uuid::new_v4()));
+      std::os::unix::fs::symlink(&keep_names[2], &link).unwrap();
+      link
+    };
+    let roots = std::slice::from_ref(&root.path);
+    let now = std::time::SystemTime::now();
+    sweep_stale_copy_parts_at(roots, now + std::time::Duration::from_secs(3600));
+    assert!(a.exists() && b.exists(), "fresh files are kept");
+    sweep_stale_copy_parts_at(roots, now + std::time::Duration::from_secs(25 * 3600));
+    assert!(!a.exists() && !b.exists());
+    for n in &keep_names {
+      assert!(root.path.join(n).exists(), "{n}");
+    }
+    assert!(dir.is_dir());
+    #[cfg(unix)]
+    assert!(std::fs::symlink_metadata(&link).is_ok());
+  }
 
   #[test]
   fn gallery_staging_is_hidden() {
@@ -548,5 +653,35 @@ mod tests {
       Err(GalleryError::Cancelled)
     );
     assert!(!cancelled.exists());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn photo_save_failures_report_their_own_cause_not_permission_denied() {
+    let stage = Staging::new().unwrap();
+    let source = stage.path.join("source.png");
+    let png = include_bytes!("../../../src/assets/placeholder.png");
+    std::fs::write(&source, png).unwrap();
+    let too_long = stage.path.join(format!("{}.png", "a".repeat(300)));
+    assert_eq!(
+      finalize_with_link(
+        &source,
+        &too_long,
+        || false,
+        |from, to| std::fs::hard_link(from, to)
+      ),
+      Err(GalleryError::Refused("outputNameTooLong"))
+    );
+    // A folder that is really a file is not a permission problem either.
+    let under_file = source.join("saved.png");
+    assert_eq!(
+      finalize_with_link(
+        &source,
+        &under_file,
+        || false,
+        |from, to| std::fs::hard_link(from, to)
+      ),
+      Err(GalleryError::Refused("unknown"))
+    );
   }
 }

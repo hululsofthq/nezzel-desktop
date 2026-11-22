@@ -607,7 +607,10 @@ fn reader_handoff(
       stage.terminal = !matches!(reason, Reason::PhotosOnly | Reason::Login);
       stage.error = Some(YtdlpInfoFetchError::Unsupported(*reason));
       stage.record_code(reason.code(), "", has_session, start);
-      if matches!(reason, Reason::NoMedia) {
+      if matches!(
+        reason,
+        Reason::NoMedia | Reason::TextOnly | Reason::LinkOnly
+      ) {
         if let (Some(attempt), Some(reader)) = (
           stage.attempts.last_mut(),
           resolve::readers(original).first(),

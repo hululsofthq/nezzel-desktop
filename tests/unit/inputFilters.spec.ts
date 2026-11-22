@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeInputFilterKinds,
   applyDatePreset,
   createDefaultInputFilterSettings,
   isInputFiltersActive,
@@ -7,6 +8,7 @@ import {
   settingsToInputFilterOverride,
 } from '../../src/helpers/inputFilters.ts';
 import { defaultSettings, type Settings } from '../../src/tauri/types/config.ts';
+import { PlaylistMode, type InputFilterOptions } from '../../src/tauri/types/media.ts';
 
 describe('input filter helpers', () => {
   it('normalizes structured inputs', () => {
@@ -39,6 +41,17 @@ describe('input filter helpers', () => {
       ...createDefaultInputFilterSettings(),
       matchFilters: '!is_live',
     })).toBe(true);
+  });
+
+  it.each([
+    ['none', undefined, []],
+    ['empty values', { date: '  ', minFilesize: '' }, []],
+    ['date', { date: '20261118' }, ['date']],
+    ['size', { maxFilesize: '50M' }, ['size']],
+    ['several', { dateafter: '20261101', minFilesize: '1M', breakMatchFilters: 'is_live' }, ['size', 'date', 'advanced']],
+    ['playlist mode and pick only', { playlistMode: PlaylistMode.playlist, playlistItems: '1-3' }, []],
+  ] as [string, InputFilterOptions | undefined, string[]][])('names the active filter kinds: %s', (_case, options, kinds) => {
+    expect(activeInputFilterKinds(options)).toEqual(kinds);
   });
 
   it('builds an exact queue snapshot override from structured settings', () => {

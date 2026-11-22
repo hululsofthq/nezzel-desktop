@@ -483,6 +483,42 @@ pub(crate) fn publish_with(
   }
   sync_directory(to.parent().ok_or(Error::State)?)
 }
+
+/// The part file is owner-only while it is written; the published file gets the mode a normally
+/// created file gets (0o666 masked by the umask), so other accounts and media servers can read it.
+/// The umask is read by creating a probe file in the folder: no process-wide umask changes.
+/// Only for downloaded files: `publish` also places private files (the resume key) that stay 0o600.
+#[cfg(unix)]
+pub(crate) fn restore_default_mode(file: &Path) {
+  let Some(dir) = file.parent() else { return };
+  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+  let probe = dir.join(format!(".nezzel-mode-{}", uuid::Uuid::new_v4()));
+  let mode = OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .mode(0o666)
+    .open(&probe)
+    .and_then(|file| file.metadata())
+    .map(|meta| meta.permissions().mode() & 0o777);
+  let _ = std::fs::remove_file(&probe);
+  let Ok(mode) = mode else { return };
+  // The mode is set through a handle, never through the path: a link swapped in at this name must
+  // not get its target's mode changed. The handle must be the regular file the name pointed at.
+  use std::os::unix::fs::MetadataExt;
+  let Ok(named) = file.symlink_metadata() else {
+    return;
+  };
+  if !named.file_type().is_file() {
+    return;
+  }
+  let Ok(handle) = File::open(file) else { return };
+  let Ok(opened) = handle.metadata() else {
+    return;
+  };
+  if (opened.dev(), opened.ino()) == (named.dev(), named.ino()) {
+    let _ = handle.set_permissions(std::fs::Permissions::from_mode(mode));
+  }
+}
 pub(crate) fn remove_owned(file: &File, path: &Path) -> Result<()> {
   let other = regular(path, false)?;
   #[cfg(unix)]

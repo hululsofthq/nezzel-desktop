@@ -58,7 +58,7 @@ describe('inspector quick choices', () => {
     i18n.global.locale.value = locale;
     const panel = await inspectorAt([1080, 720]);
     try {
-      useMediaSizeStore().processMediaSizePayload({ item: { id: 'choice-item', filesize: 2097152 }, format: { trackType: TrackType.both, height: 720, fps: 30 } } as never);
+      useMediaSizeStore().processMediaSizePayload({ groupId: 'choices', item: { id: 'choice-item', filesize: 2097152 }, format: { trackType: TrackType.both, height: 720, fps: 30 } } as never);
       await nextTick();
       expect(panel.get('[role="radio"][value="small"] bdi[dir=ltr]').text()).toMatch(locale === 'fr' ? /^2,1\sMo$/ : /^2\.1 MB$/);
     } finally {
@@ -151,6 +151,32 @@ describe('row quality label', () => {
       if (code === 'urlNotSupported') {
         const open = row.findAll('button').find(button => button.text().includes('Open in browser'));
         expect(open).toBeDefined();
+      }
+    } finally { row.unmount(); }
+  });
+  // Every error whose advice says "open this link" gets the button; advice about Settings or other steps does not.
+  it.each([
+    ['storyExpired', true], ['accountAccessDenied', true], ['textOnlyPost', true], ['redditNetworkBlocked', true],
+    ['likeeUnavailable', true], ['legalRestriction451', true], ['blockedGeneric', true],
+    ['browserSafariAccessDenied', false], ['photosOnly', false],
+  ] as const)('%s: open-in-browser button is %s', async (code, shown) => {
+    const open = vi.fn();
+    installTauriMock({ 'plugin:opener|open_url': open });
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'advice', url: 'https://example.com/post/1', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'advice-item', isLeader: true, url: 'https://example.com/post/1', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('advice', MediaState.error);
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: 'advice-item', groupId: 'advice', level: 'error', code, component: null, message: '', raw: '', timestamp: 1 });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById('advice')! }, global: { plugins: [router, i18n] } });
+    try {
+      const label = i18n.global.t(`errors.runner.${code}.action`);
+      const button = row.findAll('button').find(b => b.text() === label);
+      expect(button !== undefined).toBe(shown);
+      if (button) {
+        await button.trigger('click');
+        expect(open).toHaveBeenCalledWith('plugin:opener|open_url', expect.objectContaining({ url: 'https://example.com/post/1' }));
       }
     } finally { row.unmount(); }
   });
@@ -607,6 +633,21 @@ describe('retained download progress', () => {
       expect(vm.columns.quality).toBe('1 item');
       useMediaStore().processMediaGroupTotalPayload({ groupId: 'unknown-group', total: 9 });
       useMediaStore().processMediaGroupTotalPayload({ groupId: 'mixed-post', total: 4 });
+      expect(vm.columns.quality).toBe('4 items');
+    } finally { host.unmount(); }
+  });
+
+  it('a single-video row of a mixed post shows the item count once the engine reports it, not the quality (#101)', () => {
+    const groups = useMediaGroupStore();
+    groups.createGroup({ id: 'handed-off', url: 'https://www.instagram.com/p/abc/', total: 1, processed: 1, errored: 0, isCombined: false, mediaKind: 'video',
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'item', isLeader: true, url: 'https://www.instagram.com/p/abc/', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState('handed-off', MediaState.done);
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(groups.findGroupById('handed-off')!)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { metaLine: string[]; columns: { quality: string } };
+      expect(vm.metaLine).not.toContain('4 items');
+      useMediaStore().processMediaGroupTotalPayload({ groupId: 'handed-off', total: 4 });
+      expect(vm.metaLine).toContain('4 items');
       expect(vm.columns.quality).toBe('4 items');
     } finally { host.unmount(); }
   });

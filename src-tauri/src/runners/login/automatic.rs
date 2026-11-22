@@ -391,14 +391,7 @@ pub(super) fn schedule<R: LoginRuntime>(
               id: id.into(),
               group_id: group.into(),
               host: host.clone(),
-              reason: if expired {
-                "browserSessionExpired"
-              } else if failure.is_some() {
-                super::LOGIN_FAILED_REASON
-              } else {
-                "browserLoginRemedy"
-              }
-              .into(),
+              reason: exhausted_reason(expired, failure.is_some(), &result).into(),
               blocked_browser: None,
               status: LoginStatus::Exhausted,
               candidates: vec![],
@@ -418,6 +411,27 @@ pub(super) fn schedule<R: LoginRuntime>(
     }
   });
   RetryAction::Pending
+}
+
+/// The reason an exhausted card carries: the real cause of a failed browser phase when it is one
+/// the user can act on, otherwise the generic embedded-browser remedy.
+pub(super) fn exhausted_reason(
+  expired: bool,
+  site_failure: bool,
+  result: &LoginResult,
+) -> &'static str {
+  if expired {
+    "browserSessionExpired"
+  } else if site_failure {
+    super::LOGIN_FAILED_REASON
+  } else {
+    match result {
+      Err("browserLoginTimeout") => "browserLoginTimeout",
+      Err("browserCookiesUnreadable") => "browserCookiesUnreadable",
+      Err("cancelled") => "browserLoginClosed",
+      _ => "browserLoginRemedy",
+    }
+  }
 }
 
 pub(crate) fn enabled(app: &AppHandle) -> bool {
@@ -444,6 +458,9 @@ async fn choose_source(
   host: &str,
   state: &Arc<Mutex<RowAttempts>>,
 ) -> LoginResult {
+  // Taken before any session check: a sign-in finished by another row after this point is
+  // fresh, so the window step reuses it instead of clearing it.
+  let seen = super::webview_session::sign_ins(host);
   choose_phases(choose_browser_source(app, source, host, state), || async {
     if !enabled(app) {
       return Err("browserLoginDisabled");
@@ -455,7 +472,7 @@ async fn choose_source(
       }
       row.opened = true;
     }
-    super::webview_session::read(app, host, true)
+    super::webview_session::read(app, host, Some(seen))
       .await?
       .ok_or("browserLoginRemedy")?;
     Ok(NEZZEL_SESSION.into())
@@ -474,7 +491,7 @@ async fn choose_browser_source(
   }
   let try_session = state.lock().unwrap().claim(NEZZEL_SESSION);
   if try_session
-    && super::webview_session::read(app, host, false)
+    && super::webview_session::read(app, host, None)
       .await
       .ok()
       .flatten()

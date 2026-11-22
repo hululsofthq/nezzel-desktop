@@ -61,9 +61,8 @@ pub fn reason_for_code(code: &str) -> FailReason {
     | "channelUnavailable"
     | "copyrightClaimed"
     | "accessForbidden403" => FailReason::Unavailable,
-    "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "noMediaFound" | "embedOnly" => {
-      FailReason::Unsupported
-    }
+    "urlNotSupported" | "urlUnsupported" | "unknownUrlType" | "noMediaFound" | "textOnlyPost"
+    | "linkOnlyPost" | "embedOnly" => FailReason::Unsupported,
     "geoBlocked" => FailReason::Region,
     "drmProtected" => FailReason::Protected,
     "rateLimited429" | "blockedGeneric" => FailReason::Busy,
@@ -765,6 +764,8 @@ mod tests {
       ("urlUnsupported", "unsupported"),
       ("unknownUrlType", "unsupported"),
       ("noMediaFound", "unsupported"),
+      ("textOnlyPost", "unsupported"),
+      ("linkOnlyPost", "unsupported"),
       ("embedOnly", "unsupported"),
       ("geoBlocked", "region"),
       ("drmProtected", "protected"),

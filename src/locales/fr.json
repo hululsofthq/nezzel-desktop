@@ -14,6 +14,7 @@
     "download": "Télécharger",
     "save": "Enregistrer",
     "later": "Plus tard",
+    "cancel": "Annuler",
     "load": "Charger",
     "install": "Installer",
     "percentage": "{percent}%",
@@ -976,7 +977,8 @@
     "readySub": "Nezzel redémarre pour terminer l’installation",
     "installRestart": "Installer et redémarrer",
     "manualSub": "Cette copie ne se met pas à jour depuis l’application",
-    "openPage": "Ouvrir la page de téléchargement"
+    "openPage": "Ouvrir la page de téléchargement",
+    "passwordHint": "Votre système peut demander votre mot de passe pour installer la mise à jour"
   },
   "install": {
     "title": {
@@ -1191,6 +1193,16 @@
         "message": "Ce contenu n’est pas disponible dans votre région",
         "action": "Nezzel ne peut rien y changer. Essayez un lien d'une autre source"
       },
+      "textOnlyPost": {
+        "shortMessage": "Cette publication ne contient que du texte",
+        "message": "Cette publication Reddit ne contient ni photo ni vidéo à enregistrer.",
+        "action": "Ouvrir la publication sur Reddit"
+      },
+      "linkOnlyPost": {
+        "shortMessage": "Cette publication renvoie seulement vers une autre page",
+        "message": "Cette publication Reddit n’a ni photo ni vidéo propre. Copiez plutôt le lien vers lequel elle pointe.",
+        "action": "Ouvrir la publication sur Reddit"
+      },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit a bloqué cette requête",
         "message": "Reddit a refusé ce téléchargement depuis votre réseau. Réessayez plus tard ou ouvrez la publication dans votre navigateur.",
@@ -1275,6 +1287,11 @@
         "shortMessage": "Impossible d’enregistrer cette vidéo Likee depuis son lien",
         "message": "Cette vidéo s’ouvre désormais uniquement dans l’application Likee et ne peut pas être enregistrée à partir du lien.",
         "action": "Ouvrir la vidéo dans Likee"
+      },
+      "playlistEntryUnreadable": {
+        "shortMessage": "Cet élément de la liste n’a pas pu être lu",
+        "message": "Cet élément de la liste de lecture n’a pas pu être lu. Le site l’a peut-être retiré ou en a limité l’accès.",
+        "action": "Essayez le lien propre à cette vidéo"
       },
       "mediaUnavailable": {
         "shortMessage": "Le site ne propose pas ce média pour l'instant",
@@ -1434,6 +1451,21 @@
       "rejectedByFilter": {
         "shortMessage": "Ignoré par vos filtres de liens",
         "message": "Ignoré par vos filtres de liens",
+        "action": "Modifiez les filtres pour l'inclure"
+      },
+      "rejectedByDateFilter": {
+        "shortMessage": "Ignoré par votre filtre de date",
+        "message": "Ignoré par votre filtre de date",
+        "action": "Modifiez les filtres pour l'inclure"
+      },
+      "rejectedBySizeFilter": {
+        "shortMessage": "Ignoré par votre filtre de taille",
+        "message": "Ignoré par votre filtre de taille",
+        "action": "Modifiez les filtres pour l'inclure"
+      },
+      "rejectedByAdvancedFilter": {
+        "shortMessage": "Ignoré par votre filtre de conditions avancées",
+        "message": "Ignoré par votre filtre de conditions avancées",
         "action": "Modifiez les filtres pour l'inclure"
       }
     },
@@ -1685,6 +1717,13 @@
       "clipboardTip": "{state}. {keys}",
       "filtersHint": "Ignorer des vidéos selon la taille, la date ou le titre",
       "filtersOn": "Actifs : certaines vidéos seront ignorées",
+      "filterOn": {
+        "size": "Filtre de taille actif",
+        "date": "Filtre de date actif",
+        "advanced": "Filtre avancé actif"
+      },
+      "filtersOnCount": "{count} filtre actif | {count} filtres actifs",
+      "moreWithFilters": "{more}. {filters}",
       "pasteFirst": "Collez d’abord un lien",
       "captureSettings": "Configurez le téléchargement rapide dans Paramètres → Raccourcis clavier",
       "captureShortcut": "Téléchargement rapide depuis toute application : {shortcut}"
@@ -1807,6 +1846,8 @@
       "privacy": "Les sessions du navigateur sont activées par défaut. Nezzel utilise uniquement les cookies de ce site pour le téléchargement. Les fichiers temporaires protégés sont supprimés après utilisation ; les cookies ne sont jamais envoyés à Nezzel, aux rapports d’erreur ou aux statistiques. Désactivez cette option dans Paramètres → Connexions.",
       "sessionExpired": "Votre session a expiré. Reconnectez-vous dans {browser}, puis réessayez",
       "embeddedRemedy": "Connectez-vous à ce site dans Firefox, ou ajoutez un fichier cookies.txt dans les paramètres de connexion, puis réessayez.",
+      "browserTimeout": "Votre navigateur n’a pas répondu à temps. Si votre système a demandé une autorisation, acceptez-la puis réessayez",
+      "windowClosed": "La connexion a été fermée. Réessayez quand vous êtes prêt",
       "keychain": "macOS peut demander d’autoriser Nezzel à accéder au trousseau du navigateur",
       "tryAnother": "Essayer un autre navigateur",
       "settings": "Réglages de connexion",
@@ -1841,6 +1882,7 @@
       "reportFailed": "Tout signaler",
       "clearFailed": "Effacer les échecs",
       "clearFinishedHint": "Les fichiers restent dans votre dossier de téléchargements",
+      "showMore": "Afficher {n} de plus ({left} masqués)",
       "cleared": "1 téléchargement retiré de la liste | {n} téléchargements retirés de la liste",
       "undo": "Annuler",
       "allCleared": "Les téléchargements terminés retirés de la liste sont dans Terminés"
@@ -2346,12 +2388,15 @@
   "feedback": {
     "invalidLink": "Cela ne ressemble pas à un lien",
     "addFailed": "Impossible d’ajouter le lien. Réessayez",
+    "linksUnreadable": "{n} lien n’a pas pu être lu | {n} liens n’ont pas pu être lus",
     "clipboardFailed": "Impossible de lire le presse-papiers",
     "fileMissing": "Fichier introuvable",
     "folderFailed": "Impossible d’ouvrir le dossier des téléchargements",
     "saveFailed": "Impossible d’enregistrer les réglages. Vos modifications sont conservées",
     "updateDownloadFailed": "Impossible de télécharger la mise à jour",
+    "updateDownloadStalled": "Le téléchargement s’est arrêté. Vérifiez votre connexion et réessayez",
     "updateInstallFailed": "Impossible d’installer la mise à jour",
+    "updateNeedsPassword": "La mise à jour nécessite le mot de passe du système. Réessayez ou téléchargez-la depuis le site",
     "toolsCheckFailed": "Impossible de vérifier les outils de téléchargement",
     "started": "{n} téléchargements lancés",
     "paused": "{n} téléchargements en pause",
@@ -2360,6 +2405,7 @@
     "removed": "{n} éléments retirés de la liste",
     "downloadFailed": "Impossible de lancer le téléchargement",
     "pauseFailed": "Impossible de mettre le téléchargement en pause",
+    "removeFailed": "Impossible d'arrêter ce téléchargement",
     "settingFailed": "Impossible d’enregistrer ce réglage. Il est revenu à sa valeur précédente",
     "folderPickFailed": "Impossible d’ouvrir le sélecteur de dossier"
   },

@@ -10,6 +10,19 @@
 - With a proxy set in Settings, Nezzel's own connections (checking for and downloading updates, error reports, usage counts) go through the proxy too.
 - What's new: Settings → About now lists what changed in each version, in your language. The update card shows the new version and what it brings, with "Skip this version", and after an update one line in the sidebar points to the list.
 - The portable Windows copy now tells you when a new version is out and opens the download page; before, it never said anything.
+- Several links at once: a link that cannot be read no longer stops the others from downloading; a message names the one that failed.
+- A download that could not be saved now says why (the disk is full, there is no permission, the name is too long) instead of one English message, and files already saved are announced. Photo saves report their real cause too.
+- Reddit: a post with only text, or one that only links to another site, says so and offers to open the post. More messages that say "Open…" now have the open button.
+- Filters: a download skipped by a saved filter names the filter (date, size or advanced); the link field's menu button shows a dot and the download options show a line while a filter is on. A download that saved nothing with no filter set is no longer described as filtered.
+- Sign-in: a sign-in that failed names the cause (the browser took too long, its cookies could not be read, the sign-in window was closed), and a second link for the same site reuses the sign-in the first one made.
+- A failed video inside a post with photos keeps its real cause (rate limit, disk full, network), and a download that fails offline or with an expired session says so, as reading the link already did.
+- Updates: Nezzel checks again every 12 hours while it stays open, and once more when you return to it after a failed check. An update download with no progress for 60 seconds stops with "Retry", and the card has "Cancel". On Linux (deb and rpm) the card says the system may ask for your password; a refused prompt gets its own message, and "Retry" does not download the package again.
+- Portable Windows copy: 0.1.3 and 0.1.4 cannot tell you about this version; download 0.1.5 once by hand and it will tell you about the next ones.
+- Files saved by direct download get the normal file permissions on macOS and Linux, so other accounts and media servers can read them.
+- A custom folder layout can no longer place files outside the download folder.
+- Leftover partial files from a crash are removed at the next start; a failed tool download leaves nothing behind.
+- Long lists: the finished list shows 200 rows with "Show more", and actions on many rows no longer run all at once.
+- Arabic: numbers with nouns use the correct form for every count.
 - The "could not check free disk space" and "download stopped making progress" messages no longer show two periods.
 
 ## 0.1.4

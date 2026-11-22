@@ -143,11 +143,16 @@
           </Tooltip>
         </header>
         <ul>
-          <template v-for="node in shownFinished" :key="node.id">
+          <template v-for="node in renderedFinished" :key="node.id">
             <playlist-group-row v-if="node.kind === 'playlist'" :parent="playlistOf(node)" :children="node.all.map(row => row.group)" :shown="node.shown.map(row => row.group)" :highlighted-id="highlightedId" />
             <download-row v-else :group="node.row.group" :highlighted="highlightedId === node.id" />
           </template>
         </ul>
+        <div v-if="finishedRemaining > 0" class="flex justify-center py-2">
+          <Button variant="ghost" class="h-7 px-3 text-[12px] font-normal text-muted-foreground hover:text-foreground" data-testid="show-more-finished" @click="showMoreFinished">
+            {{ t('downloads.list.showMore', { n: count(finishedNextCount), left: count(finishedRemaining) }) }}
+          </Button>
+        </div>
       </section>
 
       <!-- A short list leaves room: say how to add more, quietly, with the real keys. -->
@@ -202,6 +207,8 @@ import { useMediaOptionsStore } from '../../stores/media/options';
 import { optionsForChoice } from '../../helpers/quickChoice';
 import { useDownloadReports } from '../../composables/useDownloadReports';
 import { useUiPrefs } from '../../composables/useUiPrefs';
+import { ENGINE_FANOUT, runLimited } from '../../helpers/runLimited';
+import { useIncrementalRows } from '../../composables/useIncrementalRows';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -229,6 +236,12 @@ watch(() => mediaStore.duplicateFocus, async (request, _previous, onCleanup) => 
   query.value = '';
   if (Object.keys(route.query).length) await router.replace({ name: 'home' });
   await nextTick();
+  // A finished row beyond the rendered page must exist in the DOM before it can take focus.
+  const at = shownFinished.value.findIndex(node => node.id === request.id || (node.kind === 'playlist' && node.shown.some(row => row.id === request.id)));
+  if (at >= 0) {
+    revealFinished(at);
+    await nextTick();
+  }
   if (cancelled || mediaStore.duplicateFocus !== request) return;
   const row = [...document.querySelectorAll<HTMLElement>('li[data-group-id]')].find(row => row.dataset.groupId === request.id);
   if (!row) {
@@ -318,6 +331,11 @@ const shownActive = computed(() => shownNodes.value.filter(node => facts(node).s
 const shownFailed = computed(() => shownNodes.value.filter(node => facts(node).status === 'failed' && !facts(node).needsAttention));
 const shownFinished = computed(() => shownNodes.value.filter(node => facts(node).status === 'done' && !facts(node).needsAttention));
 const shownCount = computed(() => shownNodes.value.length);
+/** Thousands of finished rows: render the newest 200 and grow on request. Search, counts, selection and "Clear finished" use the full list. */
+const { rendered: renderedFinished, remaining: finishedRemaining, nextCount: finishedNextCount, showMore: showMoreFinished, reveal: revealFinished } = useIncrementalRows(
+  shownFinished,
+  () => [query.value, route.name, view.value.type, view.value.status],
+);
 /** "Download all" acts only on the rows the current filter and search show. */
 const shownReady = computed(() => {
   const ids = new Set(rowsOf(shownNeedsYou.value).map(row => row.id));
@@ -395,11 +413,11 @@ onBeforeUnmount(() => {
 async function downloadAllReady() {
   isStarting.value = true;
   try {
-    await Promise.all(shownReady.value.map((group) => {
+    await runLimited(shownReady.value, ENGINE_FANOUT, (group) => {
       const options = optionsStore.getOptions(group.id) ?? optionsForChoice(defaultChoice.value, group.formats ?? [], group.mediaKind);
       optionsStore.setOptions(group.id, options);
       return mediaStore.downloadGroup(group.id, options);
-    }));
+    });
   } finally {
     isStarting.value = false;
   }

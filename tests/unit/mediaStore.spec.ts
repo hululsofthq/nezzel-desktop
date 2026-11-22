@@ -26,6 +26,7 @@ import { defaultSettings } from '../../src/tauri/types/config';
 import type { EntryItem, MediaAddPayload } from '../../src/tauri/types/media';
 import { TrackType } from '../../src/tauri/types/media';
 import type { Group } from '../../src/tauri/types/group';
+import { ENGINE_FANOUT } from '../../src/helpers/runLimited';
 
 const { notify, notifyGroup } = vi.hoisted(() => ({
   notify: vi.fn(),
@@ -258,6 +259,90 @@ describe('media store', () => {
     expect(groups.orderedGroups).toHaveLength(action === 'remove' ? 0 : 1);
   });
 
+  it('keeps a running row and says so when the engine could not stop it on removal', async () => {
+    installTauriMock({ group_cancel: () => {
+      throw new Error('engine down');
+    } });
+    const groups = useMediaGroupStore();
+    const store = useMediaStore();
+    const group = createPlaylistGroup('cancel-fails', 1);
+    delete group.items.leader.entries;
+    groups.createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.downloading);
+    useMediaOptionsStore().setOptions(group.id, { trackType: TrackType.both, height: 720 });
+    await store.deleteGroup(group.id);
+    await flushPromises();
+    expect(groups.findGroupById(group.id)).toBeDefined();
+    expect(groups.groupOrder).toEqual([group.id]);
+    expect(useMediaStateStore().getGroupState(group.id)).toBe(MediaState.downloading);
+    expect(useMediaOptionsStore().getOptions(group.id)).toEqual({ trackType: TrackType.both, height: 720 });
+    expect(useToastStore().toasts.at(-1)).toMatchObject({ message: i18n.global.t('feedback.removeFailed'), style: 'error' });
+  });
+
+  it('removes a running row for good when the engine stopped it', async () => {
+    installTauriMock({ group_cancel: () => undefined });
+    const groups = useMediaGroupStore();
+    const store = useMediaStore();
+    const group = createPlaylistGroup('cancel-ok', 1);
+    delete group.items.leader.entries;
+    groups.createGroup(group);
+    useMediaStateStore().setGroupState(group.id, MediaState.downloading);
+    await store.deleteGroup(group.id);
+    await flushPromises();
+    expect(groups.findGroupById(group.id)).toBeUndefined();
+    expect(useToastStore().toasts).toHaveLength(0);
+  });
+
+  it('Download again leaves no unhandled rejection when the retry throws', async () => {
+    installTauriMock({});
+    const seen: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      seen.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      await expect(useMediaStore().downloadAgain('missing-row')).rejects.toThrow();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(seen).toEqual([]);
+    } finally { process.off('unhandledRejection', onRejection); }
+  });
+
+  it('Download all keeps at most ENGINE_FANOUT downloads in flight', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let started = 0;
+    const releases: (() => void)[] = [];
+    installTauriMock({
+      media_download: () => {
+        started++;
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        return new Promise<void>((resolve) => {
+          releases.push(() => {
+            inFlight--;
+            resolve();
+          });
+        });
+      },
+    });
+    const groups = useMediaGroupStore();
+    for (let i = 0; i < 30; i++) {
+      const group = createPlaylistGroup(`fan-${i}`, 1);
+      delete group.items.leader.entries;
+      groups.createGroup(group);
+      useMediaStateStore().setGroupState(group.id, MediaState.configure);
+    }
+    const all = useMediaStore().downloadAllGroups();
+    for (let guard = 0; guard < 200 && started < 30; guard++) {
+      await flushPromises();
+      releases.splice(0).forEach(release => release());
+    }
+    await all;
+    expect(started).toBe(30);
+    expect(peak).toBeGreaterThan(0);
+    expect(peak).toBeLessThanOrEqual(ENGINE_FANOUT);
+  });
+
   it('Download again re-reads a saved link, downloads with keepBoth once, then clears the flag', async () => {
     const requests: { cmd: string; args: unknown }[] = [];
     installTauriMock({
@@ -326,6 +411,33 @@ describe('media store', () => {
     expect(groups.orderedGroups).toHaveLength(2);
     const bad = groups.orderedGroups.find(g => g.url?.endsWith('/bad'))!;
     expect(useMediaStateStore().getGroupState(bad.id)).toBe(MediaState.error);
+  });
+
+  it('downloads the links that were read when another link in the batch fails', async () => {
+    const download = vi.fn();
+    installTauriMock({
+      media_info: (_cmd, args) => {
+        const { url, id, groupId } = args as { url: string; id: string; groupId: string };
+        if (url.endsWith('/bad')) {
+          // The engine reports the failed read: the waiter for that group rejects.
+          queueMicrotask(() => {
+            useMediaStateStore().setGroupState(groupId, MediaState.error);
+            useMediaStore().rejectPendingReadyGroup(groupId, 'read failed');
+          });
+          return 'ok';
+        }
+        queueMicrotask(() => {
+          const leader = useMediaGroupStore().findGroupLeader(groupId)!;
+          useMediaStore().processMediaAddPayload({ groupId, total: 1, item: { ...leader, id, title: 'ok', duration: 1 } });
+        });
+        return 'ok';
+      },
+      media_download: download,
+    });
+    const ready = await useMediaStore().addUrlBatchAndDownload(['https://example.com/bad', 'https://example.com/good1', 'https://example.com/good2']);
+    expect(ready).toHaveLength(2);
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(useToastStore().toasts.at(-1)?.message).toContain('1 link');
   });
 
   it('returns the options-sheet ID while the notification is still pending', async () => {
@@ -842,6 +954,10 @@ describe('media store', () => {
     expect(children.map(child => child.parentIndex)).toEqual([0, 1, 2]);
     expect(children[1].title).toBe('Entry 2');
     expect(useMediaStateStore().getGroupState(children[1].id)).toBe(MediaState.error);
+    // The code must have a translated errors.runner entry, so Arabic and French users get their language and advice.
+    const code = diagnostics.diagnostics[Object.keys(children[1].items)[0]]?.at(-1)?.code;
+    expect(code).toBe('playlistEntryUnreadable');
+    expect(i18n.global.te(`errors.runner.${code}.action`)).toBe(true);
   });
 
   it('keeps the login card of a playlist on its row after the split', () => {

@@ -356,6 +356,24 @@ describe('media progress store', () => {
       expect(progressStore.progress['gone-item']).toBeUndefined();
     });
 
+    it('drops add, diagnostic, attempts, fatal and size events for a removed group without throwing or storing', async () => {
+      const { useMediaSizeStore } = await import('../../src/stores/media/size');
+      const mediaStore = useMediaStore();
+      const diagnostics = useMediaDiagnosticsStore();
+      const sizes = useMediaSizeStore();
+      const item = { id: 'gone-item', url: 'u', audioCodecs: [], formats: [], filesize: 10 };
+      expect(() => mediaStore.processMediaAddPayload({ groupId: 'gone', total: 1, item } as never)).not.toThrow();
+      expect(() => sizes.processMediaAddPayload({ groupId: 'gone', total: 1, item } as never)).not.toThrow();
+      expect(() => diagnostics.processMediaDiagnosticPayload({ id: 'gone-item', groupId: 'gone', level: 'error', code: 'x', component: null, message: '', raw: '', timestamp: 0 })).not.toThrow();
+      expect(() => diagnostics.processMediaAttemptsPayload({ id: 'gone-item', groupId: 'gone', attempts: [], winner: null, finalCode: null })).not.toThrow();
+      expect(() => diagnostics.processMediaFatalPayload({ id: 'gone-item', groupId: 'gone', exitCode: 1, internal: false, message: '', details: null, timestamp: 0 })).not.toThrow();
+      expect(() => sizes.processMediaSizePayload({ groupId: 'gone', total: 1, item, format: { trackType: 'both' } } as never)).not.toThrow();
+      expect(diagnostics.fatals['gone-item']).toBeUndefined();
+      expect(diagnostics.diagnostics['gone-item']).toBeUndefined();
+      expect(diagnostics.attempts['gone-item']).toBeUndefined();
+      expect(sizes.sizes['gone-item']).toBeUndefined();
+    });
+
     it('still records progress for an existing group', () => {
       const progressStore = useMediaProgressStore();
       makeGroup('live');

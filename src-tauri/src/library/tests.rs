@@ -508,3 +508,23 @@ fn sponsor_removed_time_is_set_at_completion_and_absent_in_legacy_display() {
     serde_json::from_str(r#"{"duration":42.0,"height":1080,"fps":60,"trackType":"both"}"#).unwrap();
   assert_eq!(legacy.sponsor_removed_secs, None);
 }
+
+#[test]
+fn saved_summary_counts_the_files_a_handed_off_post_saved() {
+  use crate::models::parsed::{AttachmentKind, MediaAttachment};
+  let video: MediaAttachment = serde_json::from_value(
+    serde_json::json!({ "id": "a", "kind": "video", "url": "https://example.com/a.mp4" }),
+  )
+  .unwrap();
+  assert!(matches!(video.kind, AttachmentKind::Video));
+  let paths = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+  // yt-dlp read one video; gallery-dl added three photos (#101).
+  let handed_off = saved_summary(
+    &[&video],
+    &paths(&["p/1.mp4", "p/2.jpg", "p/3.jpg", "p/4.jpg"]),
+  );
+  assert_eq!((handed_off.photos, handed_off.videos), (3, 1));
+  // A post that saved what the probe listed keeps the probe's counts.
+  let plain = saved_summary(&[&video], &paths(&["p/1.mp4"]));
+  assert_eq!((plain.photos, plain.videos), (0, 1));
+}

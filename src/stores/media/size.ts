@@ -84,6 +84,7 @@ export const useMediaSizeStore = defineStore('media-size', () => {
   };
 
   function processMediaAddPayload(payload: MediaAddPayload) {
+    if (!groupStore.findGroupById(payload.groupId)) return;
     const item = payload.item;
     if (!item.formats) return;
     const highestFormat = sortFormats(item.formats)[0];
@@ -99,6 +100,7 @@ export const useMediaSizeStore = defineStore('media-size', () => {
   }
 
   function processMediaSizePayload(payload: MediaAddWithFormatPayload) {
+    if (!groupStore.findGroupById(payload.groupId)) return;
     const item = payload.item;
     const nextSize: Size = {
       ...payload.format,

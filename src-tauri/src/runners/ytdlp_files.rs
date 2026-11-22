@@ -75,6 +75,35 @@ impl PendingFiles {
     item_number: Option<usize>,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
+    let mut results = Vec::new();
+    self.publish_collect(
+      stage,
+      anchor,
+      url,
+      receipts,
+      fresh,
+      group_dir,
+      item_number,
+      cancelled,
+      &mut results,
+    )
+  }
+
+  /// Like `publish_with`, but files already in the user's folder when a later one fails stay in
+  /// `results`, so the caller can still announce and record them.
+  #[allow(clippy::too_many_arguments)]
+  pub fn publish_collect(
+    &self,
+    stage: &Path,
+    anchor: &Path,
+    url: &str,
+    receipts: &Path,
+    fresh: bool,
+    group_dir: Option<&str>,
+    item_number: Option<usize>,
+    cancelled: impl Fn() -> bool,
+    results: &mut Vec<Published>,
+  ) -> io::Result<PublishOutcome> {
     if cancelled() {
       return Err(io::ErrorKind::Interrupted.into());
     }
@@ -82,7 +111,6 @@ impl PendingFiles {
       return Ok(PublishOutcome::Filtered);
     }
     let root = stage.canonicalize()?;
-    let mut results = Vec::new();
     let mut sidecars = Vec::new();
     let mut published_sidecars = std::collections::HashSet::new();
     collect_files(&root, &mut sidecars)?;
@@ -213,7 +241,7 @@ impl PendingFiles {
       }
       results.push(published);
     }
-    Ok(PublishOutcome::Files(results))
+    Ok(PublishOutcome::Files(std::mem::take(results)))
   }
 }
 
@@ -714,6 +742,41 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"media");
       }
     }
+  }
+
+  #[test]
+  fn a_failing_second_file_still_reports_the_first_one_already_saved() {
+    let root = Staging::new().unwrap();
+    let output = root.path.join("stage");
+    let saved = root.path.join("saved");
+    let receipts = root.path.join("receipts");
+    fs::create_dir(&output).unwrap();
+    fs::create_dir(&saved).unwrap();
+    fs::write(output.join("One.mp4"), b"one").unwrap();
+    // Not a regular file: publishing it fails after One.mp4 is already in the folder.
+    fs::create_dir(output.join("Two.mp4")).unwrap();
+    let mut pending = PendingFiles::default();
+    for name in ["One.mp4", "Two.mp4"] {
+      pending.record(&format!(
+        "NEZZEL_PUBLISH|{}",
+        serde_json::json!([output.join(name), "Youtube", name])
+      ));
+    }
+    let mut done = Vec::new();
+    let result = pending.publish_collect(
+      &output,
+      &saved,
+      "",
+      &receipts,
+      false,
+      None,
+      None,
+      || false,
+      &mut done,
+    );
+    assert!(result.is_err());
+    assert_eq!(done.len(), 1);
+    assert_eq!(fs::read(&done[0].path).unwrap(), b"one");
   }
 
   #[test]

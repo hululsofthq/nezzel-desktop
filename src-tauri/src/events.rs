@@ -3,7 +3,11 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 
-tokio::task_local! { pub(crate) static ATTACHMENT_ATTEMPT: (); }
+/// An attachment attempt's suppressed terminal events are not sent; the last error code they carried
+/// is kept here so the parent can name the real cause of a failed child.
+pub(crate) type AttemptCode = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+
+tokio::task_local! { pub(crate) static ATTACHMENT_ATTEMPT: AttemptCode; }
 
 pub(crate) const MEDIA_ATTEMPTS: &str = "media_attempts";
 pub(crate) const MEDIA_COMPLETE: &str = "media_complete";
@@ -39,9 +43,19 @@ pub(crate) const ALL: [(&str, &str); 12] = [
 pub(crate) fn emit<R: Runtime, S: Serialize + Clone>(app: &AppHandle<R>, event: &str, payload: S) {
   // The gallery parent owns the terminal verdict for its selection. A child may
   // fail while other selected photos/videos have already been saved.
-  if ATTACHMENT_ATTEMPT.try_with(|_| ()).is_ok() && matches!(event, MEDIA_FATAL | MEDIA_DIAGNOSTIC)
-  {
-    return;
+  if let Ok(seen) = ATTACHMENT_ATTEMPT.try_with(Clone::clone) {
+    if matches!(event, MEDIA_FATAL | MEDIA_DIAGNOSTIC) {
+      if event == MEDIA_DIAGNOSTIC {
+        if let Ok(value) = serde_json::to_value(&payload) {
+          if value["level"] == "error" {
+            if let (Some(code), Ok(mut last)) = (value["code"].as_str(), seen.lock()) {
+              *last = Some(code.to_owned());
+            }
+          }
+        }
+      }
+      return;
+    }
   }
   if let Err(err) = app.emit(event, payload) {
     tracing::warn!("Failed to emit {event}: {err}");
@@ -53,6 +67,26 @@ mod tests {
   use super::*;
   use tauri::Listener;
   #[tokio::test]
+  async fn suppressed_attempt_diagnostic_keeps_its_last_error_code() {
+    let app = tauri::test::mock_app();
+    let code = AttemptCode::default();
+    ATTACHMENT_ATTEMPT
+      .scope(code.clone(), async {
+        emit(
+          app.handle(),
+          MEDIA_DIAGNOSTIC,
+          serde_json::json!({"level":"warning","code":"w"}),
+        );
+        emit(
+          app.handle(),
+          MEDIA_DIAGNOSTIC,
+          serde_json::json!({"level":"error","code":"rateLimited429"}),
+        );
+      })
+      .await;
+    assert_eq!(code.lock().unwrap().as_deref(), Some("rateLimited429"));
+  }
+  #[tokio::test]
   async fn attachment_failure_cannot_emit_a_parent_fatal_or_hide_saved_destinations() {
     let app = tauri::test::mock_app();
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -61,7 +95,7 @@ mod tests {
       app.listen(name, move |_| seen.lock().unwrap().push(name));
     }
     ATTACHMENT_ATTEMPT
-      .scope((), async {
+      .scope(AttemptCode::default(), async {
         emit(app.handle(), MEDIA_DESTINATION, ());
         emit(app.handle(), MEDIA_FATAL, ());
         emit(app.handle(), MEDIA_DIAGNOSTIC, ());

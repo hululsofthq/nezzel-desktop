@@ -282,7 +282,7 @@ impl CookieAccess {
       tokio::select! {
         biased;
         _ = cancel.changed() => return Err("cancelled"),
-        result = crate::runners::login::webview_session::read(app, &host, false) => result?.ok_or("browserLoginRemedy")?,
+        result = crate::runners::login::webview_session::read(app, &host, None) => result?.ok_or("browserLoginRemedy")?,
       }
     } else {
       Self::prepare(settings, browser, source, context, cancel).await?

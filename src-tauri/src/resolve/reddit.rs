@@ -355,6 +355,12 @@ pub(super) async fn read_logged<T: http::Transport>(
         Post::NoMedia => Verdict::Verified(Resolution::Unsupported {
           reason: Reason::NoMedia,
         }),
+        Post::TextOnly => Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::TextOnly,
+        }),
+        Post::LinkOnly => Verdict::Verified(Resolution::Unsupported {
+          reason: Reason::LinkOnly,
+        }),
         Post::Video {
           target,
           title,
@@ -504,6 +510,8 @@ fn challenge(body: &str, page: &Url) -> Option<Url> {
 
 enum Post {
   NoMedia,
+  TextOnly,
+  LinkOnly,
   Video {
     target: String,
     title: Option<String>,
@@ -591,7 +599,7 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
         .map(|(i, _)| i)
         .collect();
       if images.is_empty() {
-        return Some(Post::NoMedia);
+        return Some(Post::TextOnly);
       }
       if images.len() > 40 {
         return None;
@@ -627,7 +635,7 @@ fn parse(body: &str, id: &str, video_id: Option<&str>) -> Option<Post> {
         {
           None
         } else {
-          Some(Post::NoMedia)
+          Some(Post::LinkOnly)
         };
       }
       Some(Post::Video {

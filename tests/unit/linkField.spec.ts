@@ -375,4 +375,20 @@ describe('LinkField', () => {
 
     expect(router.currentRoute.value.name).toBe('input-filters');
   });
+
+  it('names saved filters on the menu button before anything is downloaded (#95)', async () => {
+    const { wrapper } = await mountField();
+    const more = () => wrapper.get('button[aria-haspopup="menu"]');
+    expect(more().attributes('aria-label')).toBe('More ways to add links');
+    expect(wrapper.find('[data-testid="filters-on-dot"]').exists()).toBe(false);
+
+    settingsState.inputFilters.dateFilter = { mode: 'exact', value: '2026-11-18' };
+    await flushPromises();
+    expect(more().attributes('aria-label')).toBe('More ways to add links. Date filter is on');
+    expect(wrapper.find('[data-testid="filters-on-dot"]').exists()).toBe(true);
+
+    settingsState.inputFilters.maxSize = { value: 50, unit: 'MB' };
+    await flushPromises();
+    expect(more().attributes('aria-label')).toBe('More ways to add links. 2 filters are on');
+  });
 });

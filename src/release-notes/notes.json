@@ -2,90 +2,105 @@
   "0.1.5": {
     "en": {
       "summary": [
-        "Instagram: numbered file names and the item count on the row",
-        "Reddit: a clear message when your network is blocked, with Open post",
-        "Albums you saved say “Already saved”, with “Download again”"
+        "Several links at once: one bad link no longer stops the others",
+        "A failed download or save says why: disk full, no permission, a filter, a text-only post",
+        "Instagram: numbered file names and the item count on the row"
       ],
       "groups": [
         [
           "Instagram",
           [
-            "Every file of a post shares one numbered name (-001, -002…), and the row shows how many items the post has",
-            "A post saved in full no longer says the site stopped responding"
+            "Every file of a post shares one numbered name (-001, -002…), and the row shows how many items the post has"
           ]
         ],
         [
           "Reddit",
           [
-            "When Reddit blocks downloads from your network, the message says so and offers to open the post on Reddit"
+            "A post with only text, a post that only links elsewhere, or a block on your network: the message says so and offers to open the post"
           ]
         ],
         [
-          "General",
+          "Downloads",
           [
-            "An album you already saved says “Already saved” and offers “Download again”",
-            "With a proxy set in Settings, update checks and error reports go through it too",
-            "What changed in each version is now listed here and on the update card"
+            "When you paste several links, one that cannot be read no longer stops the others",
+            "A download that could not be saved, or was skipped by one of your filters, says why"
+          ]
+        ],
+        [
+          "Updates",
+          [
+            "Nezzel checks for updates again while it stays open, and a stuck update download can be retried or cancelled",
+            "Portable Windows copy of 0.1.3 or 0.1.4: download this version once by hand; after that it tells you about new versions"
           ]
         ]
       ]
     },
     "ar": {
       "summary": [
-        "Instagram: ملفات المنشور بأسماء مرقّمة، وعدد عناصره ظاهر",
-        "Reddit: رسالة واضحة عندما يمنع شبكتك، مع فتح المنشور",
-        "الألبوم المحفوظ: «محفوظ مسبقًا» أو «تنزيل مرة أخرى»"
+        "عدة روابط معًا: رابط واحد معطّل لا يوقف البقية",
+        "عند فشل التنزيل أو الحفظ يظهر السبب: امتلاء القرص، الصلاحية، فلتر، منشور نصي",
+        "Instagram: ملفات المنشور بأسماء مرقّمة، وعدد عناصره ظاهر"
       ],
       "groups": [
         [
           "Instagram",
           [
-            "ملفات المنشور الواحد تحمل اسمًا واحدًا مرقّمًا (-001، -002…)، ويظهر عدد عناصره قبل فتحه",
-            "المنشور المحفوظ كاملًا لم يعد يعرض رسالة «توقف الموقع عن الاستجابة»"
+            "ملفات المنشور الواحد تحمل اسمًا واحدًا مرقّمًا (-001، -002…)، ويظهر عدد عناصره في السطر"
           ]
         ],
         [
           "Reddit",
           [
-            "عندما يمنع Reddit التنزيل من شبكتك تقول الرسالة ذلك، وتعرض فتح المنشور في Reddit"
+            "منشور فيه نص فقط، أو رابط إلى موقع آخر فقط، أو منع من شبكتك: تقول الرسالة ذلك وتعرض فتح المنشور"
           ]
         ],
         [
-          "عام",
+          "التنزيلات",
           [
-            "الألبوم الذي حفظته من قبل يظهر «محفوظ مسبقًا» مع زر «تنزيل مرة أخرى»",
-            "إذا ضبطت وكيلًا (proxy) في الإعدادات، تمرّ عبره أيضًا التحديثات وتقارير الأخطاء",
-            "ما تغيّر في كل إصدار يظهر الآن هنا وعلى بطاقة التحديث"
+            "عند لصق عدة روابط، الرابط الذي تتعذّر قراءته لا يوقف تنزيل البقية",
+            "التنزيل الذي تعذّر حفظه، أو تخطّاه أحد فلاترك، يذكر السبب"
+          ]
+        ],
+        [
+          "التحديثات",
+          [
+            "يتحقق Nezzel من التحديثات مجددًا ما دام مفتوحًا، وتنزيل التحديث المتوقف يمكن إعادته أو إلغاؤه",
+            "النسخة المحمولة على Windows من 0.1.3 أو 0.1.4: نزّل هذا الإصدار يدويًا مرة واحدة، وبعدها ستخبرك بكل إصدار جديد"
           ]
         ]
       ]
     },
     "fr": {
       "summary": [
-        "Instagram : noms de fichiers numérotés et nombre d’éléments sur la ligne",
-        "Reddit : un message clair quand votre réseau est bloqué, avec Ouvrir la publication",
-        "Les albums déjà enregistrés affichent « Déjà enregistré », avec « Télécharger à nouveau »"
+        "Plusieurs liens à la fois : un lien illisible n’arrête plus les autres",
+        "Un téléchargement ou un enregistrement échoué dit pourquoi : disque plein, autorisation, filtre, publication sans média",
+        "Instagram : noms de fichiers numérotés et nombre d’éléments sur la ligne"
       ],
       "groups": [
         [
           "Instagram",
           [
-            "Tous les fichiers d’une publication portent le même nom numéroté (-001, -002…), et la ligne indique combien d’éléments elle contient",
-            "Une publication enregistrée en entier n’indique plus que le site a cessé de répondre"
+            "Tous les fichiers d’une publication portent le même nom numéroté (-001, -002…), et la ligne indique combien d’éléments elle contient"
           ]
         ],
         [
           "Reddit",
           [
-            "Quand Reddit bloque les téléchargements depuis votre réseau, le message le dit et propose d’ouvrir la publication sur Reddit"
+            "Publication sans média, simple lien vers un autre site ou blocage de votre réseau : le message le dit et propose d’ouvrir la publication"
           ]
         ],
         [
-          "Général",
+          "Téléchargements",
           [
-            "Un album déjà enregistré affiche « Déjà enregistré » et propose « Télécharger à nouveau »",
-            "Avec un proxy défini dans les Réglages, la recherche de mises à jour et les rapports d’erreur passent aussi par lui",
-            "Les nouveautés de chaque version sont désormais listées ici et sur la carte de mise à jour"
+            "Quand vous collez plusieurs liens, celui qui ne peut pas être lu n’arrête plus les autres",
+            "Un téléchargement qui n’a pas pu être enregistré, ou qu’un de vos filtres a ignoré, dit pourquoi"
+          ]
+        ],
+        [
+          "Mises à jour",
+          [
+            "Nezzel vérifie de nouveau les mises à jour tant qu’il reste ouvert, et un téléchargement de mise à jour bloqué peut être relancé ou annulé",
+            "Copie portable Windows de 0.1.3 ou 0.1.4 : téléchargez cette version une fois à la main ; ensuite elle vous signale les nouvelles versions"
           ]
         ]
       ]

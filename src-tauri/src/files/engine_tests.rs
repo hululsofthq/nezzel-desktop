@@ -241,6 +241,17 @@ async fn range_cases(tcp: bool) {
       Sha256::digest(std::fs::read(&result).unwrap()),
       Sha256::digest(&*s.data)
     );
+    #[cfg(unix)]
+    {
+      // A saved download is as readable as any file the user's umask would create.
+      use std::os::unix::fs::PermissionsExt;
+      let plain = dir.0.join("plain-file");
+      std::fs::write(&plain, b"x").unwrap();
+      assert_eq!(
+        std::fs::metadata(&result).unwrap().permissions().mode() & 0o777,
+        std::fs::metadata(&plain).unwrap().permissions().mode() & 0o777
+      );
+    }
     let requests = s.requests.lock().unwrap();
     assert!(requests
       .iter()

@@ -43,6 +43,7 @@ const allowedCommands: Set<string> = new Set([
     'updater_check',
     'updater_download',
     'updater_install',
+    'updater_cancel',
     'config_set',
     'config_get',
     'config_reset',

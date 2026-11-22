@@ -14,6 +14,7 @@
     "download": "Download",
     "save": "Save",
     "later": "Later",
+    "cancel": "Cancel",
     "load": "Load",
     "install": "Install",
     "percentage": "{percent}%",
@@ -1077,7 +1078,8 @@
     "readySub": "Nezzel restarts to finish installing",
     "installRestart": "Install and restart",
     "manualSub": "This copy doesn't update from inside the app",
-    "openPage": "Open download page"
+    "openPage": "Open download page",
+    "passwordHint": "Your system may ask for your password to install the update"
   },
   "install": {
     "title": {
@@ -1292,6 +1294,16 @@
         "message": "This content isn’t available in your region",
         "action": "Nezzel can't change this. Try a link from another source"
       },
+      "textOnlyPost": {
+        "shortMessage": "This post has only text",
+        "message": "This Reddit post has no photo or video to save.",
+        "action": "Open the post on Reddit"
+      },
+      "linkOnlyPost": {
+        "shortMessage": "This post only links to another page",
+        "message": "This Reddit post has no photo or video of its own. Copy the link it points to instead.",
+        "action": "Open the post on Reddit"
+      },
       "redditNetworkBlocked": {
         "shortMessage": "Reddit blocked this request",
         "message": "Reddit refused this download from your network. Try again later, or open the post in your browser.",
@@ -1376,6 +1388,11 @@
         "shortMessage": "This Likee video cannot be saved from its link",
         "message": "Likee only opens this video in its app now, so it cannot be saved from the link.",
         "action": "Open the video in Likee"
+      },
+      "playlistEntryUnreadable": {
+        "shortMessage": "This playlist item couldn't be read",
+        "message": "This item in the playlist couldn't be read. The site may have removed it or limited who can see it.",
+        "action": "Try this video's own link"
       },
       "mediaUnavailable": {
         "shortMessage": "The site isn't offering this media right now",
@@ -1475,6 +1492,21 @@
       "rejectedByFilter": {
         "shortMessage": "Skipped by your link filters",
         "message": "Skipped by your link filters",
+        "action": "Edit the filters to include it"
+      },
+      "rejectedByDateFilter": {
+        "shortMessage": "Skipped by your date filter",
+        "message": "Skipped by your date filter",
+        "action": "Edit the filters to include it"
+      },
+      "rejectedBySizeFilter": {
+        "shortMessage": "Skipped by your size filter",
+        "message": "Skipped by your size filter",
+        "action": "Edit the filters to include it"
+      },
+      "rejectedByAdvancedFilter": {
+        "shortMessage": "Skipped by your advanced filter",
+        "message": "Skipped by your advanced filter",
         "action": "Edit the filters to include it"
       },
       "cannotAllocateMemory": {
@@ -1681,6 +1713,13 @@
       "clipboardTip": "{state}. {keys}",
       "filtersHint": "Skip videos by size, date or title when adding many",
       "filtersOn": "On: some videos will be skipped",
+      "filterOn": {
+        "size": "Size filter is on",
+        "date": "Date filter is on",
+        "advanced": "Advanced filter is on"
+      },
+      "filtersOnCount": "{count} filter is on | {count} filters are on",
+      "moreWithFilters": "{more}. {filters}",
       "pasteFirst": "Paste a link first",
       "captureSettings": "Set up quick download in Settings → Keyboard shortcuts",
       "captureShortcut": "Quick download from any app: {shortcut}"
@@ -1803,6 +1842,8 @@
       "privacy": "Browser logins are on by default. Nezzel uses only this site's cookies for the download. Protected temporary files are deleted after use; cookie data is never sent to Nezzel, crash reports or usage counts. Turn this off in Settings → Logins.",
       "sessionExpired": "Your browser session has expired. Sign in again in {browser}, then retry",
       "embeddedRemedy": "Sign in to this site in Firefox, or add a cookies.txt file in Login settings, then retry.",
+      "browserTimeout": "Your browser did not answer in time. If your system asked for permission, allow it and try again",
+      "windowClosed": "Sign-in was closed. Try again when you are ready",
       "keychain": "macOS may ask to let Nezzel access the browser's Keychain",
       "tryAnother": "Try another browser",
       "settings": "Login settings",
@@ -1837,6 +1878,7 @@
       "reportFailed": "Report all",
       "clearFailed": "Clear failed",
       "clearFinishedHint": "Files stay in your Downloads folder",
+      "showMore": "Show {n} more ({left} hidden)",
       "cleared": "Removed 1 download from the list | Removed {n} downloads from the list",
       "undo": "Undo",
       "allCleared": "Completed downloads you removed from the list are under Completed"
@@ -2342,12 +2384,15 @@
   "feedback": {
     "invalidLink": "That doesn't look like a link",
     "addFailed": "Couldn't add the link. Try again",
+    "linksUnreadable": "{n} link couldn't be read | {n} links couldn't be read",
     "clipboardFailed": "Couldn't read the clipboard",
     "fileMissing": "File not found",
     "folderFailed": "Couldn't open the downloads folder",
     "saveFailed": "Couldn't save settings. Your changes are still here",
     "updateDownloadFailed": "Couldn't download the update",
+    "updateDownloadStalled": "The download stopped. Check your connection and try again",
     "updateInstallFailed": "Couldn't install the update",
+    "updateNeedsPassword": "The update needs your system password. Try again, or download it from the website",
     "toolsCheckFailed": "Couldn't check the download tools",
     "started": "Started {n}",
     "paused": "Paused {n}",
@@ -2356,6 +2401,7 @@
     "removed": "Removed {n} from the list",
     "downloadFailed": "Couldn't start the download",
     "pauseFailed": "Couldn't pause the download",
+    "removeFailed": "Couldn't stop this download",
     "settingFailed": "Couldn't save that setting. It's back to how it was",
     "folderPickFailed": "Couldn't open the folder picker"
   },

@@ -126,6 +126,9 @@ const failedMessage = computed(() => {
     const browser = browserName(triedBrowser || usedBrowser.value!);
     return t('downloads.login.sessionExpired', { browser: isolate(browser) });
   }
+  if (props.card.failure.hint === 'browserLoginTimeout') return t('downloads.login.browserTimeout');
+  if (props.card.failure.hint === 'browserLoginClosed') return t('downloads.login.windowClosed');
+  if (props.card.failure.hint === 'browserCookiesUnreadable') return t('errors.rowLine', { what: t('errors.runner.browserCookiesUnreadable.shortMessage'), action: t('errors.runner.browserCookiesUnreadable.action') });
   if (props.card.failure.hint === 'browserLoginRemedy') return t('downloads.login.embeddedRemedy');
   if (props.card.failure.hint === LOGIN_APP_BOUND_REASON) return appBoundMessage.value;
   if (reason === 'exhausted') {

@@ -966,42 +966,28 @@ impl BinariesManager {
     let sha256 = info.sha256.as_str();
     let entry = info.entry.as_deref();
     let bundle = info.bundle.as_ref();
-    let mut res = client
-      .get(url)
-      .timeout(Duration::from_secs(15 * 60))
-      .send()
-      .await?
-      .error_for_status()?;
-
-    let tmp = dest.with_extension("tmp");
-    let mut file = fs::File::create(&tmp).await?;
-    let mut hasher = Sha256::new();
-
-    let total = res.content_length().unwrap_or(0);
-    let mut received: u64 = 0;
-
-    while let Some(chunk) = res.chunk().await? {
-      received += chunk.len() as u64;
-      hasher.update(&chunk);
-      file.write_all(&chunk).await?;
-      let _ = self.app.emit(
+    let app = &self.app;
+    let tool_name = tool.to_string();
+    // Verified bytes land in `dest` only after the hash matched; a failed run leaves nothing behind.
+    download_verified(client, url, sha256, dest, |received, total| {
+      let _ = app.emit(
         "binary_download_progress",
         ToolProgress {
-          tool: tool.to_string(),
+          tool: tool_name.clone(),
           received,
           total,
         },
       );
-    }
-
-    let hash = hex::encode(hasher.finalize());
-    if hash != sha256 {
-      return Err("sha256 mismatch".into());
-    }
-
-    file.flush().await?;
-    drop(file);
-    fs::rename(&tmp, dest).await?;
+    })
+    .await?;
+    // An archive left by a failed extraction is removed; the tool itself is never touched here.
+    let mut cleanup = RemoveOnDrop::new(
+      dest
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| matches!(*e, "zip" | "xz" | "bz2"))
+        .map(|_| dest.to_path_buf()),
+    );
 
     let parent = dest.parent().ok_or("binary destination has no parent")?;
     let canonical = Self::canonical_path(parent, tool)?;
@@ -1016,6 +1002,7 @@ impl BinariesManager {
         .ok_or("missing shared FFmpeg destination")?;
       super::binaries_extractor::extract_shared_ffmpeg(dest, destination, folder).await?;
       fs::remove_file(dest).await?;
+      cleanup.disarm();
       return Ok(());
     }
 
@@ -1081,6 +1068,7 @@ impl BinariesManager {
       }
     }
 
+    cleanup.disarm();
     Ok(())
   }
 
@@ -1140,6 +1128,72 @@ pub(super) fn write_metadata(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
   let temporary = path.with_extension("json.tmp");
   std::fs::write(&temporary, bytes)?;
   std::fs::rename(temporary, path)
+}
+
+/// Removes the listed files when dropped unless disarmed; used so a failed download or
+/// extraction leaves no partial file in the tools folder.
+struct RemoveOnDrop(Vec<PathBuf>);
+
+impl RemoveOnDrop {
+  fn new(path: Option<PathBuf>) -> Self {
+    Self(path.into_iter().collect())
+  }
+
+  fn disarm(&mut self) {
+    self.0.clear();
+  }
+}
+
+impl Drop for RemoveOnDrop {
+  fn drop(&mut self) {
+    for path in &self.0 {
+      let _ = std::fs::remove_file(path);
+    }
+  }
+}
+
+/// Streams `url` into `<dest>.tmp`, checks the sha256, then renames it to `dest`.
+/// Any failure removes the `.tmp`; an existing file at `dest` is replaced only after the hash matched.
+async fn download_verified(
+  client: &reqwest::Client,
+  url: &str,
+  sha256: &str,
+  dest: &Path,
+  mut on_progress: impl FnMut(u64, u64),
+) -> Result<(), AnyError> {
+  let mut res = client
+    .get(url)
+    .timeout(Duration::from_secs(15 * 60))
+    .send()
+    .await?
+    .error_for_status()?;
+
+  let tmp = dest.with_extension("tmp");
+  // Declared before `file` so the handle closes first (Windows cannot delete an open file).
+  let mut cleanup = RemoveOnDrop::new(Some(tmp.clone()));
+  let mut file = fs::File::create(&tmp).await?;
+  let mut hasher = Sha256::new();
+
+  let total = res.content_length().unwrap_or(0);
+  let mut received: u64 = 0;
+
+  while let Some(chunk) = res.chunk().await? {
+    received += chunk.len() as u64;
+    hasher.update(&chunk);
+    file.write_all(&chunk).await?;
+    on_progress(received, total);
+  }
+
+  let hash = hex::encode(hasher.finalize());
+  if hash != sha256 {
+    return Err("sha256 mismatch".into());
+  }
+
+  file.flush().await?;
+  drop(file);
+  fs::rename(&tmp, dest).await?;
+  cleanup.disarm();
+  Ok(())
 }
 
 #[cfg(test)]
@@ -1218,9 +1272,54 @@ mod tests {
     std::fs::remove_dir_all(root).unwrap();
   }
 
+  #[tokio::test]
+  async fn failed_hash_check_leaves_no_partial_file_and_keeps_the_old_tool() {
+    use sha2::Digest;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = std::env::temp_dir().join(format!("dl-verify-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dest = dir.join("tool");
+    std::fs::write(&dest, "old tool").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/tool", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+      for _ in 0..2 {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = socket.read(&mut buf).await;
+        let body = b"new bytes";
+        let head = format!(
+          "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+          body.len()
+        );
+        socket.write_all(head.as_bytes()).await.unwrap();
+        socket.write_all(body).await.unwrap();
+      }
+    });
+    let client = reqwest::Client::new();
+    let bad = "0".repeat(64);
+    let error = download_verified(&client, &url, &bad, &dest, |_, _| {})
+      .await
+      .unwrap_err();
+    assert!(error.to_string().contains("sha256 mismatch"));
+    assert_eq!(std::fs::read(&dest).unwrap(), b"old tool");
+    assert!(!dest.with_extension("tmp").exists());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+    let good = hex::encode(sha2::Sha256::digest(b"new bytes"));
+    download_verified(&client, &url, &good, &dest, |_, _| {})
+      .await
+      .unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), b"new bytes");
+    assert!(!dest.with_extension("tmp").exists());
+    server.await.unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
   use super::{
-    commit_ffmpeg_pair, fetch_manifest, ffmpeg_pair, manifest_requests, read_metadata,
-    verify_manifest, write_metadata, BinariesManager, Manifest, Metadata, BUNDLED_MANIFEST,
+    commit_ffmpeg_pair, download_verified, fetch_manifest, ffmpeg_pair, manifest_requests,
+    read_metadata, verify_manifest, write_metadata, BinariesManager, Manifest, Metadata,
+    BUNDLED_MANIFEST,
   };
   use base64::{engine::general_purpose::STANDARD, Engine};
   use ed25519_dalek::{SignatureError, Signer, SigningKey};

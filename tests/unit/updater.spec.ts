@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TheUpdater from '../../src/components/TheUpdater.vue';
 import { useUpdaterStore } from '../../src/stores/updater';
 import { useSettingsStore } from '../../src/stores/settings';
@@ -130,5 +130,206 @@ describe('after-update line', () => {
   it('orders versions by number, not text', () => {
     expect(compareVersions('0.1.10', '0.1.9')).toBeGreaterThan(0);
     expect(compareVersions('0.2.0', '0.2.0-beta.1')).toBe(0);
+  });
+});
+
+describe('automatic re-checks', () => {
+  const found = { available: true, currentVersion: '1.2.2', version: '1.2.3', manual: false };
+  const HOUR = 60 * 60 * 1000;
+  let calls = 0;
+  let fail = false;
+  let stop: () => void;
+  function start(result: UpdaterCheckPayload = found) {
+    calls = 0;
+    installTauriMock({
+      updater_check: () => {
+        calls++;
+        if (fail) throw new Error('offline');
+        return result;
+      },
+    });
+    useSettingsStore().settings.update.updateApp = true;
+    stop = useUpdaterStore().startAutoCheck();
+  }
+  beforeEach(() => {
+    localStorage.clear();
+    fail = false;
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    stop();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('checks at launch, then every 12 hours, and stops when cleaned up', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(12 * HOUR);
+    expect(calls).toBe(2);
+    stop();
+    await vi.advanceTimersByTimeAsync(24 * HOUR);
+    expect(calls).toBe(2);
+  });
+
+  it('retries once on focus after a failed launch check, at most hourly', async () => {
+    fail = true;
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1); // under an hour since the failure
+    await vi.advanceTimersByTimeAsync(HOUR);
+    fail = false;
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(2);
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(HOUR);
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(2); // succeeded: focus does not check again
+  });
+
+  it('obeys the update switch and keeps a skipped version quiet', async () => {
+    start();
+    await vi.advanceTimersByTimeAsync(0);
+    const store = useUpdaterStore();
+    expect(store.showCard).toBe(true);
+    store.skip();
+    await vi.advanceTimersByTimeAsync(12 * HOUR);
+    expect(calls).toBe(2);
+    expect(store.showCard).toBe(false);
+    useSettingsStore().settings.update.updateApp = false;
+    await vi.advanceTimersByTimeAsync(12 * HOUR);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('installing a Linux deb/rpm update', () => {
+  const pkg = (systemPackage: boolean) => ({ available: true, currentVersion: '1.2.2', version: '1.2.3', manual: false, systemPackage });
+  async function mountInstall(systemPackage: boolean, install: () => unknown) {
+    useSettingsStore().settings.update.updateApp = true;
+    const calls: string[] = [];
+    installTauriMock({
+      updater_check: () => pkg(systemPackage),
+      updater_download: () => void calls.push('download'),
+      updater_install: () => {
+        calls.push('install');
+        return install();
+      },
+    });
+    const wrapper = mount(TheUpdater, { global: { plugins: [i18n] } });
+    const store = useUpdaterStore();
+    await store.check();
+    await flushPromises();
+    return { wrapper, store, calls };
+  }
+  beforeEach(() => localStorage.clear());
+
+  it.each([
+    ['deb/rpm', true, 'Your system may ask for your password to install the update'],
+    ['macOS/Windows/AppImage', false, 'Please wait…'],
+  ])('says what to expect while installing (%s)', async (_c, systemPackage, text) => {
+    let finish!: () => void;
+    const { wrapper, store } = await mountInstall(systemPackage, () => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    const pending = store.install();
+    await flushPromises();
+    expect(wrapper.get(card).text()).toContain(text);
+    finish();
+    await pending;
+    wrapper.unmount();
+  });
+
+  it('a refused password prompt says so with both actions, and Retry installs without downloading again', async () => {
+    let fail = true;
+    const { wrapper, store, calls } = await mountInstall(true, () => {
+      if (fail) throw 'needs_password';
+    });
+    await store.install();
+    await flushPromises();
+    expect(wrapper.get(card).text()).toContain('The update needs your system password');
+    expect(wrapper.get(card).text()).not.toContain('needs_password');
+    expect(wrapper.find('[data-testid="updater-open-page"]').exists()).toBe(true);
+    fail = false;
+    await wrapper.findAll('button').find(b => b.text() === 'Retry')!.trigger('click');
+    await flushPromises();
+    expect(calls).toEqual(['install', 'install']);
+    wrapper.unmount();
+  });
+
+  it('any other install failure keeps the generic message and downloads again on Retry', async () => {
+    const { wrapper, store, calls } = await mountInstall(false, () => {
+      throw 'boom';
+    });
+    await store.install();
+    await flushPromises();
+    expect(wrapper.get(card).text()).toContain('Couldn\'t install the update');
+    expect(wrapper.find('[data-testid="updater-open-page"]').exists()).toBe(false);
+    await store.retry();
+    expect(calls[1]).toBe('download');
+    wrapper.unmount();
+  });
+});
+
+describe('a stalled or cancelled update download', () => {
+  const offer = { available: true, currentVersion: '1.2.2', version: '1.2.3', manual: false };
+  async function mountDownload(download: () => unknown, extra: Record<string, () => unknown> = {}) {
+    useSettingsStore().settings.update.updateApp = true;
+    installTauriMock({ updater_check: () => offer, updater_download: download, ...extra });
+    const wrapper = mount(TheUpdater, { global: { plugins: [i18n] } });
+    const store = useUpdaterStore();
+    await store.check();
+    await flushPromises();
+    return { wrapper, store };
+  }
+  beforeEach(() => localStorage.clear());
+
+  it('says the download stopped with Retry, never the raw code, and the re-check keeps the card', async () => {
+    let stall = true;
+    const calls: string[] = [];
+    const { wrapper, store } = await mountDownload(() => {
+      calls.push('download');
+      if (stall) throw 'stalled';
+    });
+    await store.download();
+    await flushPromises();
+    const text = wrapper.get(card).text();
+    expect(text).toContain('The download stopped. Check your connection and try again');
+    expect(text).not.toContain('stalled');
+    expect(store.isUpdating).toBe(false);
+    await store.check();
+    expect(wrapper.get(card).text()).toContain('The download stopped');
+    stall = false;
+    await wrapper.findAll('button').find(b => b.text() === 'Retry')!.trigger('click');
+    await flushPromises();
+    expect(calls).toEqual(['download', 'download']);
+    expect(store.isNeedingRestart).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('Cancel stops the download and returns the card to the offer', async () => {
+    let stop!: () => void;
+    const { wrapper, store } = await mountDownload(
+      () => new Promise((_resolve, reject) => {
+        stop = () => reject('cancelled');
+      }),
+      { updater_cancel: () => stop() },
+    );
+    const pending = store.download();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="updater-cancel"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="updater-cancel"]').trigger('click');
+    await pending;
+    await flushPromises();
+    expect(store.lastError).toBeUndefined();
+    expect(wrapper.get(card).text()).toContain('Download');
+    expect(wrapper.find('[data-testid="updater-cancel"]').exists()).toBe(false);
+    wrapper.unmount();
   });
 });

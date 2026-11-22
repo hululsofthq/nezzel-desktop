@@ -96,6 +96,8 @@ impl Failure {
 pub enum Reason {
   PhotosOnly,
   NoMedia,
+  TextOnly,
+  LinkOnly,
   Removed,
   Unavailable,
   Login,
@@ -106,6 +108,8 @@ impl Reason {
     match self {
       Self::PhotosOnly => "photosOnly",
       Self::NoMedia => "noMediaFound",
+      Self::TextOnly => "textOnlyPost",
+      Self::LinkOnly => "linkOnlyPost",
       Self::Removed => "notFound404",
       Self::Unavailable => "mediaUnavailable",
       Self::Login => "signInRequired",

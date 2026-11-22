@@ -11,6 +11,8 @@ export interface UpdaterCheckPayload {
   manual: boolean;
   /** Set when updates come from a store (Microsoft Store, Snap), whether or not a newer version is known. */
   channel?: UpdateChannel;
+  /** Linux deb/rpm install: installing the update asks for the system password. */
+  systemPackage?: boolean;
 }
 
 export interface UpdaterDownloadProgressPayload {

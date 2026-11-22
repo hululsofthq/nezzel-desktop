@@ -510,14 +510,23 @@ const diagnostic = computed<MediaDiagnostic>(() => {
   return base;
 });
 const vimeoLogin = computed(() => diagnostic.value.code === 'signInRequired' && (hostOf(group.value.url) === 'vimeo.com' || hostOf(group.value.url).endsWith('.vimeo.com')));
-const displayDiagnostic = computed(() => vimeoLogin.value ? { ...diagnostic.value, code: 'vimeoSignInRequired' } : diagnostic.value);
+/** A filter skip names its filter when exactly one group of the known kinds was active (the engine sends `filters:date`). */
+const filterKind = computed(() => {
+  const kind = diagnostic.value.code === 'rejectedByFilter' ? diagnostic.value.component?.match(/^filters:(date|size|advanced)$/)?.[1] : undefined;
+  return kind ? kind[0].toUpperCase() + kind.slice(1) : undefined;
+});
+const displayDiagnostic = computed(() => vimeoLogin.value
+  ? { ...diagnostic.value, code: 'vimeoSignInRequired' }
+  : filterKind.value ? { ...diagnostic.value, code: `rejectedBy${filterKind.value}Filter` } : diagnostic.value);
 const { diagnosticDisplay: errorDisplay } = useDiagnostic(displayDiagnostic, true);
 const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter');
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
-const errorCanOpenBrowser = computed(() => vimeoLogin.value || ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', 'telegramAppOnly', 'drmProtected'].includes(diagnostic.value.code));
+/** Codes whose advice says to open the link itself; the button carries that advice as its label. */
+const OPEN_ADVICE_CODES = ['telegramAppOnly', 'storyExpired', 'accountAccessDenied', 'textOnlyPost', 'redditNetworkBlocked', 'likeeUnavailable', 'legalRestriction451', 'blockedGeneric'];
+const errorCanOpenBrowser = computed(() => vimeoLogin.value || ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', 'drmProtected', ...OPEN_ADVICE_CODES].includes(diagnostic.value.code));
 
 const openBrowserLabel = computed(() => {
-  if (diagnostic.value.code === 'telegramAppOnly') return t('errors.runner.telegramAppOnly.action');
+  if (OPEN_ADVICE_CODES.includes(diagnostic.value.code)) return t(`errors.runner.${diagnostic.value.code}.action`);
   const host = hostOf(group.value.url);
   return t(['drmProtected', 'signInRequired'].includes(diagnostic.value.code) && (host === 'vimeo.com' || host.endsWith('.vimeo.com'))
     ? 'downloads.row.openVimeo'

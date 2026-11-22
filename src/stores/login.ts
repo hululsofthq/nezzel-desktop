@@ -15,6 +15,9 @@ import { LOGIN_APP_BOUND_REASON, LOGIN_TTL_MS } from '@/generated/contract';
  */
 export type LoginFailure = 'exhausted' | 'dismissed' | 'expired' | 'refused';
 
+/** Why the automatic browser phase itself ended, shown instead of the generic Firefox/cookies.txt advice. */
+const BROWSER_PHASE_HINTS = ['browserLoginRemedy', 'browserLoginTimeout', 'browserCookiesUnreadable', 'browserLoginClosed'];
+
 export interface FailedLogin {
   groupId: string;
   host: string;
@@ -56,7 +59,7 @@ export const useLoginStore = defineStore('login', () => {
       const candidate = using.value[request.groupId]?.candidate;
       const last = tried.value[request.host];
       const browser = candidate?.browser ?? last?.browser;
-      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON || request.reason === 'browserLoginRemedy' ? { hint: request.reason, blockedBrowser: request.blockedBrowser } : {}) };
+      failed.value[request.groupId] = { groupId: request.groupId, host: request.host, reason: 'exhausted', tried: candidate?.id ?? last?.id, ...(browser ? { browser } : {}), ...(request.reason === LOGIN_APP_BOUND_REASON || BROWSER_PHASE_HINTS.includes(request.reason) ? { hint: request.reason, blockedBrowser: request.blockedBrowser } : {}) };
       return;
     }
     if (!request.changeOnly) delete failed.value[request.groupId];

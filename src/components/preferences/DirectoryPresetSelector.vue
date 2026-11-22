@@ -109,5 +109,5 @@ const fullExample = computed<string>(() => {
 
 const presetOptions = computed(() => props.presets.map(p => ({ value: p.value, label: p.label })));
 /** Reading displayExample keeps the store's combined folder + file name example current. */
-const exampleHelp = computed(() => (displayExample.value ? t('folders.example', { path: fullExample.value }) : undefined));
+const exampleHelp = computed(() => (displayExample.value ? t('folders.example', { path: `\u2066${fullExample.value}\u2069` }) : undefined));
 </script>

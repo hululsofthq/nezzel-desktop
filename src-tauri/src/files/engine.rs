@@ -665,6 +665,8 @@ impl Engine {
             .join(state::alternative(&original, n));
           match state::publish(&part_path, &candidate) {
             Ok(()) => {
+              #[cfg(unix)]
+              state::restore_default_mode(&candidate);
               path = candidate;
               break;
             }

@@ -123,6 +123,20 @@ describe('login picker profile metadata', () => {
     i18n.global.locale.value = previous;
   });
 
+  it.each([
+    ['browserLoginTimeout', 'downloads.login.browserTimeout'],
+    ['browserLoginClosed', 'downloads.login.windowClosed'],
+    ['browserCookiesUnreadable', 'errors.runner.browserCookiesUnreadable.action'],
+  ])('an exhausted browser login that ended as %s says so, not the Firefox advice', (reason, key) => {
+    const store = useLoginStore();
+    store.receive({ requestId: `cause-${reason}`, id: 'item', groupId: `cause-${reason}`, host: 'reddit.com', reason, status: 'exhausted', candidates: [] });
+    const wrapper = mount(LoginNeeded, { props: { card: store.cardFor(`cause-${reason}`)! }, global: { plugins: [i18n], stubs: { RouterLink: true } } });
+    expect(wrapper.text()).toContain(i18n.global.t(key));
+    expect(wrapper.text()).not.toContain(i18n.global.t('downloads.login.embeddedRemedy'));
+    wrapper.unmount();
+    store.forgetGroup(`cause-${reason}`);
+  });
+
   it('names the refused browser from metadata while its candidate id stays opaque', () => {
     const wrapper = mount(LoginNeeded, {
       props: { card: { kind: 'failed', failure: { groupId: 'opaque', host: 'instagram.com', reason: 'exhausted', tried: '147599e2-568e-469f-a8cd-fbf9a79606ca', browser: 'chrome' } } },

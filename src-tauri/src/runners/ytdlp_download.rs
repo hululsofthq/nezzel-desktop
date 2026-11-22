@@ -375,6 +375,7 @@ pub(crate) fn sweep_download_partials(
       .unwrap_or_else(|e| e.into_inner());
     saved.extend(live.keys().cloned());
     crate::runners::gallery_files::sweep_image_staging(&roots);
+    crate::runners::gallery_files::sweep_stale_copy_parts(&roots);
     remove_stale_partials(stale_partials(&roots, &saved));
   });
 }
@@ -434,6 +435,7 @@ pub(crate) fn download_finished(
 fn filtered_download_diagnostics(
   parser: &YtdlpErrorParser,
   diagnostics: &[crate::models::error::DiagnosticEvent],
+  kinds: &[&str],
 ) -> Vec<crate::models::error::DiagnosticEvent> {
   let mut skipped: Vec<_> = diagnostics
     .iter()
@@ -446,9 +448,16 @@ fn filtered_download_diagnostics(
   if let Some(mut terminal) = skipped.last().cloned() {
     // Preserve the skipped-items detail and use the existing localized terminal row message.
     terminal.code = "rejectedByFilter".into();
+    // The row names the filter group(s) that were active (`filters:date,size`).
+    terminal.component = Some(format!("filters:{}", kinds.join(",")));
     skipped.push(terminal);
   }
   skipped
+}
+
+/// Only a request that carried a removing filter may end as "skipped by your filters".
+fn input_filters_active(overrides: Option<&crate::models::download::DownloadOverrides>) -> bool {
+  super::ytdlp_args::filters_active(overrides.and_then(|value| value.input_filters.as_ref()))
 }
 
 fn download_failure_diagnostics(
@@ -1602,6 +1611,7 @@ async fn run_download_attempts(
     };
     let mut login_reason = None;
     let mut cookie_failure = CookieFetchFailure::Other;
+    let mut session_expired_seen = false;
     let mut transport_denied = false;
     let mut media_expired = false;
     let mut unsupported = false;
@@ -1692,6 +1702,7 @@ async fn run_download_attempts(
               carousel.record(&line_str);
               sponsor_removed.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
+              session_expired_seen |= error_parser.session_expired(&line_str, login.has_session);
               store_log_line(&line_str, &entry, log_state, &app);
               if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
               network_failure |= super::reliability::transient(&line_str);
@@ -1717,6 +1728,7 @@ async fn run_download_attempts(
               transport_denied |= aria.is_some() && aria_denied(&line_str);
               media_expired |= selected_media_expired(&entry, &input, &line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
+              session_expired_seen |= error_parser.session_expired(&line_str, login.has_session);
               store_log_line(&line_str, &entry, log_state, &app);
               if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
               network_failure |= super::reliability::transient(&line_str);
@@ -1756,12 +1768,21 @@ async fn run_download_attempts(
                 let group_dir = group_dir.clone();
                 let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
                 let outcome = tauri::async_runtime::spawn_blocking(move || {
-                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, group_dir.as_deref(), None, || is_cancelled_now(&publish_cancel))
+                  let mut done = Vec::new();
+                  let outcome = pending_files.publish_collect(&stage, &anchor, &source_url, &receipts, fresh, group_dir.as_deref(), None, || is_cancelled_now(&publish_cancel), &mut done);
+                  (outcome, done)
                 }).await.map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
+                let (outcome, already_published) = outcome;
                 let published = match outcome {
                   Ok(super::ytdlp_files::PublishOutcome::Files(files)) => files,
+                  Ok(super::ytdlp_files::PublishOutcome::Filtered) if !input_filters_active(entry.overrides.as_ref()) => {
+                    // Nothing saved and no filter could have removed it: not "skipped by your filters".
+                    emit_internal_fatal(&app, &entry, "The download finished without saving a file".into(), None);
+                    return Err(YtdlpDownloadError::RunnerError("no files were produced".into()));
+                  }
                   Ok(super::ytdlp_files::PublishOutcome::Filtered) => {
-                    let skipped = filtered_download_diagnostics(&error_parser, &diagnostics);
+                    let kinds = super::ytdlp_args::active_filter_kinds(entry.overrides.as_ref().and_then(|o| o.input_filters.as_ref()));
+                    let skipped = filtered_download_diagnostics(&error_parser, &diagnostics, &kinds);
                     let message = skipped.last().map(|event| event.message.clone()).unwrap_or_default();
                     for event in skipped {
                       crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event));
@@ -1773,7 +1794,13 @@ async fn run_download_attempts(
                   }
                   Err(_) if is_cancelled_now(&cancel_rx) => return Ok(()),
                   Err(error) => {
-                    emit_internal_fatal(&app, &entry, "Could not save download without replacing an existing file".into(), None);
+                    // Files saved before the failing one are already in the user's folder: keep them openable.
+                    announce_published(&app, &entry, already_published);
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                      emit_internal_fatal(&app, &entry, "Could not save download without replacing an existing file".into(), None);
+                    } else {
+                      super::reliability::fatal(&app, &entry, crate::files::save_error_code(&error));
+                    }
                     return Err(YtdlpDownloadError::RunnerError(error.to_string()));
                   }
                 };
@@ -1878,6 +1905,8 @@ async fn run_download_attempts(
                   _ => {}
                 }
               }
+              // Same whole-run corrections the fetch path gets from `parse_lines` (expired session, offline).
+              error_parser.correct_run(&mut diagnostics, session_expired_seen);
               PARTIAL_DOWNLOADS.terminal_codes(&entry.group_id, &entry.id, diagnostics.iter().map(|event| event.code.as_str()));
               for event in download_failure_diagnostics(login.failure_diagnostics(diagnostics)) { crate::events::emit(&app, crate::events::MEDIA_DIAGNOSTIC, MediaDiagnosticPayload::from_diagnostic_event(event)); }
               let exit = term.code.unwrap_or(1);
@@ -2186,6 +2215,27 @@ mod tests {
   }
 
   #[test]
+  fn zero_output_is_a_filter_skip_only_when_a_filter_was_passed() {
+    use crate::models::download::{DownloadOverrides, InputFilterOptions, PlaylistMode};
+    let with = |filters: Option<InputFilterOptions>| DownloadOverrides {
+      input_filters: filters,
+      ..Default::default()
+    };
+    assert!(!input_filters_active(None));
+    assert!(!input_filters_active(Some(&with(None))));
+    let mode_only = InputFilterOptions {
+      playlist_mode: Some(PlaylistMode::SingleVideo),
+      ..Default::default()
+    };
+    assert!(!input_filters_active(Some(&with(Some(mode_only)))));
+    let dated = InputFilterOptions {
+      date: Some("20261120".into()),
+      ..Default::default()
+    };
+    assert!(input_filters_active(Some(&with(Some(dated)))));
+  }
+
+  #[test]
   fn zero_output_keeps_the_filter_warning_instead_of_a_save_error() {
     let parser = YtdlpErrorParser::new("row", "group", DiagnosticMatcher::shared().unwrap());
     for (line, expected) in [
@@ -2207,8 +2257,9 @@ mod tests {
         .and_then(|line| parser.parse_fetch_line(line, false))
         .into_iter()
         .collect();
-      let skipped = filtered_download_diagnostics(&parser, &diagnostics);
+      let skipped = filtered_download_diagnostics(&parser, &diagnostics, &["date", "size"]);
       assert_eq!(skipped.len(), 2);
+      assert_eq!(skipped[1].component.as_deref(), Some("filters:date,size"));
       assert_eq!(skipped[0].code, "input_filter_skipped");
       assert_eq!(skipped[0].message, expected);
       assert_eq!(skipped[1].code, "rejectedByFilter");

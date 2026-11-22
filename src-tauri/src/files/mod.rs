@@ -73,7 +73,74 @@ impl From<std::io::Error> for Error {
   }
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// The user-facing error code for a failure while writing or publishing a finished file.
+/// Unclassified failures get the generic code rather than a wrong specific one.
+pub(crate) fn save_error_code(error: &std::io::Error) -> &'static str {
+  use std::io::ErrorKind;
+  match error.kind() {
+    ErrorKind::StorageFull | ErrorKind::QuotaExceeded => return "diskFull",
+    ErrorKind::InvalidFilename => return "outputNameTooLong",
+    ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => return "permissionDenied",
+    _ => {}
+  }
+  match error.raw_os_error() {
+    // Windows: 39 handle disk full, 112 disk full; 206 filename too long, 123/161 invalid name.
+    #[cfg(windows)]
+    Some(39 | 112) => "diskFull",
+    #[cfg(windows)]
+    Some(123 | 161 | 206) => "outputNameTooLong",
+    #[cfg(windows)]
+    Some(5) => "permissionDenied",
+    #[cfg(unix)]
+    Some(code) if code == libc::ENOSPC || code == libc::EDQUOT => "diskFull",
+    #[cfg(unix)]
+    Some(code) if code == libc::ENAMETOOLONG => "outputNameTooLong",
+    #[cfg(unix)]
+    Some(code) if code == libc::EACCES || code == libc::EPERM || code == libc::EROFS => {
+      "permissionDenied"
+    }
+    _ => "unknown",
+  }
+}
 #[cfg(test)]
 mod engine_tests;
+#[cfg(test)]
+mod save_error_tests {
+  use super::save_error_code;
+  use std::io::{Error, ErrorKind};
+
+  #[test]
+  fn io_errors_map_to_specific_save_codes() {
+    for (error, code) in [
+      (Error::from(ErrorKind::StorageFull), "diskFull"),
+      (Error::from(ErrorKind::PermissionDenied), "permissionDenied"),
+      (Error::from(ErrorKind::InvalidFilename), "outputNameTooLong"),
+      (Error::from(ErrorKind::NotFound), "unknown"),
+      (Error::from(ErrorKind::Other), "unknown"),
+    ] {
+      assert_eq!(save_error_code(&error), code, "{error:?}");
+    }
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn raw_unix_errors_map_to_specific_save_codes() {
+    for (raw, code) in [
+      (libc::ENOSPC, "diskFull"),
+      (libc::EDQUOT, "diskFull"),
+      (libc::ENAMETOOLONG, "outputNameTooLong"),
+      (libc::EACCES, "permissionDenied"),
+      (libc::EPERM, "permissionDenied"),
+      (libc::EIO, "unknown"),
+    ] {
+      assert_eq!(
+        save_error_code(&Error::from_raw_os_error(raw)),
+        code,
+        "{raw}"
+      );
+    }
+  }
+}
 #[cfg(test)]
 mod tests;

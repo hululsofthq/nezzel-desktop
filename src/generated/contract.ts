@@ -88,7 +88,7 @@ export const LOGIN_CODES = ['signInRequired', 'signInRequiredForBotDetection', '
 export type LoginCode = (typeof LOGIN_CODES)[number];
 
 /** Error codes the site decides: retrying the same link fails the same way. */
-export const PERMANENT_CODES = ['liveNow', 'telegramAppOnly', 'likeeUnavailable', 'profileNotSupported', 'urlNotSupported', 'urlUnsupported', 'unknownUrlType', 'fileNotFile', 'storyExpired', 'notFound404', 'copyrightClaimed', 'channelUnavailable', 'videoNotFoundOrPrivate', 'playlistPrivateOrMissing', 'legalRestriction451', 'podcastFeed', 'geoBlocked', 'drmProtected', 'membersOnly', 'photosOnly', 'noMediaFound', 'fileEmpty', 'playlistEmpty'] as const;
+export const PERMANENT_CODES = ['liveNow', 'telegramAppOnly', 'likeeUnavailable', 'profileNotSupported', 'urlNotSupported', 'urlUnsupported', 'unknownUrlType', 'fileNotFile', 'storyExpired', 'notFound404', 'copyrightClaimed', 'channelUnavailable', 'videoNotFoundOrPrivate', 'playlistPrivateOrMissing', 'legalRestriction451', 'podcastFeed', 'geoBlocked', 'drmProtected', 'membersOnly', 'photosOnly', 'noMediaFound', 'textOnlyPost', 'linkOnlyPost', 'fileEmpty', 'playlistEmpty'] as const;
 export type PermanentCode = (typeof PERMANENT_CODES)[number];
 
 /** Subfolder of the download folder for file-share downloads. */

@@ -50,7 +50,7 @@ Run `pnpm run test:e2e` (Playwright) when you change a UI flow. Unit tests never
 ## Rules for changes
 
 - **Defaults first.** A feature must work with no setup. Power options go under Advanced.
-- **Privacy.** No telemetry, crash reports or update checks pointed at third-party accounts. Anything that sends data is opt-in, off by default, and never includes links, file names or cookies.
+- **Privacy.** No telemetry, crash reports or update checks pointed at third-party accounts. Crash reports and anonymous usage counts go only to our own endpoints, are on by default, and each has a switch in Settings and on the welcome screen; they never include links, file names, paths, cookies or account names, and there are no third-party analytics.
 - **No hard-coded UI text.** Add keys to `src/locales/en.json` and `ar.json` (and `fr.json`). Use logical CSS (`ms-`/`me-`, `start`/`end`), never `left`/`right`, so Arabic stays right-to-left.
 - **Tests.** A fix comes with a test that fails without it.
 - **Commits.** `type: summary` (feat, fix, chore, docs, refactor, test, build), one concern per commit.

@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { i18n as globalI18n } from '../i18n';
 import { MediaState, useMediaStateStore } from '../stores/media/state';
 import { useMediaProgressStore } from '../stores/media/progress';
 import { useMediaOptionsStore } from '../stores/media/options';
@@ -46,6 +47,9 @@ function savedFileKind(path: string): SavedFile['kind'] {
   if (['mp3', 'm4a', 'opus', 'ogg', 'flac', 'wav', 'aac'].includes(extension)) return 'audio';
   return 'file';
 }
+
+/** One lookup per locale for the whole list (a per-row computed re-read the messages for every row). */
+const statusLocalization = computed<Record<string, string>>(() => globalI18n.global.tm('media.steps.download.status'));
 
 /** Display model for one download row: phase, progress, meta line and the login hint. */
 export function useDownloadRow(group: Ref<Group>) {
@@ -102,7 +106,6 @@ export function useDownloadRow(group: Ref<Group>) {
     return p.percentage;
   });
 
-  const statusLocalization = computed<Record<string, string>>(() => i18n.tm('media.steps.download.status'));
   const waiting = computed(() => Object.values(group.value.items).map(item => progressStore.progress[item.id]).find(progress => progress?.stage === ProgressStage.waitingNetwork || progress?.stage === ProgressStage.siteBusy));
   const stageLabel = computed(() => {
     if (waiting.value?.stage === ProgressStage.waitingNetwork) return t('reliability.waitingNetwork');
@@ -131,7 +134,9 @@ export function useDownloadRow(group: Ref<Group>) {
       return t(`downloads.row.${key}`, { n }, n);
     }
     const saved = savedAttachments(group.value.mediaKind, group.value.attachments ?? [], optionsStore.getAttachmentSelection(group.value.id));
-    return saved && t(`downloads.row.${saved.key}`, { n: saved.n }, saved.n);
+    if (saved) return t(`downloads.row.${saved.key}`, { n: saved.n }, saved.n);
+    // A post read as one video that the gallery listing found more in (#101): the engine reports its count.
+    return !group.value.isCombined && group.value.total > 1 ? t('downloads.row.items', { n: group.value.total }, group.value.total) : undefined;
   });
   const destination = computed(() => destinationStore.getPrimaryDestination(group.value.id)?.path);
   /** Every file a finished download saved, in saved order (a photo post saves several). Intermediate

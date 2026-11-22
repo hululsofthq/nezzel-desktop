@@ -263,6 +263,7 @@ pub fn run() {
         binaries_ensure,
         updater_check,
         updater_download,
+        updater_cancel,
         updater_install,
         stronghold_init,
         stronghold_status,

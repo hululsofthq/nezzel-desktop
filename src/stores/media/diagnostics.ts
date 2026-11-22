@@ -27,6 +27,7 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
   const mediaStore = useMediaStore();
 
   function processMediaAttemptsPayload(payload: MediaAttempts) {
+    if (!groupStore.findGroupById(payload.groupId)) return;
     attempts.value[payload.id] = payload;
   }
 
@@ -35,16 +36,17 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
   }
 
   function processMediaDiagnosticPayload(payload: MediaDiagnostic) {
+    if (!groupStore.findGroupById(payload.groupId)) return;
     diagnostics.value[payload.id] = diagnostics.value[payload.id] ?? [];
     diagnostics.value[payload.id].push(payload);
   }
 
   function processMediaFatalPayload(payload: MediaFatal) {
-    fatals.value[payload.id] = payload;
     const { groupId } = payload;
-    const currentState = stateStore.getGroupState(groupId);
     const group = groupStore.findGroupById(groupId);
-    if (!group) throw new Error('Orphaned media item found during error handling.');
+    if (!group) return;
+    fatals.value[payload.id] = payload;
+    const currentState = stateStore.getGroupState(groupId);
     const leader = groupStore.findGroupLeader(groupId);
     if (currentState === MediaState.fetchingList && leader?.entries && payload.id !== leader.id) {
       if (payload.exitCode === 0 && diagnostics.value[payload.id]?.some(event => event.code === 'input_filter_skipped')) {

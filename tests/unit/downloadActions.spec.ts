@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, ref } from 'vue';
 import { i18n } from '../../src/i18n';
 import { useDownloadActions, type TrashResult } from '../../src/composables/useDownloadActions';
+import { useListRemoval } from '../../src/composables/useListRemoval';
 import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { useMediaStore } from '../../src/stores/media/media';
@@ -78,6 +79,38 @@ describe('trashFile', () => {
     expect(options?.action?.label).toBe('Remove from list (keeps the file)');
     options!.action!.run();
     expect(useListVisibilityStore().isHidden('legacy')).toBe(true);
+  });
+});
+
+describe('removeRows', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('hides only the asked rows among a thousand and removes them when the undo window closes', () => {
+    vi.useFakeTimers();
+    const groups = useMediaGroupStore();
+    const states = useMediaStateStore();
+    for (let i = 0; i < 1000; i++) {
+      groups.createGroup({ id: `r${i}`, url: `https://example.com/${i}`, title: `Row ${i}`, total: 1, processed: 0, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0, items: {} });
+      states.setState(`r${i}`, MediaState.error);
+    }
+    let removal!: ReturnType<typeof useListRemoval>;
+    const wrapper = mount(defineComponent({
+      setup() {
+        removal = useListRemoval();
+        return () => null;
+      },
+    }), { global: { plugins: [i18n] } });
+    try {
+      removal.removeRows(['r5', 'r900', 'r5']);
+      const visibility = useListVisibilityStore();
+      expect(visibility.isHidden('r5')).toBe(true);
+      expect(visibility.isHidden('r900')).toBe(true);
+      expect(visibility.isHidden('r6')).toBe(false);
+      vi.advanceTimersByTime(5000);
+      expect(groups.findGroupById('r5')).toBeUndefined();
+      expect(groups.findGroupById('r900')).toBeUndefined();
+      expect(groups.groupOrder).toHaveLength(998);
+    } finally { wrapper.unmount(); }
   });
 });
 

@@ -77,6 +77,8 @@ pub struct UpdateCheck {
   pub manual: bool,
   /// Set when updates come from a store, whether or not a newer version is known.
   pub channel: Option<UpdateChannel>,
+  /// Installing it on this build runs the system package manager (Linux deb/rpm), which asks for the user's password.
+  pub system_package: bool,
 }
 
 /// The newer release found in the manifest: (version, notes).
@@ -97,7 +99,17 @@ fn describe(mode: UpdateMode, current: String, found: Found) -> UpdateCheck {
     version,
     current_version: current,
     notes,
+    system_package: false,
   }
+}
+
+/// This build was installed from a deb or rpm package: updating it asks for the system password.
+pub fn is_system_package() -> bool {
+  use tauri::utils::config::BundleType;
+  matches!(
+    tauri::utils::platform::bundle_type(),
+    Some(BundleType::Deb | BundleType::Rpm)
+  )
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -210,7 +222,10 @@ pub async fn updater_check(
     s.update = Some(update);
     s.checked_with = Some(proxy);
   }
-  Ok(describe(mode, current, found))
+  Ok(UpdateCheck {
+    system_package: mode.can_download() && is_system_package(),
+    ..describe(mode, current, found)
+  })
 }
 
 #[cfg(test)]
@@ -287,6 +302,7 @@ mod tests {
       "notes",
       "manual",
       "channel",
+      "systemPackage",
     ] {
       assert!(v.get(key).is_some(), "{key}");
     }

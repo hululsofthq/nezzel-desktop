@@ -20,7 +20,24 @@
           <RefreshCw v-else class="size-4" :class="{ 'animate-spin motion-reduce:animate-none': isUpdating }" />
         </span>
         <div class="min-w-0 flex-1">
-          <template v-if="lastError">
+          <template v-if="needsPassword">
+            <h3 class="text-[13px] font-medium leading-5 text-destructive-foreground">{{ t('feedback.updateNeedsPassword') }}</h3>
+            <div class="mt-2 flex justify-end gap-2">
+              <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
+              <Button variant="ghost" as="a" :href="pageUrl" target="_blank" rel="noopener" data-testid="updater-open-page">
+                {{ t('updater.openPage') }}<ExternalLink aria-hidden="true" />
+              </Button>
+              <Button @click="updaterStore.retry()">{{ t('common.retry') }}</Button>
+            </div>
+          </template>
+          <template v-else-if="stalled">
+            <h3 class="text-[13px] font-medium leading-5 text-destructive-foreground">{{ t('feedback.updateDownloadStalled') }}</h3>
+            <div class="mt-2 flex justify-end gap-2">
+              <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
+              <Button @click="updaterStore.retry()">{{ t('common.retry') }}</Button>
+            </div>
+          </template>
+          <template v-else-if="lastError">
             <h3 class="text-[13px] font-medium leading-5 text-destructive-foreground">{{ t(lastOperation === 'install' ? 'feedback.updateInstallFailed' : 'feedback.updateDownloadFailed') }}</h3>
             <div class="mt-2 flex justify-end gap-2">
               <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
@@ -80,6 +97,9 @@
               </div>
               <p v-if="progress != null" class="shrink-0 text-[12px] text-muted-foreground">{{ t('common.percentage', { percent: progress.toFixed() }) }}</p>
             </div>
+            <div v-if="lastOperation === 'download'" class="mt-2 flex justify-end">
+              <Button variant="ghost" data-testid="updater-cancel" @click="updaterStore.cancel()">{{ t('common.cancel') }}</Button>
+            </div>
           </template>
         </div>
       </div>
@@ -100,7 +120,7 @@ import { downloadPageUrl, summaryLines } from '../helpers/updateCheck';
 
 const { t, locale } = useI18n();
 const updaterStore = useUpdaterStore();
-const { checkResult: info, showCard, downloadProgress, isUpdating, isNeedingRestart, lastError, lastOperation } = storeToRefs(updaterStore);
+const { checkResult: info, showCard, downloadProgress, isUpdating, isNeedingRestart, lastError, lastOperation, needsPassword, stalled } = storeToRefs(updaterStore);
 const { platform } = usePlatform();
 
 const titleCls = 'text-[13px] font-medium leading-6 rtl:text-[14px]';
@@ -109,7 +129,7 @@ const subCls = 'text-[12px] text-muted-foreground rtl:text-[12.5px]';
 const isolate = (version: string) => `\u2066${version}\u2069`;
 const availableTitle = computed(() => (info.value?.version ? t('updater.availableVersion', { version: isolate(info.value.version) }) : t('updater.available')));
 const downloadingTitle = computed(() => {
-  if (lastOperation.value === 'install') return t('common.pleaseWait');
+  if (lastOperation.value === 'install') return info.value?.systemPackage ? t('updater.passwordHint') : t('common.pleaseWait');
   return info.value?.version ? t('updater.downloadingVersion', { version: isolate(info.value.version) }) : t('updater.downloading');
 });
 const lines = computed(() => summaryLines(info.value?.notes, locale.value));

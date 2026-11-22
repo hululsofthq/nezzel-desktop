@@ -518,7 +518,15 @@ async fn reddit_only_bound_link_and_text_posts_prove_no_media() {
     let result = read_site(CANONICAL, &transport).await.resolution(CANONICAL);
     assert_eq!(
       result,
-      if expected {
+      if kind == "text" {
+        Resolution::Unsupported {
+          reason: Reason::TextOnly,
+        }
+      } else if kind == "link" && href == "https://www.nytimes.com/article" && expected {
+        Resolution::Unsupported {
+          reason: Reason::LinkOnly,
+        }
+      } else if expected {
         Resolution::Unsupported {
           reason: Reason::NoMedia,
         }
