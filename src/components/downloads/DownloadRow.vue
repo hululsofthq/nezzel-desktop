@@ -11,6 +11,7 @@
         :aria-setsize="nested ? setsize : undefined"
         :data-phase="phase"
         :data-group-id="group.id"
+        :data-playlist-id="nested ? parentId : undefined"
         :aria-busy="phase === 'reading' || phase === 'downloading' ? 'true' : undefined"
         tabindex="0"
         :aria-keyshortcuts="canOpen ? 'Enter' : undefined"
@@ -163,6 +164,7 @@
                 {{ t(liveRequestNoted ? 'downloads.row.liveRequestNoted' : 'downloads.row.wantLiveDownload') }}
               </span>
             </Button>
+            <Button v-if="diagnostic.code === 'photosOnly'" variant="outline" @click="downloadPhotos"><Images />{{ t('downloads.row.downloadPhotos') }}</Button>
             <Button v-if="!errorIsPermanent" variant="outline" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
           </template>
           <template v-else-if="phase === 'downloading' || phase === 'paused'">
@@ -340,7 +342,7 @@ import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
 import { revealsInFolder } from '../../helpers/fileCategory';
-import { ROW_SELECTOR } from '../../helpers/domIds';
+import { focusSiblingRow, ROW_SELECTOR } from '../../helpers/domIds';
 import { hostOf } from '../../helpers/siteName';
 import { siteLogo } from '../../helpers/siteLogo';
 import { isPermanentError } from '../../helpers/errorOutcome';
@@ -414,7 +416,7 @@ const cells = computed(() => [
   { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
   { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
 ]);
-const { download, pause, retry, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, downloadAgain, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
+const { download, pause, retry, downloadPhotos, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, downloadAgain, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
 /** A finished row that saved several files lists them under it on demand (closed by default). */
 const hasFiles = computed(() => savedFiles.value.length > 1);
 const filesOpen = ref(false);
@@ -564,6 +566,7 @@ const menuGroups = computed<RowAction[][]>(() => {
   if (phase.value === 'paused') primary.push({ key: 'resume', label: t('downloads.row.resume'), icon: Play, run: download });
   if (phase.value === 'cancelled') primary.push({ key: 'retry', label: t('downloads.row.retry'), icon: RotateCw, run: retry });
   if (phase.value === 'error' && !errorIsPermanent.value && !loginOwnsAction.value) primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
+  if (phase.value === 'error' && diagnostic.value.code === 'photosOnly' && !loginOwnsAction.value) primary.push({ key: 'photos', label: t('downloads.row.downloadPhotos'), icon: Images, run: downloadPhotos });
   const more: RowAction[] = [
     { key: 'copy', label: t('downloads.row.copyLink'), icon: Copy, run: copyLink, disabled: !group.value.url },
     { key: 'page', label: t('downloads.row.openPage'), icon: ExternalLink, run: openPage, disabled: !group.value.url },
@@ -596,8 +599,7 @@ function onKey(event: KeyboardEvent) {
   if (event.target !== row) return;
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
-    rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)]?.focus();
+    focusSiblingRow(row, event.key === 'ArrowDown' ? 1 : -1);
   } else if (props.nested && props.parentId && event.key === (document.documentElement.dir === 'rtl' ? 'ArrowRight' : 'ArrowLeft')) {
     // Back to the playlist row, like a tree.
     event.preventDefault();

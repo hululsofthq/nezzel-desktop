@@ -180,6 +180,30 @@ describe('row quality label', () => {
       }
     } finally { row.unmount(); }
   });
+  // A photos-only post has no video to retry: the row offers the photos of the same link, saved through the photo engine.
+  it.each([['photosOnly', true], ['geoBlocked', false]] as const)('%s: "Download the photos" button is %s and saves the link as photos', async (code, shown) => {
+    const download = vi.fn();
+    installTauriMock({ media_download: download });
+    const groups = useMediaGroupStore();
+    const id = `photos-${code}`;
+    groups.createGroup({ id, url: 'https://example.com/post/1', title: 'Post', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
+      audioCodecs: [], formats: [], filesize: 0, items: { item: { id: `${id}-item`, isLeader: true, url: 'https://example.com/post/1', audioCodecs: [], formats: [], filesize: 0 } } });
+    useMediaStateStore().setGroupState(id, MediaState.error);
+    useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: `${id}-item`, groupId: id, level: 'error', code, component: null, message: '', raw: '', timestamp: 1 });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+    try {
+      const button = row.findAll('button').find(b => b.text() === i18n.global.t('downloads.row.downloadPhotos'));
+      expect(button !== undefined).toBe(shown);
+      if (button) {
+        await button.trigger('click');
+        await vi.waitFor(() => expect(download).toHaveBeenCalled());
+        const sent = download.mock.calls[0][1] as { items: { url: string; mediaKind: string }[] };
+        expect(sent.items).toEqual([expect.objectContaining({ url: 'https://example.com/post/1', mediaKind: 'image' })]);
+      }
+    } finally { row.unmount(); }
+  });
   it.each([
     ['best', { height: 1080, fps: 60 }, '1080p60'],
     ['small', { height: 720, fps: 60 }, '720p60'],

@@ -149,7 +149,7 @@
           </template>
         </ul>
         <div v-if="finishedRemaining > 0" class="flex justify-center py-2">
-          <Button variant="ghost" class="h-7 px-3 text-[12px] font-normal text-muted-foreground hover:text-foreground" data-testid="show-more-finished" @click="showMoreFinished">
+          <Button variant="ghost" class="h-7 px-3 text-[12px] font-normal text-muted-foreground hover:text-foreground" data-testid="show-more-finished" data-show-more @click="showMoreFinished">
             {{ t('downloads.list.showMore', { n: count(finishedNextCount), left: count(finishedRemaining) }) }}
           </Button>
         </div>

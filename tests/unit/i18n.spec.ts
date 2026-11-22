@@ -123,6 +123,44 @@ describe('download error copy', () => {
     }
   });
 
+  it.each(['en', 'ar', 'fr'] as const)('%s distinguishes a missing host from offline and reacts to connectivity', async (locale) => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    i18n.global.locale.value = locale;
+    const diagnostic = ref<MediaDiagnostic>({
+      id: 'dns', groupId: 'dns', level: 'error', code: 'networkNameResolutionFailed',
+      message: 'Failed to resolve example.invalid', raw: '', component: null, timestamp: 1,
+    });
+    const wrapper = mount(defineComponent({
+      setup() {
+        const { diagnosticDisplay } = useDiagnostic(diagnostic);
+        return () => h('p', [diagnosticDisplay.value.shortMessage, diagnosticDisplay.value.message, diagnosticDisplay.value.action].join(' | '));
+      },
+    }), { global: { plugins: [i18n, createPinia()] } });
+    const expectCopy = (code: string) => {
+      const copy = runnerLocales[locale].errors.runner[code];
+      expect(wrapper.text()).toBe([copy.shortMessage, copy.message, copy.action].join(' | '));
+    };
+    try {
+      expectCopy('hostNotFound');
+      online.mockReturnValue(false);
+      window.dispatchEvent(new Event('offline'));
+      await wrapper.vm.$nextTick();
+      expectCopy('networkNameResolutionFailed');
+      online.mockReturnValue(true);
+      window.dispatchEvent(new Event('online'));
+      await wrapper.vm.$nextTick();
+      expectCopy('hostNotFound');
+      expect(diagnostic.value.code).toBe('networkNameResolutionFailed');
+      diagnostic.value.code = 'unableToConnectToProxy';
+      await wrapper.vm.$nextTick();
+      expectCopy('unableToConnectToProxy');
+    } finally {
+      wrapper.unmount();
+      online.mockRestore();
+      i18n.global.locale.value = 'en';
+    }
+  });
+
   it('explains the live-stream refusal naturally in Arabic in both runtimes', () => {
     const expected = 'هذا بث مباشر. يمكنك حفظه بعد انتهاء البث.';
     i18n.global.locale.value = 'ar';
@@ -146,7 +184,7 @@ describe('download error copy', () => {
 
   it('provides new link failure remedies in en/ar/fr', () => {
     for (const messages of Object.values(runnerLocales)) {
-      for (const code of ['legalRestriction451', 'podcastFeed', 'galleryItemsSkipped', 'listingPartial', 'vimeoSignInRequired']) {
+      for (const code of ['legalRestriction451', 'podcastFeed', 'galleryItemsSkipped', 'listingPartial', 'vimeoSignInRequired', 'hostNotFound']) {
         for (const key of ['shortMessage', 'message', 'action'] as const) expect(messages.errors.runner[code]?.[key]?.trim()).toBeTruthy();
       }
     }

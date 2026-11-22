@@ -1459,6 +1459,11 @@
         "message": "Couldn't reach the site. Check your internet connection, then try again",
         "action": "Check your connection, then try again"
       },
+      "hostNotFound": {
+        "shortMessage": "Couldn't find this site",
+        "message": "Check the link. If it is right, check your internet connection, then try again",
+        "action": "Check the link"
+      },
       "unableToConnectToProxy": {
         "shortMessage": "Couldn't connect to the proxy",
         "message": "Couldn't connect to the proxy. Check the proxy in Network settings, then try again",
@@ -1763,6 +1768,7 @@
       "sponsorRemoved": "Trimmed {time} (SponsorBlock)",
       "downloadVideoInstead": "Download video instead",
       "retryWithBest": "Retry with Best",
+      "downloadPhotos": "Download the photos",
       "reading": "Reading the link…",
       "readingList": "Reading the playlist… {done} of {total}",
       "ready": "Ready",

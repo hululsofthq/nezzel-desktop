@@ -112,6 +112,34 @@ describe('playlist group row', () => {
     await view.get('[data-testid="playlist-show-saved"]').trigger('click');
     expect(view.findAll('li.row[aria-level="2"]')).toHaveLength(11);
   });
+
+  it('ArrowDown reveals this playlist’s waiting then saved children before global Show more', async () => {
+    const children = seedPlaylist([...Array(4).fill(MediaState.done), ...Array(7).fill(MediaState.downloading)], 'keyboard-folds');
+    view = await mountHome();
+    const globalMore = document.createElement('button');
+    globalMore.setAttribute('data-show-more', '');
+    const showMore = vi.fn();
+    globalMore.onclick = showMore;
+    document.body.append(globalMore);
+    try {
+      const last = () => view!.findAll('li.row[aria-level="2"]').at(-1)!;
+      (last().element as HTMLElement).focus();
+      await last().trigger('keydown', { key: 'ArrowDown' });
+      expect(view.findAll('li.row[aria-level="2"]')).toHaveLength(7);
+      expect(document.activeElement).toBe(view.get(`[data-group-id="${children[7].id}"]`).element);
+      expect(view.find('[data-testid="playlist-show-saved"]').exists()).toBe(true);
+      (last().element as HTMLElement).focus();
+      await last().trigger('keydown', { key: 'ArrowDown' });
+      expect(view.findAll('li.row[aria-level="2"]')).toHaveLength(11);
+      expect(document.activeElement).toBe(view.get(`[data-group-id="${children[0].id}"]`).element);
+      (last().element as HTMLElement).focus();
+      await last().trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(last().element);
+      expect(showMore).not.toHaveBeenCalled();
+    } finally {
+      globalMore.remove();
+    }
+  });
 });
 
 // No wall-clock limits (testing policy: no clock-coupled tests). The budget is structural: one pass over the

@@ -16,7 +16,7 @@ import { LOGIN_APP_BOUND_REASON, LOGIN_TTL_MS } from '@/generated/contract';
 export type LoginFailure = 'exhausted' | 'dismissed' | 'expired' | 'refused';
 
 /** Why the automatic browser phase itself ended, shown instead of the generic Firefox/cookies.txt advice. */
-const BROWSER_PHASE_HINTS = ['browserLoginRemedy', 'browserLoginTimeout', 'browserCookiesUnreadable', 'browserLoginClosed'];
+const BROWSER_PHASE_HINTS = ['browserLoginRemedy', 'browserLoginTimeout', 'browserCookiesUnreadable', 'browserLoginClosed', 'browserSessionExpired'];
 
 export interface FailedLogin {
   groupId: string;

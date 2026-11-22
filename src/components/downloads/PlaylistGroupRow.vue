@@ -8,6 +8,7 @@
     :aria-level="1"
     :data-phase="a.phase"
     :data-group-id="parent.id"
+    :data-playlist-id="parent.id"
     data-playlist
     :aria-busy="a.phase === 'downloading' || a.phase === 'reading' ? 'true' : undefined"
     :aria-label="title"
@@ -121,7 +122,7 @@
 
   <template v-if="open">
     <li v-if="hiddenSaved > 0" :class="foldCls">
-      <button type="button" :class="foldBtn" class="text-primary" data-testid="playlist-show-saved" @click="savedLimit += FOLD_PAGE">{{ t('downloads.playlist.showSaved', { n: count(showSavedCount) }, showSavedCount) }}</button>
+      <button type="button" :class="foldBtn" class="text-primary" :data-playlist-fold="parent.id" data-testid="playlist-show-saved" @click="savedLimit += FOLD_PAGE">{{ t('downloads.playlist.showSaved', { n: count(showSavedCount) }, showSavedCount) }}</button>
     </li>
     <li v-else-if="savedFolds && savedLimit > 0" :class="foldCls">
       <button type="button" :class="foldBtn" class="text-muted-foreground" @click="savedLimit = 0">{{ t('downloads.playlist.hideSaved') }}</button>
@@ -137,7 +138,7 @@
       :setsize="children.length"
     />
     <li v-if="hiddenWaiting > 0" :class="foldCls">
-      <button type="button" :class="foldBtn" class="text-muted-foreground" data-testid="playlist-more-waiting" @click="waitingLimit += FOLD_PAGE">{{ t('downloads.playlist.moreWaiting', { n: count(hiddenWaiting) }, hiddenWaiting) }}</button>
+      <button type="button" :class="foldBtn" class="text-muted-foreground" :data-playlist-fold="parent.id" data-testid="playlist-more-waiting" @click="waitingLimit += FOLD_PAGE">{{ t('downloads.playlist.moreWaiting', { n: count(hiddenWaiting) }, hiddenWaiting) }}</button>
     </li>
     <li v-if="parent.skipped > 0" :class="foldCls">
       <span class="inline-flex items-center gap-1.5 py-1 text-[12px] text-muted-foreground" role="status"><triangle-alert class="size-3.5" aria-hidden="true" />{{ t('downloads.playlist.skipped', { n: count(parent.skipped) }, parent.skipped) }}</span>
@@ -171,7 +172,7 @@ import { useLoginStore } from '../../stores/login';
 import { remoteImagesAllowed } from '../../helpers/remoteImages';
 import { groupSite } from '../../helpers/groupView';
 import { formatDuration } from '../../helpers/units';
-import { ROW_SELECTOR } from '../../helpers/domIds';
+import { focusSiblingRow } from '../../helpers/domIds';
 import { isPlaylistOpen, setPlaylistOpen } from '../../composables/usePlaylistOpen';
 
 const props = defineProps<{
@@ -335,8 +336,7 @@ function onKey(event: KeyboardEvent) {
   const back = rtl ? 'ArrowRight' : 'ArrowLeft';
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(ROW_SELECTOR));
-    rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)]?.focus();
+    focusSiblingRow(row, event.key === 'ArrowDown' ? 1 : -1);
   } else if (event.key === forward || event.key === back) {
     event.preventDefault();
     if ((event.key === forward) !== open.value) toggle();

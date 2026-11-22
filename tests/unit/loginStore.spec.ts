@@ -229,6 +229,12 @@ describe('login store', () => {
     expect(store.cardFor('g1')?.kind).toBe('failed');
   });
 
+  it('keeps the engine\'s expired-session reason as the failure hint', () => {
+    const store = useLoginStore();
+    store.receive(request({ requestId: 'r10', status: 'exhausted', reason: 'browserSessionExpired', candidates: [] }));
+    expect(store.cardFor('g1')).toMatchObject({ kind: 'failed', failure: { reason: 'exhausted', hint: 'browserSessionExpired' } });
+  });
+
   it('listens once at app start and forgets a removed row', async () => {
     addGroup();
     await registerLoginListeners();

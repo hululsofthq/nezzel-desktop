@@ -150,6 +150,16 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const retry = () => retryGroup(group.value);
 
+  /** A photos-only post: the same link, saved as photos. */
+  async function downloadPhotos() {
+    countUsage('retry');
+    try {
+      await useMediaStore().downloadPhotos(group.value.id);
+    } catch {
+      if (reportErrors) toastStore.showToast(t('feedback.downloadFailed'), { style: 'error' });
+    }
+  }
+
   async function downloadAgain() {
     countUsage('retry');
     try {
@@ -271,5 +281,5 @@ export function useDownloadActions(group: Ref<Group>, { reportErrors = true }: {
 
   const canTrash = computed(() => !isTrashRefused(group.value.id));
 
-  return { download, pause, remove, cancel, retry, downloadAgain, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, trashFile, canTrash };
+  return { download, pause, remove, cancel, retry, downloadPhotos, downloadAgain, recover, recoveryLabel, recoveryIsSwitch, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, trashFile, canTrash };
 }

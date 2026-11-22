@@ -1,5 +1,6 @@
 import { computed, nextTick, ref } from 'vue';
 import { describe, expect, it } from 'vitest';
+import { focusSiblingRow } from '../../src/helpers/domIds';
 import { useIncrementalRows } from '../../src/composables/useIncrementalRows';
 
 const titles = Array.from({ length: 1000 }, (_, i) => `Clip ${i}`);
@@ -51,5 +52,40 @@ describe('useIncrementalRows', () => {
     const { list } = setup();
     list.reveal(650);
     expect(list.rendered.value).toHaveLength(651);
+  });
+
+  it('ArrowDown on the last rendered row shows the next page and focuses the new row', async () => {
+    const { list } = setup();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const paint = () => {
+      host.innerHTML = list.rendered.value.map(() => '<li class="row" tabindex="0"></li>').join('') + '<button data-show-more></button>';
+      host.querySelector('button')!.onclick = () => {
+        list.showMore();
+        paint();
+      };
+    };
+    paint();
+    const rows = () => Array.from(host.querySelectorAll<HTMLElement>('li.row'));
+    rows()[198].focus();
+    focusSiblingRow(rows()[198], 1);
+    expect(document.activeElement).toBe(rows()[199]);
+    focusSiblingRow(rows()[199], 1);
+    await nextTick();
+    expect(rows()).toHaveLength(400);
+    expect(document.activeElement).toBe(rows()[200]);
+    focusSiblingRow(rows()[200], -1);
+    expect(document.activeElement).toBe(rows()[199]);
+    host.remove();
+  });
+
+  it('ArrowDown on the very last row, with nothing left to show, stays put', async () => {
+    document.body.innerHTML = '<li class="row" tabindex="0"></li>';
+    const only = document.querySelector<HTMLElement>('li.row')!;
+    only.focus();
+    focusSiblingRow(only, 1);
+    await nextTick();
+    expect(document.activeElement).toBe(only);
+    document.body.innerHTML = '';
   });
 });

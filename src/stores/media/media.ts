@@ -29,7 +29,7 @@ import { notify, notifyGroup } from '../../tauri/notifications';
 import { NotificationKind } from '../../tauri/types/app';
 import { resolvePlaylistIndex } from '../../helpers/playlistNumbering';
 import { optionsForCaptureChoice } from '../../helpers/captureChoices';
-import { defaultDownloadOptions } from '../../helpers/quickChoice';
+import { defaultDownloadOptions, optionsForChoice } from '../../helpers/quickChoice';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import type { CaptureChoice } from '@/generated/contract';
 import { countUsage } from '../../tauri/usage';
@@ -725,6 +725,25 @@ export const useMediaStore = defineStore('media', () => {
     await fetchMediaInfoForGroup(groupId);
   }
 
+  /** A post the video read refused as photos only: same link, saved through the photo engine (`mediaKind: image` routes it there). */
+  async function downloadPhotos(groupId: string) {
+    const group = groupStore.findGroupById(groupId);
+    const leader = groupStore.findGroupLeader(groupId);
+    if (!group || !leader) throw new Error('Missing download');
+    forgetFailedGroup(groupId);
+    for (const itemId of Object.keys(group.items)) {
+      stateStore.removeState(itemId);
+      progressStore.deleteProgress(itemId);
+      sizeStore.removeSizes(itemId);
+      diagnosticsStore.removeDiagnostics(itemId);
+    }
+    diagnosticsStore.removeDiagnostics(groupId);
+    destinationStore.deleteDestinations(groupId);
+    group.mediaKind = 'image';
+    leader.mediaKind = 'image';
+    return downloadGroup(groupId, optionsForChoice('best', [], 'image'));
+  }
+
   /** A saved link on purpose: re-read it, then download with `keepBoth` so the saved copy is not reused. */
   async function downloadAgain(groupId: string) {
     const overrides = optionsStore.getOverrides(groupId);
@@ -1180,6 +1199,7 @@ export const useMediaStore = defineStore('media', () => {
     createCaptureGroup,
     fetchMediaInfoForGroup,
     retryGroup,
+    downloadPhotos,
     expandPlaylistGroup,
     downloadPlaylistSelection,
     rejectPendingReadyGroup,

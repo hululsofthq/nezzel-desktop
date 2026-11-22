@@ -24,6 +24,10 @@
 - Long lists: the finished list shows 200 rows with "Show more", and actions on many rows no longer run all at once.
 - Arabic: numbers with nouns use the correct form for every count.
 - Arabic on macOS: Settings no longer scrolls under the window buttons.
+- A post that can only be saved as photos has a "Download the photos" button.
+- A link to a site that cannot be found says "Couldn't find this site" instead of "No internet connection" while you are online.
+- An expired browser sign-in says so and asks you to sign in again.
+- Arrow keys move past the first 200 finished downloads and into a playlist's folded items.
 - The "could not check free disk space" and "download stopped making progress" messages no longer show two periods.
 
 ## 0.1.4

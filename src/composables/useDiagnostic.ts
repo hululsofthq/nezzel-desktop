@@ -1,5 +1,6 @@
 import { computed, Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useOnline } from '@vueuse/core';
 import { useMediaDiagnosticsStore } from '../stores/media/diagnostics.ts';
 import { firstSentence } from '../helpers/diagnostics.ts';
 import { useLinkify } from './useLinkify.ts';
@@ -15,6 +16,7 @@ type DisplayDiagnostic = {
 
 export function useDiagnostic(diagnostic: Ref<MediaDiagnostic>, short = false) {
   const diagnosticsStore = useMediaDiagnosticsStore();
+  const online = useOnline();
 
   const i18n = useI18n();
   const t = i18n.t;
@@ -41,10 +43,15 @@ export function useDiagnostic(diagnostic: Ref<MediaDiagnostic>, short = false) {
       return { message, shortMessage: message, raw: linkifiedRaw };
     }
     if (diagnostic.value?.code && diagnostic.value.code !== 'unknown') {
+      // DNS failure alone does not mean the whole network is down. Use the same
+      // offline signal as tool repair; keep the engine code for retries and reports.
+      const code = diagnostic.value.code === 'networkNameResolutionFailed' && online.value
+        ? 'hostNotFound'
+        : diagnostic.value.code;
       return {
         message: linkifiedMessage,
         shortMessage,
-        ...(i18nValues[diagnostic.value.code] ?? fallbackValues.errors?.runner?.[diagnostic.value.code]),
+        ...(i18nValues[code] ?? fallbackValues.errors?.runner?.[code]),
         raw: linkifiedRaw,
       };
     } else if (short) {

@@ -1358,6 +1358,11 @@
         "message": "Impossible de joindre le site. Vérifiez votre connexion Internet, puis réessayez",
         "action": "Vérifiez votre connexion, puis réessayez"
       },
+      "hostNotFound": {
+        "shortMessage": "Site introuvable",
+        "message": "Vérifiez le lien. S'il est correct, vérifiez votre connexion Internet, puis réessayez",
+        "action": "Vérifiez le lien"
+      },
       "unableToConnectToProxy": {
         "shortMessage": "Connexion au proxy impossible",
         "message": "Connexion au proxy impossible. Vérifiez le proxy dans les Réglages réseau, puis réessayez",
@@ -1767,6 +1772,7 @@
       "sponsorRemoved": "{time} retirées (SponsorBlock)",
       "downloadVideoInstead": "Télécharger la vidéo à la place",
       "retryWithBest": "Réessayer avec la meilleure qualité",
+      "downloadPhotos": "Télécharger les photos",
       "reading": "Lecture du lien…",
       "readingList": "Lecture de la playlist… {done} sur {total}",
       "ready": "Prêt",

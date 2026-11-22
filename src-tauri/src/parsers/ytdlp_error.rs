@@ -1609,6 +1609,11 @@ ERROR: Unsupported URL: https://hackertube.org/";
         "networkNameResolutionFailed",
         true,
       ),
+      (
+        "ERROR: [generic] Unable to download webpage: Failed to resolve 'example.invalid' ([Errno -2] Name or service not known)",
+        "networkNameResolutionFailed",
+        true,
+      ),
     ] {
       let event = parser.parse_fetch_line(line, false).unwrap();
       assert_eq!(event.code, code);
