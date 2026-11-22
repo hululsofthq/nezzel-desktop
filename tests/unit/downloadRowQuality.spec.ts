@@ -237,7 +237,8 @@ describe('row saved files', () => {
       expect(thumbnail).not.toHaveBeenCalled();
       await row.get('[data-testid="files-toggle"]').trigger('click');
       const lines = row.findAll('[data-testid="saved-file"]');
-      expect(visibility.observe.mock.calls.map(([el]) => el)).toEqual([lines[0].element, lines[1].element]);
+      // Videos ask for a frame preview too: a saved X post of videos shows one picture per file.
+      expect(visibility.observe.mock.calls.map(([el]) => el)).toEqual([lines[0].element, lines[1].element, lines[2].element]);
       visibility.visible(lines[0].element, false);
       await flushPromises();
       expect(thumbnail).not.toHaveBeenCalled();

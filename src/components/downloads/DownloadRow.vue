@@ -270,7 +270,7 @@
       v-for="(file, i) in savedFiles"
       :id="fileLineId(i)"
       :key="file.path"
-      v-saved-photo="file.kind === 'image' ? file.path : null"
+      v-saved-photo="file.kind === 'image' || file.kind === 'video' ? file.path : null"
       class="group/file relative flex items-center gap-3 border-b border-hairline py-1 pe-4 ps-[68px] before:absolute before:inset-y-0 before:start-[43px] before:w-px before:bg-hairline animate-in fade-in-0 duration-150 motion-reduce:animate-none"
       data-testid="saved-file"
     >

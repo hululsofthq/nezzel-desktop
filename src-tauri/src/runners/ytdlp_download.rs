@@ -612,13 +612,17 @@ fn instagram_needs_gallery(
 #[derive(Default)]
 struct CarouselItems {
   current: Option<(usize, usize)>,
+  /// The post's title, from "Downloading playlist: <title>".
+  title: Option<String>,
   /// Position and its publish line, in run order.
   saved: Vec<(usize, String)>,
 }
 impl CarouselItems {
   fn record(&mut self, line: &str) {
     let line = line.trim();
-    if let Some((item, count)) = line
+    if let Some(title) = line.strip_prefix("[download] Downloading playlist: ") {
+      self.title = Some(title.trim().to_owned()).filter(|title| !title.is_empty());
+    } else if let Some((item, count)) = line
       .strip_prefix("[download] Downloading item ")
       .and_then(|rest| rest.split_once(" of "))
     {
@@ -633,6 +637,40 @@ impl CarouselItems {
         self.saved.push((item, line.to_owned()));
       }
     }
+  }
+}
+
+/// A post that turned out to hold several items goes in one group folder (the default layout),
+/// like a gallery post: where its videos are saved and the context gallery-dl continues with.
+/// The folder is `None` for a chosen layout, a post yt-dlp already counted as a group, or a single item.
+fn handoff_group(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  anchor: &std::path::Path,
+  carousel: &CarouselItems,
+) -> (
+  crate::runners::template_context::TemplateContext,
+  std::path::PathBuf,
+  Option<String>,
+) {
+  let mut context = entry.template_context.clone();
+  let count = carousel.current.map(|(_, count)| count);
+  crate::runners::ytdlp_args::widen_group(
+    &mut context,
+    count,
+    carousel.title.as_deref(),
+    &entry.url,
+  );
+  let runner = YtdlpRunner::new(app);
+  let counted = runner
+    .default_group_dir(&entry.format.track_type, &entry.template_context)
+    .is_some();
+  let group = count
+    .filter(|_| !counted)
+    .and_then(|_| runner.default_group_dir(&entry.format.track_type, &context));
+  match group {
+    Some(dir) => (context, anchor.join(&dir), Some(dir)),
+    None => (context, anchor.to_path_buf(), None),
   }
 }
 
@@ -671,6 +709,7 @@ async fn publish_kept(
         &receipts,
         fresh,
         group_dir.as_deref(),
+        (count >= 2).then_some(position),
         || is_cancelled_now(&cancel),
       )
     })
@@ -1708,7 +1747,7 @@ async fn run_download_attempts(
                 let group_dir = group_dir.clone();
                 let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
                 let outcome = tauri::async_runtime::spawn_blocking(move || {
-                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, group_dir.as_deref(), || is_cancelled_now(&publish_cancel))
+                  pending_files.publish_with(&stage, &anchor, &source_url, &receipts, fresh, group_dir.as_deref(), None, || is_cancelled_now(&publish_cancel))
                 }).await.map_err(|error| YtdlpDownloadError::RunnerError(error.to_string()))?;
                 let published = match outcome {
                   Ok(super::ytdlp_files::PublishOutcome::Files(files)) => files,
@@ -1799,7 +1838,10 @@ async fn run_download_attempts(
               if instagram_needs_gallery(&entry, &input, &diagnostics) {
                 // Items yt-dlp finished (the post's videos) are saved before gallery-dl reads the rest.
                 let fresh = entry.overrides.as_ref().and_then(|o| o.output.as_ref()).and_then(|o| o.keep_both).unwrap_or(false);
-                let kept = publish_kept(&app, &entry, carousel, temporary.path.join("output"), publication_anchor.clone(), group_dir.clone(), fresh, &cancel_rx).await;
+                let (context, anchor, widened) = handoff_group(&app, &entry, &publication_anchor, &carousel);
+                let group_dir = widened.or_else(|| group_dir.clone());
+                entry.template_context = context;
+                let kept = publish_kept(&app, &entry, carousel, temporary.path.join("output"), anchor, group_dir, fresh, &cancel_rx).await;
                 // Also on cancel: the hand-off releases the partial once, as before; gallery-dl then stops.
                 return retry_instagram_with_gallery(app, entry, &login, &input, Some(temporary), kept).await;
               }
@@ -2746,6 +2788,7 @@ mod tests {
       carousel.record(line);
     }
     assert_eq!(carousel.current.map(|(_, count)| count), Some(4));
+    assert_eq!(carousel.title.as_deref(), Some("Post by natgeo"));
     assert_eq!(
       carousel
         .saved

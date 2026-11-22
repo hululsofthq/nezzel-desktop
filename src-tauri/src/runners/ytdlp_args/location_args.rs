@@ -87,6 +87,54 @@ pub fn group_dir_name(context: &TemplateContext) -> Option<String> {
   Some(name)
 }
 
+/// A post that yt-dlp counted as one file turned out to hold `files` items (`None` when not yet
+/// known: the gallery listing fills it in). Gives the context the group's title and count; a context
+/// that already counts 2+ files is left alone.
+pub fn widen_group(
+  context: &mut TemplateContext,
+  files: Option<usize>,
+  title: Option<&str>,
+  url: &str,
+) {
+  let counted: usize = context
+    .values
+    .get("nezzel_group_files")
+    .and_then(|files| files.parse().ok())
+    .unwrap_or(0);
+  if counted >= 2 {
+    return;
+  }
+  let fallback = || {
+    ["playlist_title", "enriched_title"]
+      .iter()
+      .find_map(|key| {
+        context
+          .values
+          .get(*key)
+          .filter(|value| !value.trim().is_empty())
+          .cloned()
+      })
+      .or_else(|| {
+        reqwest::Url::parse(url).ok().and_then(|url| {
+          url
+            .host_str()
+            .map(|host| host.trim_start_matches("www.").to_owned())
+        })
+      })
+      .unwrap_or_default()
+  };
+  let title = title.map(str::to_owned).unwrap_or_else(fallback);
+  context
+    .values
+    .entry("nezzel_group_title".into())
+    .or_insert(title);
+  if let Some(files) = files.filter(|files| *files >= 2) {
+    context
+      .values
+      .insert("nezzel_group_files".into(), files.to_string());
+  }
+}
+
 /// Directory under the download folder: the chosen layout, or by default the group folder.
 fn directory_layout(layout: &str, context: &TemplateContext) -> PathBuf {
   match layout {

@@ -144,6 +144,25 @@ pub(super) fn video_request(
   Ok(video)
 }
 
+/// The Instagram hand-off names a group (title) before the post's size is known; the listing
+/// completes it so photos, and any video children, land in the group folder.
+fn widened_for_post(entry: &DownloadEntry, items: usize) -> DownloadEntry {
+  let mut widened = entry.clone();
+  if entry
+    .template_context
+    .values
+    .contains_key("nezzel_group_title")
+  {
+    crate::runners::ytdlp_args::widen_group(
+      &mut widened.template_context,
+      Some(items),
+      None,
+      &entry.url,
+    );
+  }
+  widened
+}
+
 pub(super) async fn download_attempt(
   app: &AppHandle,
   entry: &DownloadEntry,
@@ -243,6 +262,8 @@ pub(super) async fn download_attempt(
   } else {
     image_post(post)?.ok_or(GalleryError::Unsupported)?
   };
+  let widened = widened_for_post(entry, post.assets.len());
+  let entry = &widened;
   let selected = post.selected(entry.attachment_ids.as_deref())?;
   let (selected, kept) = skip_kept(entry, &post, selected);
   if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {

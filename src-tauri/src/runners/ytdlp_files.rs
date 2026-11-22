@@ -59,7 +59,7 @@ impl PendingFiles {
     receipts: &Path,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
-    self.publish_with(stage, anchor, url, receipts, false, None, cancelled)
+    self.publish_with(stage, anchor, url, receipts, false, None, None, cancelled)
   }
 
   /// `fresh`: the user asked to download again, so never reuse a saved copy; take the next free name.
@@ -72,6 +72,7 @@ impl PendingFiles {
     receipts: &Path,
     fresh: bool,
     group_dir: Option<&str>,
+    item_number: Option<usize>,
     cancelled: impl Fn() -> bool,
   ) -> io::Result<PublishOutcome> {
     if cancelled() {
@@ -159,6 +160,17 @@ impl PendingFiles {
           results.push(saved);
           continue;
         }
+      }
+      // One item of a multi-item post carries its position, like the post's photos ("-002").
+      if let Some(number) = item_number {
+        let name = target
+          .file_name()
+          .and_then(|n| n.to_str())
+          .ok_or(io::ErrorKind::InvalidData)?;
+        let (stem, extension) = name.rsplit_once('.').ok_or(io::ErrorKind::InvalidData)?;
+        target.set_file_name(crate::files::sanitize::limit_media_name(&format!(
+          "{stem}-{number:03}.{extension}"
+        )));
       }
       let published = publish_file_with(&source, &target, &media, receipts, fresh, &cancelled)?;
       // Every sidecar keeps its full suffix and follows the primary's collision suffix.
@@ -746,6 +758,67 @@ mod tests {
       assert!(!saved.join("Title-001.en.vtt").exists());
       assert!(!saved.join("Title-001.jpg").exists());
     }
+  }
+
+  /// Instagram hand-off (#101): a video of a 2+ item post is saved in the group folder with its item
+  /// number, like the photos; one saved flat (unnumbered) by an older build is still the saved copy.
+  #[test]
+  fn handed_off_post_video_lands_in_the_group_folder_numbered_and_flat_copy_is_reused() {
+    let root = Staging::new().unwrap();
+    let receipts = root.path.join("receipts");
+    let output = root.path.join("stage/output");
+    let saved = root.path.join("saved");
+    let group = saved.join("Post by natgeo");
+    fs::create_dir_all(&output).unwrap();
+    let line = |name: &str| {
+      let source = output.join(name);
+      fs::write(&source, b"video").unwrap();
+      format!(
+        "NEZZEL_PUBLISH|{}",
+        serde_json::json!([source, "Instagram", "DfxRe6XAF0-"])
+      )
+    };
+    let publish = |number, group_dir| {
+      let mut pending = PendingFiles::default();
+      pending.record(&line("Post by natgeo.mp4"));
+      let anchor = if group_dir {
+        group.clone()
+      } else {
+        saved.clone()
+      };
+      let PublishOutcome::Files(files) = pending
+        .publish_with(
+          &output,
+          &anchor,
+          "u",
+          &receipts,
+          false,
+          group_dir.then_some("Post by natgeo"),
+          number,
+          || false,
+        )
+        .unwrap()
+      else {
+        panic!("unexpected filter")
+      };
+      files
+    };
+    // Single-item post: name unchanged.
+    let single = publish(None, false);
+    assert_eq!(single[0].path, saved.join("Post by natgeo.mp4"));
+    // 2+ items: numbered, inside the group folder.
+    fs::remove_file(&single[0].path).unwrap();
+    let numbered = publish(Some(1), true);
+    assert_eq!(numbered[0].path, group.join("Post by natgeo-001.mp4"));
+    // A flat copy from before the group folders is reused, no second copy.
+    fs::remove_dir_all(&group).unwrap();
+    let flat = publish(None, false);
+    let again = publish(Some(1), true);
+    assert_eq!(
+      (again[0].path.clone(), again[0].reused),
+      (flat[0].path.clone(), true)
+    );
+    assert!(!group.exists());
   }
 
   #[test]

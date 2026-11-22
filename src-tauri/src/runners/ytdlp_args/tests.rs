@@ -1313,6 +1313,56 @@ fn filename_metadata_replaces_generic_social_titles_and_preserves_real_titles() 
   }
 }
 
+/// Instagram hand-off (#101): yt-dlp counted one video, the post holds 4 items. The video (yt-dlp side)
+/// and the photos (gallery side, count from the listing) resolve to the same folder; "." stays flat.
+#[test]
+fn instagram_handoff_widens_a_single_file_context_to_the_group_folder() {
+  let folder = |ctx: &TemplateContext, layout: &str| {
+    let prefs = PathPreferences {
+      video_directory_template: layout.into(),
+      ..PathPreferences::default()
+    };
+    let args = build_location_args(
+      &TrackType::Video,
+      ctx,
+      &OutputSettings::default(),
+      &prefs,
+      PathBuf::from("/dl"),
+    );
+    PathBuf::from(&args[1])
+      .parent()
+      .unwrap()
+      .strip_prefix("/dl")
+      .unwrap()
+      .to_path_buf()
+  };
+  let url = "https://www.instagram.com/p/DfxRiPZIXJo/";
+  let single = TemplateContext {
+    values: HashMap::new(),
+  };
+  assert_eq!(folder(&single, ""), PathBuf::new());
+  // Video side: count and title from yt-dlp's own lines.
+  let mut video = single.clone();
+  super::widen_group(&mut video, Some(4), Some("Post by natgeo"), url);
+  assert_eq!(folder(&video, ""), PathBuf::from("Post by natgeo"));
+  assert_eq!(folder(&video, "."), PathBuf::new());
+  // Gallery side: the hand-off named the group, the listing supplies the count; same folder.
+  let mut photos = single.clone();
+  super::widen_group(&mut photos, None, Some("Post by natgeo"), url);
+  assert_eq!(folder(&photos, ""), PathBuf::new());
+  super::widen_group(&mut photos, Some(4), None, url);
+  assert_eq!(folder(&photos, ""), folder(&video, ""));
+  // A context the app already counted as a group is left alone.
+  let mut counted = TemplateContext {
+    values: HashMap::from([
+      ("nezzel_group_files".to_string(), "3".to_string()),
+      ("nezzel_group_title".to_string(), "Kept".to_string()),
+    ]),
+  };
+  super::widen_group(&mut counted, Some(9), Some("Other"), url);
+  assert_eq!(folder(&counted, ""), PathBuf::from("Kept"));
+}
+
 /// Where a download lands, relative to the download folder, for each layout and group shape.
 #[test]
 fn group_folder_table() {
