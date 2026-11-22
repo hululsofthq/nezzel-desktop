@@ -28,6 +28,11 @@ scrub() { sed -E 's#[a-z]+://[^ "]*#<url>#g; s#(/home|/root|/tmp|/var/tmp|/run/u
 # --- launch probe: runs inside xvfb-run (DISPLAY is set) -------------------------------
 if [[ ${1:-} == --launch-probe ]]; then
   shift
+  # Match Tauri's data_dir: absolute XDG_DATA_HOME, otherwise HOME/.local/share.
+  data_home=${XDG_DATA_HOME:-}
+  if [[ $data_home != /* ]]; then data_home="$HOME/.local/share"; fi
+  mkdir -p "$data_home/dev.ahmed.nezzel"
+  touch "$data_home/dev.ahmed.nezzel/test-machine"
   # Own session = own process group: AppRun and WebKit helpers are signalled together.
   setsid "$@" >/tmp/nezzel-smoke-app.log 2>&1 &
   pid=$!

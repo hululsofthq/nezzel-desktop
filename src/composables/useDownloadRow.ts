@@ -209,6 +209,7 @@ export function useDownloadRow(group: Ref<Group>) {
         else parts.push(choiceLabel.value);
         break;
       case 'downloading':
+        if (group.value.total > 1) parts.push(t('downloads.row.items', { n: group.value.total }, group.value.total));
         if (queued.value) parts.push(statusLocalization.value[ProgressStage.queued]);
         else if (waiting.value) parts.push(stageLabel.value);
         else if (resuming.value && !isList.value) parts.push(t('downloads.row.resuming'));

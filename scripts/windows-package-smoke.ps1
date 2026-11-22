@@ -32,6 +32,11 @@ function Get-StartMenuEntries {
       -Recurse -Filter 'Nezzel*.lnk' -ErrorAction SilentlyContinue)
 }
 
+# Exclude smoke launches (including installer launches) from usage counts.
+$appData = Join-Path $env:APPDATA 'dev.ahmed.nezzel'
+New-Item -ItemType Directory -Path $appData -Force -ErrorAction Stop | Out-Null
+New-Item -ItemType File -Path (Join-Path $appData 'test-machine') -Force -ErrorAction Stop | Out-Null
+
 # --- Install ---------------------------------------------------------------------------
 $Setup = (Resolve-Path $Setup).Path
 Info "installer signature: $((Get-AuthenticodeSignature $Setup).Status)"

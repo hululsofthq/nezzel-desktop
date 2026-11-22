@@ -647,6 +647,30 @@ describe('retained download progress', () => {
     } finally { host.unmount(); }
   });
 
+  it.each([false, true])('shows the hand-off count during an active download (combined: %s)', async (combined) => {
+    const media = useMediaStore();
+    const groups = useMediaGroupStore();
+    const progress = useMediaProgressStore();
+    const url = 'https://www.instagram.com/p/abc/';
+    const id = await media.dispatchMediaInfoFetch(url, false, false, {
+      id: 'active-post', url, mediaKind: 'video', audioCodecs: [], formats: [], filesize: 0,
+    });
+    const group = groups.findGroupById(id)!;
+    if (combined) groups.consolidateGroup(group);
+    await media.downloadGroup(id, { trackType: TrackType.both });
+    progress.processMediaProgressStagePayload({ id: 'active-post', groupId: id, stage: ProgressStage.initializing });
+    const host = mount(defineComponent({ setup: () => useDownloadRow(ref(group)), render: () => null }), { global: { plugins: [i18n] } });
+    try {
+      const vm = host.vm as unknown as { metaLine: string[]; phase: string; isList: boolean };
+      expect(vm.phase).toBe('downloading');
+      expect(vm.isList).toBe(combined);
+      expect(vm.metaLine).toEqual(['Instagram', 'Initializing']);
+      media.processMediaGroupTotalPayload({ groupId: id, total: 4 });
+      expect(vm.phase).toBe('downloading');
+      expect(vm.metaLine).toEqual(['Instagram', '4 items', 'Initializing']);
+    } finally { host.unmount(); }
+  });
+
   it('a mixed post handed to the gallery listing shows the listing count once the engine reports it', () => {
     const groups = useMediaGroupStore();
     groups.createGroup({ id: 'mixed-post', url: 'https://www.instagram.com/p/abc/', total: 1, processed: 1, errored: 0, isCombined: true,

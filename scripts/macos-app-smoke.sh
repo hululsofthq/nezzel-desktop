@@ -13,6 +13,10 @@ failures=0
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1${2:+: $2}"; failures=$((failures + 1)); }
 
+# Exclude this smoke machine from usage counts (Tauri app_data_dir).
+mkdir -p "$HOME/Library/Application Support/dev.ahmed.nezzel"
+touch "$HOME/Library/Application Support/dev.ahmed.nezzel/test-machine"
+
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 

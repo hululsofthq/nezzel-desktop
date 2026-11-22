@@ -365,6 +365,7 @@ jobs:
           }
 
       - name: Upload debug symbols to Sentry
+        continue-on-error: true
         if: matrix.platform != 'windows-11-arm' && env.HAS_SENTRY == 'true'
         shell: bash
         env:
@@ -380,11 +381,21 @@ jobs:
           
           cd src-tauri
           
+          symbol_dir=target/release
           if [ -d "target/release/public-pdb" ]; then
-            sentry-cli debug-files upload --include-sources target/release/public-pdb
-          else
-            sentry-cli debug-files upload --include-sources target/release
+            symbol_dir=target/release/public-pdb
           fi
+          for attempt in 1 2 3; do
+            if sentry-cli debug-files upload --include-sources "$symbol_dir"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::warning::Sentry debug symbol upload failed after 3 attempts."
+              exit 1
+            fi
+            echo "Sentry upload attempt $attempt failed; retrying in $((attempt * 5)) seconds."
+            sleep "$((attempt * 5))"
+          done
           
           if [ "${{ matrix.platform }}" = "ubuntu-22.04" ]; then
             sentry-cli releases new "$SENTRY_RELEASE" || true

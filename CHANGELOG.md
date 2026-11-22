@@ -2,7 +2,7 @@
 
 ## 0.1.5
 
-- Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it, also after Nezzel restarts (posts saved with an earlier 0.1.5 test build are corrected at the next start).
+- Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it, while it downloads and after Nezzel restarts (posts saved with an earlier 0.1.5 test build are corrected at the next start).
 - Instagram: a post that was saved completely no longer shows "Showing the items found before the site stopped responding".
 - Instagram: when a post with videos and photos is saved without a sign-in, the video Nezzel can get is kept in the post's folder. On Windows it was saved in a folder at the top of the drive instead of your download folder (the row said "The other items were saved" while the folder looked empty); on macOS and Linux it was dropped.
 - An album or photo post you already saved now says "Already saved" and offers "Download again", which saves a second copy beside the first.
