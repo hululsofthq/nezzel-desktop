@@ -15,6 +15,32 @@ use tauri::{
 static WINDOWS: LazyLock<[tokio::sync::Mutex<()>; 3]> =
   LazyLock::new(|| std::array::from_fn(|_| tokio::sync::Mutex::new(())));
 const COOKIE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a new sign-in waits for the previous window of the same site to finish closing.
+const TEARDOWN_WAIT: Duration = Duration::from_secs(2);
+static WINDOW_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Every window label starts with this, so a capability glob `site-login-*` still matches.
+fn label_prefix(index: usize) -> String {
+  format!("site-login-{index}-")
+}
+/// A fresh label per build: WebView2 can still hold the old window's label while it tears down.
+fn window_label(index: usize) -> String {
+  format!(
+    "{}{}",
+    label_prefix(index),
+    WINDOW_SEQ.fetch_add(1, Ordering::SeqCst)
+  )
+}
+/// Polls until `open` reports no window left, or the cap passes (then builds anyway).
+async fn wait_until_closed(mut open: impl FnMut() -> bool, cap: Duration) -> bool {
+  let start = tokio::time::Instant::now();
+  while open() {
+    if start.elapsed() >= cap {
+      return false;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+  }
+  true
+}
 const INSECURE_BROWSER: &str = "This browser or app may not be secure";
 fn site(host: &str) -> Option<(usize, &'static str, &'static str)> {
   match site_key(host)?.as_str() {
@@ -217,6 +243,16 @@ async fn session(
   crate::runners::browser_cookies::session_directory(root)?;
   #[cfg(not(target_os = "macos"))]
   let root_dir = root.to_path_buf();
+  let prefix = label_prefix(index);
+  if !wait_until_closed(
+    || app.webview_windows().keys().any(|l| l.starts_with(&prefix)),
+    TEARDOWN_WAIT,
+  )
+  .await
+  {
+    tracing::warn!("previous sign-in window still closing, opening the next anyway");
+  }
+  let label = window_label(index);
   let (tx, rx) = tokio::sync::oneshot::channel();
   let handle = app.clone();
   app
@@ -225,17 +261,14 @@ async fn session(
         if !enabled(&handle) {
           return Err("browserLoginDisabled");
         }
-        let builder = WebviewWindowBuilder::new(
-          &handle,
-          format!("site-login-{index}"),
-          WebviewUrl::External(login.parse().unwrap()),
-        )
-        .title("Nezzel")
-        .inner_size(900.0, 750.0)
-        .visible(false)
-        .user_agent(crate::net::CHROME_UA)
-        .on_navigation(move |url| allowed_url(domain, url))
-        .on_new_window(|_, _| NewWindowResponse::Deny);
+        let builder =
+          WebviewWindowBuilder::new(&handle, label, WebviewUrl::External(login.parse().unwrap()))
+            .title("Nezzel")
+            .inner_size(900.0, 750.0)
+            .visible(false)
+            .user_agent(crate::net::CHROME_UA)
+            .on_navigation(move |url| allowed_url(domain, url))
+            .on_new_window(|_, _| NewWindowResponse::Deny);
         #[cfg(target_os = "macos")]
         let builder = builder.data_store_identifier([0x40 + index as u8; 16]);
         #[cfg(not(target_os = "macos"))]
@@ -414,6 +447,39 @@ mod tests {
     let _ = task.await;
     assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
   }
+  #[test]
+  fn window_labels_are_unique_per_build_and_match_the_site_login_glob() {
+    let (a, b) = (window_label(1), window_label(1));
+    assert_ne!(a, b);
+    for label in [&a, &b] {
+      assert!(label.starts_with("site-login-"), "{label}");
+      assert!(label.starts_with(&label_prefix(1)), "{label}");
+    }
+    assert!(!window_label(0).starts_with(&label_prefix(1)));
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn next_window_waits_until_the_previous_one_is_gone_then_gives_up_at_the_cap() {
+    let polls = std::cell::Cell::new(0);
+    let start = tokio::time::Instant::now();
+    // Open for 3 polls, then gone: returns true well before the cap.
+    let gone = wait_until_closed(
+      || {
+        polls.set(polls.get() + 1);
+        polls.get() <= 3
+      },
+      TEARDOWN_WAIT,
+    )
+    .await;
+    assert!(gone);
+    assert_eq!(polls.get(), 4);
+    assert!(start.elapsed() < TEARDOWN_WAIT);
+    // Never closes: gives up at the cap, not before.
+    let start = tokio::time::Instant::now();
+    assert!(!wait_until_closed(|| true, TEARDOWN_WAIT).await);
+    assert!(start.elapsed() >= TEARDOWN_WAIT);
+  }
+
   type Read = Result<Option<&'static str>, &'static str>;
   async fn found(session: &'static str) -> Read {
     Ok(Some(session))

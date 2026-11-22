@@ -345,6 +345,10 @@ pub(super) fn schedule<R: LoginRuntime>(
         }
       }
     }
+    if let Err(code) = &result {
+      // A fixed code only (cancelled, browserLoginTimeout, ...): no links, cookies or accounts.
+      tracing::info!(code, expired, "browser login ended without a session");
+    }
     let pending = PENDING.lock().unwrap().remove(&token);
     let Some(pending) = pending else {
       return;
