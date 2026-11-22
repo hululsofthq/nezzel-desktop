@@ -8,19 +8,23 @@ export const APP_VERSION = typeof __APP_VERSION__ === 'undefined' ? '' : __APP_V
 
 /** The last version whose notes the user saw (or the first version installed), on this computer only. */
 const lastSeen = persistedRef('nezzel.whatsNew.lastSeen', textCodec, '');
+/** The version whose after-update line was already on screen in some run: the line is shown in one run only. */
+const shownFor = persistedRef('nezzel.whatsNew.shownFor', textCodec, '');
+const shownBefore = shownFor.value;
 /** Settings → About scrolls to What's new and flashes it once, then clears this. */
 const revealRequested = ref(false);
 let initialised = false;
 
 export function useWhatsNew(current: string = APP_VERSION) {
   const onboarding = useOnboardingStore();
-  const state = () => afterUpdateLine(current, lastSeen.value, onboarding.welcomeDoneBefore);
+  const state = () => afterUpdateLine(current, lastSeen.value, onboarding.welcomeDoneBefore, shownBefore);
   if (!initialised) {
     initialised = true;
     // App-lifetime watcher (not tied to the first component that asked): records the version on a fresh install.
     effectScope(true).run(() => watchEffect(() => {
-      const { record } = state();
+      const { show, record } = state();
       if (record) lastSeen.value = record;
+      if (show) shownFor.value = current;
     }));
   }
   const showLine = computed(() => state().show);

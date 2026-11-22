@@ -40,11 +40,14 @@ export function notesFor(version: string, locale: string, file: ReleaseNotesFile
  * The quiet "Updated to X" line after an update. `record` = the version to store as last seen now.
  * Nothing recorded yet: a user who had completed the welcome before this run is updating from a version that
  * predates this line (show it); otherwise it is a fresh install (just remember the version). `welcomeDoneBefore`
- * is undefined until preferences load: decide nothing yet.
+ * is undefined until preferences load: decide nothing yet. `shownBefore` = the version whose line an earlier run
+ * already showed.
  */
-export function afterUpdateLine(current: string, lastSeen: string, welcomeDoneBefore?: boolean): { show: boolean; record?: string } {
+export function afterUpdateLine(current: string, lastSeen: string, welcomeDoneBefore?: boolean, shownBefore = ''): { show: boolean; record?: string } {
   if (!current) return { show: false };
-  if (lastSeen) return { show: lastSeen !== current };
-  if (welcomeDoneBefore === undefined) return { show: false };
-  return welcomeDoneBefore ? { show: true } : { show: false, record: current };
+  if (lastSeen === current) return { show: false };
+  if (!lastSeen && welcomeDoneBefore === undefined) return { show: false };
+  if (!lastSeen && !welcomeDoneBefore) return { show: false, record: current };
+  // Shown once: an earlier run of this version already showed the line, so this run only remembers the version.
+  return shownBefore === current ? { show: false, record: current } : { show: true };
 }

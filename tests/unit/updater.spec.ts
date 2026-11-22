@@ -119,6 +119,14 @@ describe('after-update line', () => {
     expect(afterUpdateLine(current, lastSeen, welcomeDone)).toEqual(result);
   });
 
+  it.each([
+    ['shown in an earlier run and never dismissed: gone, version remembered', '0.1.6', '0.1.5', '0.1.6', { show: false, record: '0.1.6' }],
+    ['same, updating from a version that recorded nothing', '0.1.5', '', '0.1.5', { show: false, record: '0.1.5' }],
+    ['an older version was the one shown: the new line shows', '0.1.7', '0.1.5', '0.1.6', { show: true }],
+  ] as const)('one run only: %s', (_case, current, lastSeen, shownBefore, result) => {
+    expect(afterUpdateLine(current, lastSeen, true, shownBefore)).toEqual(result);
+  });
+
   it('orders versions by number, not text', () => {
     expect(compareVersions('0.1.10', '0.1.9')).toBeGreaterThan(0);
     expect(compareVersions('0.2.0', '0.2.0-beta.1')).toBe(0);

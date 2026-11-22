@@ -975,7 +975,9 @@ async fn collect_listing_output(
       .iter()
       .any(|entry| !entry["playlist_index"].is_null() || !entry["playlist_id"].is_null())
   {
-    partial = true;
+    // Photos in a mixed post fail alone with "No video formats found!"; the row is
+    // handed to gallery-dl, so the listing did not stop early.
+    partial = partial || !only_no_video_formats_errors(&stderr);
     code = 0;
   }
   let value = if entries.len() == 1
@@ -1005,6 +1007,15 @@ async fn collect_listing_output(
     stdout: serde_json::to_vec(&value).map_err(|e| e.to_string())?,
     stderr,
   }))
+}
+
+fn only_no_video_formats_errors(stderr: &[u8]) -> bool {
+  let text = String::from_utf8_lossy(stderr);
+  let mut errors = text
+    .lines()
+    .filter(|line| line.starts_with("ERROR:"))
+    .peekable();
+  errors.peek().is_some() && errors.all(|line| line.contains("No video formats found!"))
 }
 
 impl YtdlpChild {
@@ -1637,6 +1648,56 @@ mod tests {
       assert_eq!(playlist.playlist_count, Some(150));
       assert_eq!(playlist.uploader.as_deref(), Some("Vimeo Staff"));
       assert_eq!(playlist.entries[0].video_url, original["webpage_url"]);
+    }
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn listing_exit_one_is_partial_unless_only_photos_failed() {
+    use super::*;
+    let photo = "ERROR: [Instagram] DfxRiPZIXJo: No video formats found!";
+    for (stderr, partial) in [
+      (vec![photo, photo, photo], false),
+      (vec![photo, "ERROR: [Instagram] x: HTTP Error 429"], true),
+      (vec![], true),
+    ] {
+      let (tx, rx) = unbounded_channel();
+      for index in 0..4 {
+        let mut record: serde_json::Value = serde_json::from_slice(include_bytes!(
+          "../parsers/fixtures/ytdlp-recorded-vimeo.json"
+        ))
+        .unwrap();
+        record["playlist_index"] = serde_json::json!(index + 1);
+        record["playlist_id"] = serde_json::json!("DfxRiPZIXJo");
+        tx.send(YtdlpCommandEvent::Stdout(
+          serde_json::to_vec(&record).unwrap(),
+        ))
+        .unwrap();
+      }
+      for line in stderr {
+        tx.send(YtdlpCommandEvent::Stderr(line.as_bytes().to_vec()))
+          .unwrap();
+      }
+      tx.send(YtdlpCommandEvent::Terminated(TerminatedPayload {
+        code: Some(1),
+      }))
+      .unwrap();
+      let (_tx, cancel) = watch::channel(true);
+      let child = YtdlpChild {
+        platform: PlatformProcess::detached(),
+        _cookies: None,
+      };
+      let output = collect_listing_output(
+        rx,
+        child,
+        cancel,
+        Deadline::now() + Duration::from_secs(30),
+        "https://www.instagram.com/p/DfxRiPZIXJo/",
+      )
+      .await
+      .unwrap()
+      .unwrap();
+      let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+      assert_eq!(value["_nezzel_listing_partial"], partial);
     }
   }
 
