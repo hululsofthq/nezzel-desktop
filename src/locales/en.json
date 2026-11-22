@@ -1462,7 +1462,7 @@
       "hostNotFound": {
         "shortMessage": "Couldn't find this site",
         "message": "Check the link. If it is right, check your internet connection, then try again",
-        "action": "Check the link"
+        "action": "Check the link or your connection"
       },
       "unableToConnectToProxy": {
         "shortMessage": "Couldn't connect to the proxy",

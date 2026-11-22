@@ -1361,7 +1361,7 @@
       "hostNotFound": {
         "shortMessage": "Site introuvable",
         "message": "Vérifiez le lien. S'il est correct, vérifiez votre connexion Internet, puis réessayez",
-        "action": "Vérifiez le lien"
+        "action": "Vérifiez le lien ou votre connexion"
       },
       "unableToConnectToProxy": {
         "shortMessage": "Connexion au proxy impossible",

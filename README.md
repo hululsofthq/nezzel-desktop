@@ -183,10 +183,8 @@ Issues and small pull requests are welcome: start with [CONTRIBUTING.md](CONTRIB
 
 ## Based on Open Video Downloader
 
-Nezzel Desktop is a fork of [Open Video Downloader](https://github.com/jely2002/youtube-dl-gui)
-(youtube-dl-gui), Copyright © Jelle Glebbeek and contributors, licensed under the
-[GNU AGPL-3.0](LICENSE). Nezzel keeps that licence; thank you to the upstream authors.
-Downloads are done by [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl) and [ffmpeg](https://ffmpeg.org/).
+A fork of [Open Video Downloader](https://github.com/jely2002/youtube-dl-gui), © Jelle Glebbeek and contributors, under the [AGPL-3.0](LICENSE).
+Downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl) and [ffmpeg](https://ffmpeg.org/).
 
 ## License and responsible use
 
