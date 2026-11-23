@@ -5,7 +5,6 @@
     :style="lightsInset ? { paddingLeft: `${lightsInset}px` } : undefined"
     data-tauri-drag-region
   >
-    <sidebar-toggle v-if="showToggle && !isSettings" :collapsed="collapsed" @toggle="emit('toggleSidebar')" />
     <!-- The sidebar already names the view (and Settings has its own page heading): the title is for screen readers. -->
     <h1 class="sr-only">{{ title }}</h1>
     <!-- v-show, not v-if: the field owns clipboard watching, which must keep running on Settings. -->
@@ -35,16 +34,13 @@ import { SlidersHorizontal } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import LinkField from '../downloads/LinkField.vue';
-import SidebarToggle from './SidebarToggle.vue';
 import { useUiPrefs } from '../../composables/useUiPrefs';
 import { useTrafficLightsInset } from '../../composables/useTrafficLightsInset';
 import { parseListView } from '../../helpers/listFilter';
 
 /** `lightsInset`: px of physical left padding. The macOS overlay title bar puts the traffic lights at the window's
- *  physical left; pad clear of them when this toolbar touches that edge (RTL, or the sidebar collapsed under them).
- *  `showToggle`: the sidebar toggle opens the toolbar (Windows/Linux, and macOS RTL). */
-defineProps<{ lightsInset: number; showToggle: boolean; collapsed: boolean }>();
-const emit = defineEmits<{ toggleSidebar: [] }>();
+ *  physical left; pad clear of them when this toolbar touches that edge (RTL, or the sidebar collapsed under them). */
+defineProps<{ lightsInset: number }>();
 
 const { t } = useI18n();
 const route = useRoute();

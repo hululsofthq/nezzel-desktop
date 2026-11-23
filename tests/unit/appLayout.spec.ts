@@ -66,3 +66,28 @@ describe('app-wide paste shortcut', () => {
     }
   });
 });
+
+describe('sidebar toggle', () => {
+  it('stays in one spot on the list and in Settings, expanded and collapsed', async () => {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/', name: 'home', component: { template: '<div />' } },
+      { path: '/settings', name: 'settings.general', component: { template: '<div />' } },
+    ] });
+    await router.push('/');
+    const wrapper = mount(AppLayout, { global: { plugins: [router, i18n], stubs: { AppToolbar: Toolbar, AppSidebar: true, AppStatusBar: true, TheUpdater: true, DownloadInspector: true } } });
+    const spots = () => wrapper.findAll('button[aria-keyshortcuts]').map(b => b.element.parentElement?.getAttribute('style'));
+    try {
+      const seen = new Set<string | null | undefined>();
+      for (const path of ['/', '/settings']) {
+        await router.push(path);
+        for (let i = 0; i < 2; i++) {
+          await flushPromises();
+          expect(spots()).toHaveLength(1);
+          seen.add(spots()[0]);
+          await wrapper.get('button[aria-keyshortcuts]').trigger('click');
+        }
+      }
+      expect([...seen]).toEqual(['inset-inline-start: 14px;']);
+    } finally { wrapper.unmount(); }
+  });
+});

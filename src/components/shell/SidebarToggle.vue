@@ -15,8 +15,8 @@
 </template>
 
 <script setup lang="ts">
-// Sidebar toggle (shadcn SidebarTrigger). Lives in the title strip after the macOS traffic lights, or at the
-// toolbar's start elsewhere, so it never moves under the cursor when the sidebar collapses.
+// Sidebar toggle (shadcn SidebarTrigger). The layout pins it to one spot (after the macOS traffic lights, or the
+// sidebar strip's start corner elsewhere), so it never moves under the cursor when the sidebar collapses.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PanelLeft } from '@lucide/vue';

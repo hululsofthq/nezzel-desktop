@@ -3,19 +3,16 @@
     <tooltip-provider :delay-duration="500">
       <a :href="`#${MAIN_PANE_ID}`" class="nz-skip">{{ t('shell.skipToContent') }}</a>
       <div class="relative flex h-full min-h-0 bg-background text-[13px] text-foreground" :class="dir === 'rtl' && 'text-[14px]'">
-        <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar">
-          <template v-if="isSettings && !toggleInStrip && !narrowWindow" #title-start>
-            <sidebar-toggle :collapsed="collapsed" @toggle="toggleSidebar" />
-          </template>
-        </app-sidebar>
-        <!-- macOS (LTR): the toggle sits in the title strip right after the traffic lights and stays put when the
-             sidebar collapses. Physical `left` on purpose: the lights are at the physical left in every language. -->
-        <div v-if="toggleInStrip" class="absolute top-3 z-40" style="left: 78px" :inert="overlayOpen || undefined">
+        <app-sidebar :collapsed="collapsed" :can-toggle="!narrowWindow" :inert="overlayOpen || undefined" @toggle="toggleSidebar" />
+        <!-- One fixed spot for the sidebar toggle on every page and system, so it never moves under the cursor when the
+             sidebar collapses. macOS LTR: right after the traffic lights (physical `left`: the lights are at the
+             physical left in every language). Elsewhere: the title strip's start corner, centred in the 56px rail. -->
+        <div v-if="!narrowWindow" class="absolute top-3 z-40" :style="toggleInStrip ? { left: '78px' } : { insetInlineStart: '14px' }" :inert="overlayOpen || undefined">
           <sidebar-toggle :collapsed="collapsed" @toggle="toggleSidebar" />
         </div>
 
         <div class="flex min-w-0 flex-1 flex-col" :inert="overlayOpen || undefined">
-          <app-toolbar ref="toolbar" :lights-inset="lightsInset" :show-toggle="!toggleInStrip && !narrowWindow" :collapsed="collapsed" @toggle-sidebar="toggleSidebar" />
+          <app-toolbar ref="toolbar" :lights-inset="lightsInset" />
           <!-- A collapsed macOS LTR sidebar leaves its title-strip toggle over the main pane; clear it horizontally. -->
           <main :id="MAIN_PANE_ID" class="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden outline-none" :style="isSettings && toggleInStrip && collapsed ? { paddingInlineStart: `${lightsInset}px` } : undefined" tabindex="-1">
             <router-view :key="$route.matched[1]?.path ?? $route.fullPath" />
@@ -107,7 +104,7 @@ watch(() => route.name, (name) => {
 
 /** Narrow windows: the inspector slides over the page, so the page behind it is inert (modal). */
 const overlayOpen = computed(() => narrow.value && sheet.open);
-/** macOS LTR: the toggle lives in the title strip after the traffic lights. Everywhere else it opens the toolbar. */
+/** macOS LTR: the toggle sits after the traffic lights. Everywhere else it sits in the sidebar strip's start corner. */
 const toggleInStrip = computed(() => isMac.value && dir.value === 'ltr' && !narrowWindow.value);
 /** Toolbar left padding clear of the traffic lights (+ the strip toggle) when the toolbar touches that edge. */
 const { rtlInset } = useTrafficLightsInset();
