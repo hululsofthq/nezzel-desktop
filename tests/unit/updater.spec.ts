@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TheUpdater from '../../src/components/TheUpdater.vue';
 import { useUpdaterStore } from '../../src/stores/updater';
 import { useSettingsStore } from '../../src/stores/settings';
+import { useMediaProgressStore } from '../../src/stores/media/progress';
 import { i18n } from '../../src/i18n';
 import { installTauriMock } from '../utils/tauriMock';
 import { cardAllowed, MAX_NOTE_CHARS, summaryLines } from '../../src/helpers/updateCheck';
@@ -310,6 +311,21 @@ describe('a stalled or cancelled update download', () => {
     await flushPromises();
     expect(calls).toEqual(['download', 'download']);
     expect(store.isNeedingRestart).toBe(true);
+    wrapper.unmount();
+  });
+
+  it.each([
+    [0, 'Nezzel restarts to finish installing'],
+    [1, 'The running download stops; resume it after the restart'],
+    [3, 'The 3 running downloads stop; resume them after the restart'],
+  ])('the ready card says what happens to %i running downloads on restart', async (running, expected) => {
+    vi.spyOn(useMediaProgressStore(), 'findAllCounts').mockReturnValue({ total: running, done: 0, ready: 0, downloading: running });
+    const { wrapper, store } = await mountDownload(() => undefined);
+    await store.download();
+    await flushPromises();
+    const sub = wrapper.get('[data-testid="updater-ready-sub"]').text();
+    expect(sub).toContain(expected);
+    if (running === 0) expect(sub).not.toContain('stop');
     wrapper.unmount();
   });
 

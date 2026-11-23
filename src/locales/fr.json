@@ -975,6 +975,7 @@
     "downloadingVersion": "Téléchargement de la version {version}…",
     "ready": "La version {version} est prête",
     "readySub": "Nezzel redémarre pour terminer l’installation",
+    "readySubRunning": "Nezzel redémarre pour terminer l’installation. Le téléchargement en cours s’arrête ; reprenez-le après le redémarrage | Nezzel redémarre pour terminer l’installation. Les {n} téléchargements en cours s’arrêtent ; reprenez-les après le redémarrage",
     "installRestart": "Installer et redémarrer",
     "manualSub": "Cette copie ne se met pas à jour depuis l’application",
     "openPage": "Ouvrir la page de téléchargement",

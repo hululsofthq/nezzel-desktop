@@ -1076,6 +1076,7 @@
     "downloadingVersion": "Downloading {version}…",
     "ready": "Version {version} is ready",
     "readySub": "Nezzel restarts to finish installing",
+    "readySubRunning": "Nezzel restarts to finish installing. The running download stops; resume it after the restart | Nezzel restarts to finish installing. The {n} running downloads stop; resume them after the restart",
     "installRestart": "Install and restart",
     "manualSub": "This copy doesn't update from inside the app",
     "openPage": "Open download page",

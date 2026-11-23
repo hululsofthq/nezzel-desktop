@@ -76,7 +76,7 @@
           </template>
           <template v-else-if="isNeedingRestart && !isUpdating">
             <h3 :class="titleCls">{{ info?.version ? t('updater.ready', { version: isolate(info.version) }) : t('updater.install.title') }}</h3>
-            <p :class="subCls">{{ info?.version ? t('updater.readySub') : t('updater.install.subtitle') }}</p>
+            <p :class="subCls" data-testid="updater-ready-sub">{{ readySub }}</p>
             <div class="mt-2.5 flex justify-end gap-2">
               <Button variant="ghost" @click="updaterStore.ignore()">{{ t('common.later') }}</Button>
               <Button @click="updaterStore.install()">{{ info?.version ? t('updater.installRestart') : t('common.install') }}</Button>
@@ -117,6 +117,7 @@ import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 import { usePlatform } from '../composables/usePlatform';
 import { downloadPageUrl, summaryLines } from '../helpers/updateCheck';
+import { useMediaProgressStore } from '../stores/media/progress';
 
 const { t, locale } = useI18n();
 const updaterStore = useUpdaterStore();
@@ -128,6 +129,13 @@ const subCls = 'text-[12px] text-muted-foreground rtl:text-[12.5px]';
 /** Version numbers stay LTR inside Arabic sentences. */
 const isolate = (version: string) => `\u2066${version}\u2069`;
 const availableTitle = computed(() => (info.value?.version ? t('updater.availableVersion', { version: isolate(info.value.version) }) : t('updater.available')));
+const progressStore = useMediaProgressStore();
+/** Installing restarts the app, which stops running downloads: say so before the click. */
+const readySub = computed(() => {
+  if (!info.value?.version) return t('updater.install.subtitle');
+  const running = progressStore.findAllCounts().downloading;
+  return running > 0 ? t('updater.readySubRunning', { n: running }, running) : t('updater.readySub');
+});
 const downloadingTitle = computed(() => {
   if (lastOperation.value === 'install') return info.value?.systemPackage ? t('updater.passwordHint') : t('common.pleaseWait');
   return info.value?.version ? t('updater.downloadingVersion', { version: isolate(info.value.version) }) : t('updater.downloading');
