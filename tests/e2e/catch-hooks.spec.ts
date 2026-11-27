@@ -144,7 +144,8 @@ const test = base.extend<{
       </script><iframe src="/inner"></iframe>`,
       '/inner': `<video src="${signedPath}"></video><script>document.querySelector("video").dispatchEvent(new Event("playing"));</script>`,
       '/position-outer': '<!doctype html><iframe src="/position-player" style="position:absolute;top:47px;border:0"></iframe>',
-      '/position-player': `<!doctype html><button>Start audio</button>
+      // The button stays above the player: GTK's taller button runs under its controls.
+      '/position-player': `<!doctype html><button style="position:relative;z-index:1">Start audio</button>
         <audio controls style="display:block;position:absolute;top:23px"></audio><script>
           const audio = document.querySelector('audio');
           const samples = Uint8Array.from(atob('${silentWave().toString('base64')}'), c => c.charCodeAt(0));
