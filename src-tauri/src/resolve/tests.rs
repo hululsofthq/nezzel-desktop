@@ -2149,3 +2149,45 @@ fn rumble_403_impersonates_once_without_changing_other_hosts() {
     );
   }
 }
+
+#[test]
+fn http_406_impersonates_once_on_any_host() {
+  let page = "https://www.euronews.com/video/2026/11/16/more-live-news";
+  for (error, expected) in [
+    (
+      "ERROR: [generic] x: Unable to download webpage: HTTP Error 406: Not Acceptable",
+      true,
+    ),
+    (
+      "ERROR: unable to download video data: HTTP Error 406: Not Acceptable",
+      true,
+    ),
+    ("ERROR: HTTP Error 403: Forbidden", false),
+    ("ERROR: HTTP Error 401: Unauthorized", false),
+  ] {
+    let mut input = ResolvedInput::new(page);
+    assert_eq!(input.retry_blocked_406(error), expected, "{error}");
+    let args = input.args();
+    assert_eq!(
+      args.iter().filter(|arg| **arg == "--impersonate").count(),
+      usize::from(expected)
+    );
+    assert!(!input.retry_blocked_406(error), "only once: {error}");
+    assert_eq!(
+      input.impersonation_unavailable("Impersonate target chrome is not available"),
+      expected
+    );
+  }
+  // Already impersonating for a site rule: a 406 adds no second retry or flag.
+  let mut rumble = ResolvedInput::new("https://rumble.com/video");
+  assert!(rumble.retry_rumble_403("HTTP Error 403"));
+  assert!(!rumble.retry_blocked_406("HTTP Error 406: Not Acceptable"));
+  assert_eq!(
+    rumble
+      .args()
+      .iter()
+      .filter(|arg| **arg == "--impersonate")
+      .count(),
+    1
+  );
+}

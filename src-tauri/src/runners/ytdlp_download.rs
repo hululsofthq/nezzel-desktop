@@ -548,8 +548,25 @@ fn impersonation_response(input: &ResolvedInput, line: &str) -> Option<&'static 
     Some("HTTP Error 403")
   } else if lower.contains("http error 401") {
     Some("HTTP Error 401")
+  } else if lower.contains("http error 406") {
+    Some("HTTP Error 406")
   } else {
     None
+  }
+}
+
+/// Of the responses seen in one run: "can't impersonate" wins (it restores the first error), then a
+/// 406 (a later 401/403 line from the same run must not hide the retryable refusal).
+fn stronger_response(seen: &'static str, next: &'static str) -> &'static str {
+  let rank = |response: &str| match response {
+    "Impersonate target is not available" => 2,
+    "HTTP Error 406" => 1,
+    _ => 0,
+  };
+  if rank(seen) > rank(next) {
+    seen
+  } else {
+    next
   }
 }
 
@@ -564,7 +581,10 @@ fn retry_vimeo(
     if let Some(events) = original.as_ref() {
       diagnostics.clone_from(events);
     }
-  } else if input.retry_vimeo_401(stderr) || input.retry_rumble_403(stderr) {
+  } else if input.retry_vimeo_401(stderr)
+    || input.retry_rumble_403(stderr)
+    || input.retry_blocked_406(stderr)
+  {
     *original = Some(diagnostics.clone());
     return true;
   }
@@ -1810,7 +1830,7 @@ async fn run_download_attempts(
               unsupported |= resolve::unsupported_url(&line_str);
               // Classify without retaining page contents or potentially sensitive URLs.
               let lower = line_str.to_ascii_lowercase();
-              if let Some(response) = impersonation_response(&input, &line_str) { vimeo_response = response; }
+              if let Some(response) = impersonation_response(&input, &line_str) { vimeo_response = stronger_response(vimeo_response, response); }
               expired |= lower.contains("http error 403") || lower.contains("http error 404");
               login_reason = login_reason.or_else(|| error_parser.login_reason(&line_str));
               transport_denied |= aria.is_some() && aria_denied(&line_str);
@@ -2900,6 +2920,30 @@ mod tests {
       impersonation_response(&input, "ERROR: HTTP Error 403"),
       None
     );
+    // Any host that refuses yt-dlp's client with 406 (Euronews media host) is retried as Chrome.
+    let mut input = ResolvedInput::new("https://video.euronews.com/mp4/SHD/a.mp4");
+    let parser = YtdlpErrorParser::new("id", "group", DiagnosticMatcher::shared().unwrap());
+    let line = "ERROR: unable to download video data: HTTP Error 406: Not Acceptable";
+    let response = impersonation_response(&input, line).unwrap();
+    let mut diagnostics = parser.parse_lines(vec![line], false);
+    assert!(retry_vimeo(
+      &mut input,
+      response,
+      &mut diagnostics,
+      &mut None
+    ));
+    assert!(input.args().contains(&"chrome"));
+    let unavailable = "Impersonate target is not available";
+    for (seen, next, kept) in [
+      ("", "HTTP Error 406", "HTTP Error 406"),
+      ("HTTP Error 406", "HTTP Error 401", "HTTP Error 406"),
+      ("HTTP Error 401", "HTTP Error 406", "HTTP Error 406"),
+      (unavailable, "HTTP Error 406", unavailable),
+      ("HTTP Error 406", unavailable, unavailable),
+      ("HTTP Error 401", "HTTP Error 403", "HTTP Error 403"),
+    ] {
+      assert_eq!(stronger_response(seen, next), kept, "{seen} then {next}");
+    }
   }
 
   #[test]

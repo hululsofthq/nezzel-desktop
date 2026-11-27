@@ -388,7 +388,7 @@ async fn preview_ytdlp(
               .unwrap_or_else(|| ReadFailure::from_ytdlp(&value.url, reason, &stderr)),
           );
         }
-        if input.retry_vimeo_401(&stderr) {
+        if input.retry_vimeo_401(&stderr) || input.retry_blocked_406(&stderr) {
           first_vimeo_failure = Some(ReadFailure::from_ytdlp(&value.url, reason, &stderr));
         } else if !input.retry_original(&stderr) {
           return Err(ReadFailure::from_ytdlp(&value.url, reason, &stderr));

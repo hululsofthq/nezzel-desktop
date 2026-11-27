@@ -512,6 +512,8 @@ pub struct ResolvedInput {
   original_retried: bool,
   vimeo_impersonated: bool,
   rumble_impersonated: bool,
+  /// A site that answered 406 to yt-dlp's own client (any host); retried once as Chrome.
+  blocked_impersonated: bool,
   // A single budget; impersonation records only the chosen transport.
   facebook_retried: bool,
   facebook_impersonated: bool,
@@ -525,6 +527,7 @@ impl ResolvedInput {
       original_retried: false,
       vimeo_impersonated: false,
       rumble_impersonated: false,
+      blocked_impersonated: false,
       facebook_retried: false,
       facebook_impersonated: false,
     }
@@ -558,7 +561,11 @@ impl ResolvedInput {
     if let Some(page) = &self.source_page {
       args.extend(["--referer", page.as_str()]);
     }
-    if self.vimeo_impersonated || self.facebook_impersonated || self.rumble_impersonated {
+    if self.vimeo_impersonated
+      || self.facebook_impersonated
+      || self.rumble_impersonated
+      || self.blocked_impersonated
+    {
       args.extend(["--impersonate", "chrome"]);
     }
     args.extend(["--", self.url.as_str()]);
@@ -582,6 +589,7 @@ impl ResolvedInput {
   /// Vimeo sometimes rejects yt-dlp's TLS fingerprint. Retry only that response, once.
   pub(crate) fn retry_vimeo_401(&mut self, stderr: &str) -> bool {
     if self.vimeo_impersonated
+      || self.blocked_impersonated
       || !vimeo::drm_may_be_login(&self.url)
       || !stderr.to_ascii_lowercase().contains("http error 401")
     {
@@ -593,6 +601,7 @@ impl ResolvedInput {
 
   pub(crate) fn retry_rumble_403(&mut self, stderr: &str) -> bool {
     if self.rumble_impersonated
+      || self.blocked_impersonated
       || !stderr.to_ascii_lowercase().contains("http error 403")
       || !reqwest::Url::parse(&self.url).ok().is_some_and(|url| {
         url
@@ -606,9 +615,24 @@ impl ResolvedInput {
     true
   }
 
+  /// A 406 Not Acceptable is a server refusing yt-dlp's own HTTP client while a browser gets the
+  /// page (Euronews: page and media host). Retry that response once with Chrome's TLS profile.
+  pub(crate) fn retry_blocked_406(&mut self, stderr: &str) -> bool {
+    if self.blocked_impersonated
+      || self.vimeo_impersonated
+      || self.rumble_impersonated
+      || self.facebook_impersonated
+      || !stderr.to_ascii_lowercase().contains("http error 406")
+    {
+      return false;
+    }
+    self.blocked_impersonated = true;
+    true
+  }
+
   pub(crate) fn impersonation_unavailable(&self, stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
-    (self.vimeo_impersonated || self.rumble_impersonated)
+    (self.vimeo_impersonated || self.rumble_impersonated || self.blocked_impersonated)
       && lower.contains("impersonat")
       && ["not available", "unavailable", "not found", "not supported"]
         .iter()

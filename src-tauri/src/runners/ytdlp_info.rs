@@ -424,6 +424,7 @@ async fn run_attempts(
       }
       if input.retry_vimeo_401(&stderr)
         || input.retry_rumble_403(&stderr)
+        || input.retry_blocked_406(&stderr)
         || input.retry_original(&stderr)
       {
         continue;

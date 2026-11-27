@@ -4,6 +4,7 @@
 
 - Catch from the page: when yt-dlp can't read a link, Nezzel opens the page in the background, catches the video it plays and offers every quality. If the page needs a click, a sign-in or a captcha, the row says so and opens the page.
 - The Nezzel browser: one window with tabs in a side list (folds to icons), a home page with one search/address field, recent sites and recently saved videos, and a "Video found" row with Save on any page that plays a video. Pop-ups you didn't ask for are blocked; one you clicked opens as a linked tab.
+- The Nezzel browser blocks ads and trackers, with a count of what it blocked; "Block ads" turns it off for one site if a page stops working.
 - Search engine: DuckDuckGo by default; Google, Bing or Brave Search from the field's switcher or Settings.
 - Your browser's sign-in is used by default for the site you open (only that site's sign-in, never in private tabs, can be switched off per site). "Mobile version" reloads a page as a phone sees it.
 - Before saying a video can't be saved, Nezzel tries the mobile version and yt-dlp; only a video the site really encrypts is left. "Why?" on that row explains it and offers "Report this site".
