@@ -272,6 +272,10 @@ jobs:
           # GUI session, so run it there; the watchdog step above bounds it to 5 min (on
           # timeout the dmg ships plain). Checked by the "Dmg window layout" step below.
           TAURI_BUNDLER_DMG_IGNORE_CI: ${{ startsWith(matrix.platform, 'macos') && 'true' || 'false' }}
+          # macOS: strip the app binary's symbol table (-6.5 MB, #91). Crash symbols come from the
+          # dSYM uploaded below, which rustc writes before stripping (same UUID). Linux keeps its
+          # symbols: stripping would drop the skeleton units its .dwp needs; Windows uses PDBs.
+          CARGO_PROFILE_RELEASE_STRIP: ${{ startsWith(matrix.platform, 'macos') && 'symbols' || 'none' }}
         with:
           tagName: app-v__VERSION__
           releaseName: 'Nezzel v__VERSION__'

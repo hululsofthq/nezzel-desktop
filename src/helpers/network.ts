@@ -20,8 +20,11 @@ export function buildImpersonatePresets(t: (key: string) => string): SelectOptio
   ];
 }
 
-/** scheme://[user:pass@]host[:port][/] with a scheme yt-dlp accepts for --proxy. */
-const PROXY_RE = /^(https?|socks4a?|socks5h?):\/\/([^\s/@]+@)?(\[[0-9a-f:.]+\]|[^\s:/@[\]]+)(:\d{1,5})?\/?$/i;
+/**
+ * scheme://[user:pass@]host[:port][/] with a scheme yt-dlp accepts for --proxy. The host is an
+ * address or dot-separated labels of letters, digits and hyphens (as `net::browser_proxy_for`).
+ */
+const PROXY_RE = /^(https?|socks4a?|socks5h?):\/\/([^\s/@]+@)?(\[[0-9a-f:.]+\]|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)(:\d{1,5})?\/?$/i;
 
 export function isValidProxyUrl(value: string): boolean {
   const match = PROXY_RE.exec(value.trim());

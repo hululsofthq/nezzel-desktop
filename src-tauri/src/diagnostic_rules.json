@@ -239,6 +239,14 @@
       ]
     },
     {
+      "code": "signInRequired",
+      "component": "generic",
+      "appliesTo": "error",
+      "patterns": [
+        { "kind": "regex", "value": "(?i)\\bHTTP Error 401\\b" }
+      ]
+    },
+    {
       "code": "accessForbidden403",
       "component": "vimeo",
       "appliesTo": "error",

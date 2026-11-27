@@ -110,6 +110,20 @@ mod tests {
   }
 
   #[test]
+  fn a_file_without_a_search_engine_loads_duckduckgo() {
+    use crate::state::preferences_models::SearchEngine;
+    let old = Preferences::materialize(&json!({ "window": { "width": 800 } })).unwrap();
+    assert_eq!(old.search_engine, SearchEngine::DuckDuckGo);
+    assert!(!old.search_hint_shown);
+    assert_eq!(
+      serde_json::to_value(&old).unwrap()["searchEngine"],
+      "duckduckgo"
+    );
+    let chosen = Preferences::materialize(&json!({ "searchEngine": "brave" })).unwrap();
+    assert_eq!(chosen.search_engine, SearchEngine::Brave);
+  }
+
+  #[test]
   fn lenient_resets_a_wrong_typed_leaf_and_keeps_siblings() {
     let raw = json!({ "onboarding": { "welcomeDone": "yes", "closeNoteDone": true } });
     assert!(Preferences::materialize(&raw).is_err());

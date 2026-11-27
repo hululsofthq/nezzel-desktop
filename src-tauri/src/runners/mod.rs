@@ -7,6 +7,7 @@ pub mod gallery_files;
 pub mod gallery_process;
 pub mod login;
 pub mod override_resolver;
+pub(crate) mod preset_sizes;
 #[cfg(any(target_os = "macos", test))]
 mod quicktime;
 pub(crate) mod reliability;

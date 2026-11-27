@@ -2,6 +2,7 @@ import { mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
 import { IPCHandler, installTauriMock } from '../tauriMock';
 import { configHandlers } from './configHandlers';
+import { catchHandlers } from './catchHandlers';
 import { emptyDetails, type CaptureOffer } from '../../../src/captureTypes';
 
 export type CaptureMockData = {
@@ -40,7 +41,7 @@ const captureHandlers: Record<string, IPCHandler> = {
 
 /** E2E only: the capture window believes it is `label` and talks to mocked commands. */
 export function installCaptureMock(label: string): void {
-  installTauriMock({ ...configHandlers, ...captureHandlers });
+  installTauriMock({ ...configHandlers, ...captureHandlers, ...catchHandlers });
   mockWindows(label);
 }
 

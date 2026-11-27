@@ -272,7 +272,7 @@ pub(super) async fn gallery_info_attempts(
             }
           }
         }
-        login.succeeded(app, &entry.group_id);
+        login.succeeded(app, &entry.id, &entry.group_id);
         stage.media = Some(ParsedMedia::Single(media));
         return Some(Outcome::Verified);
       }

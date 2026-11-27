@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.6
+
+- Catch from the page: when yt-dlp can't read a link, Nezzel opens the page in the background, catches the video it plays and offers every quality. If the page needs a click, a sign-in or a captcha, the row says so and opens the page.
+- The Nezzel browser: one window with tabs in a side list (folds to icons), a home page with one search/address field, recent sites and recently saved videos, and a "Video found" row with Save on any page that plays a video. Pop-ups you didn't ask for are blocked; one you clicked opens as a linked tab.
+- Search engine: DuckDuckGo by default; Google, Bing or Brave Search from the field's switcher or Settings.
+- Your browser's sign-in is used by default for the site you open (only that site's sign-in, never in private tabs, can be switched off per site). "Mobile version" reloads a page as a phone sees it.
+- Before saying a video can't be saved, Nezzel tries the mobile version and yt-dlp; only a video the site really encrypts is left. "Why?" on that row explains it and offers "Report this site".
+- Every link opened from the main window goes to a tab in the same Nezzel browser window.
+- Settings lists near the bottom of the window open upward instead of past the window's edge.
+- Files a page downloads in the Nezzel browser (a PDF, a ZIP, an installer) are saved through your download list, in the Files folder, instead of your default browser. A file Nezzel can't save says so; private tabs and tabs behind the proxy still refuse.
+- Cmd-click or middle-click on a link in the Nezzel browser opens it in a background tab. A page that can't load shows "Couldn't open" with "Try again".
+- Catch from the page plays videos inside embedded players, presses play past cookie bars that don't cover the video, and offers the clip that actually plays, not a longer video loaded beside it.
+- Copying several links adds each one. With "Ask how to save each link" off, a link the clipboard watch picks up starts downloading by itself.
+- After Nezzel restarts, interrupted downloads stay in their playlist, links waiting under "Needs you" come back with "Reload link", and an interrupted "Download again" keeps its own row. Return in an empty link field (spaces only) says "Paste a link first".
+- The download bar and the download row offer the same next step for a link Nezzel can't read directly.
+- After a download that needed a sign-in finished without one, the row no longer names the browser profile used before.
+
 ## 0.1.5
 
 - Instagram: every file of a post with videos and photos is named the same way, after the post's folder and its place in the post ("Post by name-001", "-002", …), and the row shows how many items the post has before you open it, while it downloads and after Nezzel restarts (posts saved with an earlier 0.1.5 test build are corrected at the next start).

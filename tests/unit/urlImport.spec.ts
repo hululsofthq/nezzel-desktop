@@ -45,8 +45,32 @@ describe('urlImport', () => {
       'HTTPS://M.YOUTUBE.COM/watch?v=YsKxkP_kGbE',
       'https://fxtwitter.com/ANI/status/1823253560127041999/photo/1',
       'https://dropbox.com/scl/fi/abc/report.pdf?rlkey=secret&dl=0',
-    ], skipped: 0 });
-    expect(parseUrlInputText('hello youtube.com.evil.test/watch?v=abc')).toEqual({ urls: [], skipped: 2 });
+    ], skipped: 0, skipReasons: [] });
+    expect(parseUrlInputText('hello youtube.com.evil.test/watch?v=abc')).toEqual({ urls: [], skipped: 2, skipReasons: ['invalid', 'invalid'] });
+  });
+
+  it.each([
+    ['this is not a link', [], ['invalid', 'invalid', 'invalid', 'invalid', 'invalid']],
+    ['example', [], ['invalid']],
+    ['http://', [], ['invalid']],
+    ['ftp://example.com/file.mp4', [], ['unsupportedScheme']],
+    ['/Users/x/video.mp4', [], ['localFile']],
+    ['C:\\Users\\x\\video.mp4', [], ['localFile']],
+    ['file:///Users/x/video.mp4', [], ['localFile']],
+    ['https://youtube.com\nexample.com', ['https://youtube.com'], ['invalid']],
+    ['https://example.com/\nfoo.com', ['https://example.com/'], ['invalid']],
+    ['https://www.you\ntube.com/watch?v=abc', ['https://www.youtube.com/watch?v=abc'], []],
+    ['https://example.com/watch?v=\r\nabc', ['https://example.com/watch?v=abc'], []],
+    ['https://example.com\n/watch?v=abc', ['https://example.com/watch?v=abc'], []],
+    ['https://example.com/video\n%20name', ['https://example.com/video%20name'], []],
+    ['https://example.com/a\nplain/word', ['https://example.com/a'], ['invalid']],
+    ['https://example.com/a\ninvalid', ['https://example.com/a'], ['invalid']],
+    ['https://example.com/a\nexample.invalid', ['https://example.com/a'], ['invalid']],
+    ['https://example.com/a\n/Users/x/video.mp4', ['https://example.com/a'], ['localFile']],
+    ['https://example.com/a\nwww.youtube.com', ['https://example.com/a', 'https://www.youtube.com/'], []],
+    ['https://example.com/a https://example.com/a', ['https://example.com/a'], []],
+  ])('parses field input %j with rejection reasons', (input, urls, skipReasons) => {
+    expect(parseUrlInputText(input)).toEqual({ urls, skipped: skipReasons.length, skipReasons });
   });
 
   it('parses multiple input urls separated by commas, whitespace, and newlines', () => {
@@ -63,12 +87,12 @@ describe('urlImport', () => {
   });
 
   it('recognizes a scheme only at the start, preserving nested URL query values', () => {
-    expect(parseUrlInputText('youtu.be/YsKxkP_kGbE?next=https://example.com/path')).toEqual({ urls: ['https://youtu.be/YsKxkP_kGbE?next=https://example.com/path'], skipped: 0 });
+    expect(parseUrlInputText('youtu.be/YsKxkP_kGbE?next=https://example.com/path')).toEqual({ urls: ['https://youtu.be/YsKxkP_kGbE?next=https://example.com/path'], skipped: 0, skipReasons: [] });
   });
 
   it('requires public bare hosts and recognized file-share paths', () => {
-    expect(parseUrlInputText('evil.test@youtube.com/x youtube.com:8080/x github.com/o/r pixeldrain.com/')).toEqual({ urls: [], skipped: 4 });
-    expect(parseUrlInputText('www.github.com/octocat/Hello-World/blob/master/README')).toEqual({ urls: ['https://www.github.com/octocat/Hello-World/blob/master/README'], skipped: 0 });
+    expect(parseUrlInputText('evil.test@youtube.com/x youtube.com:8080/x github.com/o/r pixeldrain.com/')).toEqual({ urls: [], skipped: 4, skipReasons: ['invalid', 'invalid', 'invalid', 'invalid'] });
+    expect(parseUrlInputText('www.github.com/octocat/Hello-World/blob/master/README')).toEqual({ urls: ['https://www.github.com/octocat/Hello-World/blob/master/README'], skipped: 0, skipReasons: [] });
   });
 
   it('extracts urls from csv-like file content', () => {

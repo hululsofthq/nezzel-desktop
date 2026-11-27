@@ -14,6 +14,7 @@ impl Drop for CookieJar {
 }
 
 pub(super) fn private_directory(path: &Path) -> std::io::Result<()> {
+  #[cfg_attr(not(unix), allow(unused_mut))]
   let mut builder = std::fs::DirBuilder::new();
   #[cfg(unix)]
   {

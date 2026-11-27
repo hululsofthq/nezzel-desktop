@@ -23,6 +23,7 @@
     "src/**/*.ts",
     "src/**/*.d.ts",
     "src/**/*.vue",
+    "src-capture/**/*.ts",
     "src-isolation/**/*.ts",
     "src-isolation/**/*.d.ts",
     "tests/**/*.ts",

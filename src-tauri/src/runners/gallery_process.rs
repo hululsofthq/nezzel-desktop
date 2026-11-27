@@ -122,7 +122,7 @@ fn read_diagnostics(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, Gall
   }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub async fn execute(
   path: &Path,
   args: &[String],
@@ -460,7 +460,7 @@ mod tests {
         &[
           "-c".into(),
           if stream_ended {
-            "cat \"$1\"; echo ready > \"$2\"; exec 1>&- 2>&-; exec /usr/bin/tail -f /dev/null"
+            "cat \"$1\"; echo ready > \"$2\"; exec 1>&- 2>&-; exec /bin/sleep 100000"
           } else {
             "cat \"$1\"; echo ready > \"$2\"; exec /usr/bin/tail -f /dev/null"
           }

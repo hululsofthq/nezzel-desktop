@@ -29,6 +29,25 @@ async function openGeneral(page: Page, language: 'en' | 'ar') {
   });
 }
 
+// Owner test t1: the Language list opened under the window's bottom edge and its options could not be reached.
+test('a select near the bottom edge opens its list above, every option in the window', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 650 });
+  await openGeneral(page, 'en');
+  for (const id of ['pref-language', 'pref-search-engine', 'pref-theme']) {
+    // The control sits 12 px above the pane's bottom edge.
+    await page.locator(`#${id}`).evaluate((el, paneId) => {
+      const pane = document.getElementById(paneId)!;
+      pane.scrollTop += el.getBoundingClientRect().bottom - pane.getBoundingClientRect().bottom + 12;
+    }, MAIN_PANE_ID);
+    await page.locator(`#${id}`).press('ArrowDown');
+    const list = page.getByRole('listbox');
+    await expect(list).toHaveAttribute('data-side', 'top');
+    for (const option of await list.getByRole('option').all()) await expect(option).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+  }
+});
+
 /** Track size, fill saturation, and where the knob sits: 'start' or 'end' of the inline axis. */
 function readSwitch(page: Page, id: string) {
   return page.locator(`#${id}`).evaluate((el) => {

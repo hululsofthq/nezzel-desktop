@@ -48,6 +48,26 @@ pub(super) fn announce_using<R: tauri::Runtime>(app: &AppHandle<R>, used: LoginU
   crate::events::emit(app, crate::events::MEDIA_LOGIN_USING, used);
 }
 
+pub(super) fn clear_used_browser<R: tauri::Runtime>(app: &AppHandle<R>, id: &str, group_id: &str) {
+  {
+    let mut map = USED.lock().unwrap();
+    match map.get(group_id) {
+      // A profile the user picked with "Change" while the anonymous retry ran stays.
+      Some((used, _)) if used.id == id && used.selected_only => return,
+      Some((used, _)) if used.id == id => {
+        map.remove(group_id);
+      }
+      _ => {}
+    }
+  }
+  // The UI may still hold a profile after the bounded registry evicts it.
+  crate::events::emit(
+    app,
+    crate::events::MEDIA_LOGIN_USING,
+    serde_json::json!({"id": id, "groupId": group_id, "candidate": null}),
+  );
+}
+
 /// Explicit user action on a row that has already used site login. Never a background scan.
 #[tauri::command]
 pub async fn media_login_choices(group_id: String) -> Result<LoginNeeded, String> {

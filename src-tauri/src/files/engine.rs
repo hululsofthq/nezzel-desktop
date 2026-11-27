@@ -162,6 +162,19 @@ impl Engine {
     self.file_row = true;
     self
   }
+  pub(crate) fn with_page_file(
+    mut self,
+    request: Option<Arc<crate::catch::handoff::PageFileRequest>>,
+  ) -> Self {
+    self.client.page_file = request;
+    self
+  }
+  fn share_plan(&self, url: &str) -> Option<super::hosts::Plan> {
+    if self.client.page_file.is_some() {
+      return None;
+    }
+    super::hosts::plan(url, self.export)
+  }
   pub fn with_state_directory(mut self, directory: PathBuf) -> Self {
     self.state_root = Some(directory);
     self
@@ -173,6 +186,10 @@ impl Engine {
   }
   /// Resume, probe caches and runner cleanup must use the same export identity.
   pub(crate) fn request_identity(&self, url: &str) -> String {
+    if let Some(page_file) = &self.client.page_file {
+      // A download with a tab's credentials owns its partial even if another row uses its URL.
+      return state::identity(&page_file.id);
+    }
     if matches!(self.export, super::hosts::Export::Office)
       && super::hosts::plan(url, self.export).is_some_and(|p| p.native_export())
     {
@@ -290,7 +307,7 @@ impl Engine {
     Err(Error::Network)
   }
   pub async fn probe(&self, url: &str, cancel: watch::Receiver<bool>) -> Result<Probe> {
-    if let Some(plan) = super::hosts::plan(url, self.export) {
+    if let Some(plan) = self.share_plan(url) {
       return tokio::time::timeout(Duration::from_secs(30), self.probe_share(plan, cancel))
         .await
         .map_err(|_| Error::Network)?;
@@ -319,7 +336,9 @@ impl Engine {
       drop(probe);
       probe = Probe::from_response(self.request(url, None, cancel).await?)?;
     }
-    if self.file_row && probe.kind == Kind::Unknown {
+    if self.client.page_file.is_some() {
+      probe.confirm_page_download()?;
+    } else if self.file_row && probe.kind == Kind::Unknown {
       probe.confirm_unknown()?;
     }
     Ok(probe)
@@ -416,9 +435,8 @@ impl Engine {
     })
     .await?;
     let state_key = self.authentication_key().await?;
-    let plan = super::hosts::plan(url, self.export);
     let identity = self.request_identity(url);
-    let shared_file = plan.is_some();
+    let shared_file = self.share_plan(url).is_some();
     let probe = if shared_file && probe.is_none() {
       Some(self.probe(url, cancel.clone()).await?)
     } else {

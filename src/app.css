@@ -260,8 +260,9 @@ html:not(.nz-capture), html:not(.nz-capture) body {
     overflow: hidden;
 }
 
-/* Capture panels: the native window is transparent; the panel draws its own rounded surface. */
-html.nz-capture, html.nz-capture body, html.nz-capture #app {
+/* Capture panels and the Catch bar draw their own surfaces. */
+html.nz-capture, html.nz-capture body, html.nz-capture #app,
+html.nz-catch, html.nz-catch body, html.nz-catch #app {
     background: transparent;
 }
 

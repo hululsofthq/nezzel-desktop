@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013"
+     type="static" mediaPresentationDuration="PT1M0.25S">
+  <Period>
+    <AdaptationSet mimeType="video/mp4">
+      <Representation id="test" bandwidth="100000" width="320" height="180">
+        <BaseURL>https://example.org/dash/video.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

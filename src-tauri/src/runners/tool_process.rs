@@ -61,6 +61,7 @@ impl ToolProcess {
     let waiter = std::thread::spawn(move || {
       let _held = held;
       let result = child.wait();
+      #[cfg_attr(not(unix), allow(clippy::drop_non_drop))]
       drop(reap_token);
       let _ = sender.send(result);
     });

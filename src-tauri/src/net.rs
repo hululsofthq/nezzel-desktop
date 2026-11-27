@@ -77,6 +77,121 @@ pub(crate) fn own_proxy() -> OwnProxy {
   })
 }
 
+/// Where the Nezzel browser's engines connect: an `http://` or `socks5://` proxy by host and port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProxyAddress {
+  /// SOCKS5 (the engine sends the name to the proxy); HTTP CONNECT otherwise.
+  pub(crate) socks: bool,
+  /// An IPv4 address, an IPv6 address in brackets, or a name of letters, digits, dots and
+  /// hyphens: nothing an engine's proxy argument could read as a second rule.
+  pub(crate) host: String,
+  /// Never 0. Always written out: a URL drops its scheme's usual port.
+  pub(crate) port: u16,
+}
+
+impl ProxyAddress {
+  pub(crate) fn scheme(&self) -> &'static str {
+    if self.socks {
+      "socks5"
+    } else {
+      "http"
+    }
+  }
+
+  /// The host as a resolver takes it: an IPv6 address without its brackets.
+  pub(crate) fn bare_host(&self) -> &str {
+    self.host.trim_matches(['[', ']'])
+  }
+}
+
+/// The Settings proxy as the Nezzel browser's engines take it (wry's `ProxyConfig`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BrowserProxy {
+  /// Proxy off: each engine's own default (the system proxy).
+  Off,
+  Via(ProxyAddress),
+  /// On, with a well-formed address of a kind no engine takes (https, socks4): the engine's
+  /// default, and Settings says which kinds the browser takes.
+  Unsupported,
+  /// On, with no address, one that does not read as `scheme://host:port`, or one with a user
+  /// name or password (no engine takes them): the browser loads no page rather than connect
+  /// around the proxy.
+  Blocked,
+}
+
+impl BrowserProxy {
+  /// Whether a window opened with this setting may fetch beside its pages (manifest probes,
+  /// thumbnails). Never while the proxy was on: those requests connect directly, and the
+  /// window keeps its proxy even after the setting changes.
+  pub(crate) fn fetches_beside(&self) -> bool {
+    matches!(self, Self::Off)
+  }
+}
+
+/// Dot-separated labels of ASCII letters, digits and inner hyphens.
+fn host_name(name: &str) -> bool {
+  name.len() <= 253
+    && name.split('.').all(|label| {
+      !label.is_empty()
+        && label.len() <= 63
+        && label
+          .bytes()
+          .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+    })
+}
+
+pub(crate) fn browser_proxy_for(enabled: Option<bool>, proxy: Option<&str>) -> BrowserProxy {
+  if enabled != Some(true) {
+    return BrowserProxy::Off;
+  }
+  let OwnProxy::Via(value) = own_proxy_for(enabled, proxy) else {
+    return BrowserProxy::Blocked;
+  };
+  let Ok(url) = Url::parse(&value) else {
+    return BrowserProxy::Blocked;
+  };
+  let socks = match url.scheme() {
+    "http" => Some(false),
+    // The engines send the name to a SOCKS5 proxy themselves.
+    "socks5" | "socks5h" => Some(true),
+    "https" | "socks4" | "socks4a" => None,
+    _ => return BrowserProxy::Blocked,
+  };
+  let named = host(&url).filter(|bare| bare.parse::<IpAddr>().is_ok() || host_name(bare));
+  let (Some(_), Some(host)) = (named, url.host_str()) else {
+    return BrowserProxy::Blocked;
+  };
+  if url.port() == Some(0)
+    || !matches!(url.path(), "" | "/")
+    || url.query().is_some()
+    || url.fragment().is_some()
+  {
+    return BrowserProxy::Blocked;
+  }
+  let Some(socks) = socks else {
+    return BrowserProxy::Unsupported;
+  };
+  if !url.username().is_empty() || url.password().is_some() {
+    return BrowserProxy::Blocked;
+  }
+  BrowserProxy::Via(ProxyAddress {
+    socks,
+    host: host.to_owned(),
+    // A bare SOCKS proxy listens on its usual port.
+    port: url.port().unwrap_or(if socks { 1080 } else { 80 }),
+  })
+}
+
+/// The live Settings proxy for the Nezzel browser's pages.
+pub(crate) fn browser_proxy() -> BrowserProxy {
+  CONFIG.get().map_or(BrowserProxy::Off, |config| {
+    let config = config.load();
+    browser_proxy_for(config.network.enable_proxy, config.network.proxy.as_deref())
+  })
+}
+
 pub(crate) fn setup(config: crate::SharedConfig) {
   let _ = CONFIG.set(config);
 }
@@ -194,6 +309,166 @@ pub(crate) fn public_address(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn browser_proxy_takes_only_what_the_engines_take() {
+    let via = |socks, host: &str, port| {
+      BrowserProxy::Via(ProxyAddress {
+        socks,
+        host: host.into(),
+        port,
+      })
+    };
+    for (enabled, proxy, expected) in [
+      (None, Some("socks5://h:1"), BrowserProxy::Off),
+      (Some(false), Some("socks5://h:1"), BrowserProxy::Off),
+      (Some(false), Some("not a proxy"), BrowserProxy::Off),
+      (
+        Some(true),
+        Some("127.0.0.1:8888"),
+        via(false, "127.0.0.1", 8888),
+      ),
+      (
+        Some(true),
+        Some("http://proxy.example:3128/"),
+        via(false, "proxy.example", 3128),
+      ),
+      // The usual port is written out: a URL would drop it, and wry would get an empty port.
+      (
+        Some(true),
+        Some("http://proxy.example"),
+        via(false, "proxy.example", 80),
+      ),
+      (
+        Some(true),
+        Some("http://proxy.example:80"),
+        via(false, "proxy.example", 80),
+      ),
+      (
+        Some(true),
+        Some("socks5://127.0.0.1:1080"),
+        via(true, "127.0.0.1", 1080),
+      ),
+      (
+        Some(true),
+        Some("socks5h://my-proxy.example:9050"),
+        via(true, "my-proxy.example", 9050),
+      ),
+      (Some(true), Some("socks5://h"), via(true, "h", 1080)),
+      (
+        Some(true),
+        Some("socks5://[::1]:1080"),
+        via(true, "[::1]", 1080),
+      ),
+      (
+        Some(true),
+        Some("http://[2001:db8::1]:8080"),
+        via(false, "[2001:db8::1]", 8080),
+      ),
+      // Well-formed, of a kind no engine takes: the engine's default.
+      (Some(true), Some("https://h:443"), BrowserProxy::Unsupported),
+      (
+        Some(true),
+        Some("https://user:pass@h"),
+        BrowserProxy::Unsupported,
+      ),
+      (
+        Some(true),
+        Some("socks4://h:1080"),
+        BrowserProxy::Unsupported,
+      ),
+      (
+        Some(true),
+        Some("socks4a://h:1080"),
+        BrowserProxy::Unsupported,
+      ),
+      // On and unusable: no page loads.
+      (Some(true), None, BrowserProxy::Blocked),
+      (Some(true), Some("  "), BrowserProxy::Blocked),
+      (Some(true), Some("http://"), BrowserProxy::Blocked),
+      (Some(true), Some("ftp://h:21"), BrowserProxy::Blocked),
+      (Some(true), Some("http://h:99999"), BrowserProxy::Blocked),
+      (Some(true), Some("http://h h:8080"), BrowserProxy::Blocked),
+      (
+        Some(true),
+        Some("http://h:8080/path"),
+        BrowserProxy::Blocked,
+      ),
+      (
+        Some(true),
+        Some("http://h:8080/?x=1"),
+        BrowserProxy::Blocked,
+      ),
+      // No engine takes a user name or password: never the proxy without them.
+      (
+        Some(true),
+        Some("http://user:pass@h:8080"),
+        BrowserProxy::Blocked,
+      ),
+      (
+        Some(true),
+        Some("http://user:p@ss@h:8080"),
+        BrowserProxy::Blocked,
+      ),
+      (
+        Some(true),
+        Some("socks5://user@h:1080"),
+        BrowserProxy::Blocked,
+      ),
+      // Port 0, and hosts that are not an address or a plain name.
+      (Some(true), Some("http://h:0"), BrowserProxy::Blocked),
+      (Some(true), Some("socks5://h:0"), BrowserProxy::Blocked),
+      (Some(true), Some("https://h:0"), BrowserProxy::Blocked),
+      (
+        Some(true),
+        Some("socks5://a;https=direct:1080"),
+        BrowserProxy::Blocked,
+      ),
+      (
+        Some(true),
+        Some("socks5://a,direct:1080"),
+        BrowserProxy::Blocked,
+      ),
+      (
+        Some(true),
+        Some("socks5://a\"b:1080"),
+        BrowserProxy::Blocked,
+      ),
+      (Some(true), Some("socks5://a'b:1080"), BrowserProxy::Blocked),
+      (Some(true), Some("socks5://a=b:1080"), BrowserProxy::Blocked),
+      (
+        Some(true),
+        Some("socks5://a%20b:1080"),
+        BrowserProxy::Blocked,
+      ),
+      (Some(true), Some("socks5://a_b:1080"), BrowserProxy::Blocked),
+      (Some(true), Some("http://a;b:8080"), BrowserProxy::Blocked),
+      (
+        Some(true),
+        Some("http://-a.example:8080"),
+        BrowserProxy::Blocked,
+      ),
+      (Some(true), Some("https://a;b:443"), BrowserProxy::Blocked),
+    ] {
+      assert_eq!(
+        browser_proxy_for(enabled, proxy),
+        expected,
+        "case {proxy:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn a_window_opened_with_the_proxy_on_fetches_nothing_beside_its_pages() {
+    assert!(BrowserProxy::Off.fetches_beside());
+    for proxy in [
+      browser_proxy_for(Some(true), Some("socks5://127.0.0.1:1080")),
+      BrowserProxy::Unsupported,
+      BrowserProxy::Blocked,
+    ] {
+      assert!(!proxy.fetches_beside(), "{proxy:?}");
+    }
+  }
 
   #[test]
   fn own_proxy_follows_the_setting() {

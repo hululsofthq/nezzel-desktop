@@ -20,20 +20,54 @@ import { i18n } from '../../src/i18n';
 import { useMediaGroupStore } from '../../src/stores/media/group';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
-import { TrackType, type MediaFormat } from '../../src/tauri/types/media';
+import { AudioPostprocessPreset, TrackType, VideoPostprocessPreset, type MediaFormat, type MediaItem } from '../../src/tauri/types/media';
 import { useUiPrefs } from '../../src/composables/useUiPrefs';
 import { useToastStore } from '../../src/stores/toast';
 import { useMediaSizeStore } from '../../src/stores/media/size';
 import { useMediaDestinationStore } from '../../src/stores/media/destination';
 import { siteLogo } from '../../src/helpers/siteLogo';
+import { useCatchAutoStore } from '../../src/stores/catchAuto';
+import type { CatchAutoPhase, CatchAutoState } from '../../src/tauri/types/catch';
 
 const f = (id: string, height: number, fps: number): MediaFormat => ({ id, height, fps, audioCodecs: ['mp4a'], videoCodecs: ['h264'] });
 
+it.each([
+  ['en', 'Reload the link to choose how to save it', 'Reload link'],
+  ['ar', 'أعد قراءة الرابط لاختيار طريقة الحفظ', 'أعد قراءة الرابط'],
+  ['fr', 'Relisez le lien pour choisir comment l’enregistrer', 'Relire le lien'],
+] as const)('explains how to reload a restored offer and lets the user do it in %s', async (locale, status, action) => {
+  const mediaInfo = vi.fn();
+  const mediaDownload = vi.fn();
+  installTauriMock({ media_info: mediaInfo, media_download: mediaDownload });
+  useMediaStore();
+  const item = { id: 'offer-item', isLeader: true, url: 'https://example.com/offer', audioCodecs: [], formats: [], filesize: 0 };
+  const group = { ...item, id: 'offer', total: 1, processed: 1, errored: 0, isCombined: false, items: { [item.id]: item } };
+  const groups = useMediaGroupStore();
+  groups.createGroup(group);
+  useMediaStateStore().setGroupState(group.id, MediaState.needsRefresh);
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+  await router.push('/');
+  const previous = i18n.global.locale.value;
+  i18n.global.locale.value = locale;
+  const row = mount(DownloadRow, { props: { group: groups.findGroupById(group.id)! }, global: { plugins: [router, i18n] } });
+  try {
+    expect(row.find('[data-testid="row-error"]').exists()).toBe(false);
+    expect(row.text()).toContain(status);
+    await row.findAll('button').find(button => button.text().trim() === action)!.trigger('click');
+    expect(mediaInfo).toHaveBeenCalledWith('media_info', expect.objectContaining({ groupId: group.id, url: item.url }));
+    expect(mediaDownload).not.toHaveBeenCalled();
+  } finally {
+    row.unmount();
+    i18n.global.locale.value = previous;
+  }
+});
+
 describe('inspector quick choices', () => {
-  async function inspectorAt(heights: number[]) {
-    const formats = heights.map(height => f(`v${height}`, height, 30));
-    const item = { id: 'choice-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats, filesize: 0 };
+  async function inspectorAt(heights: number[], presetSizes?: MediaItem['presetSizes'], fps = 30) {
+    const formats = heights.map(height => f(`v${height}`, height, fps));
+    const item = { id: 'choice-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats, filesize: 4800000, presetSizes };
     useMediaGroupStore().createGroup({ ...item, id: 'choices', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 0, isCombined: false, items: { [item.id]: item } });
+    useMediaSizeStore().processMediaAddPayload({ groupId: 'choices', total: 1, item });
     useMediaStateStore().setGroupState('choices', MediaState.configure);
     useDownloadSheetStore().show('choices');
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
@@ -56,15 +90,117 @@ describe('inspector quick choices', () => {
   it.each(['en', 'ar', 'fr'] as const)('isolates the reported smaller size beside its choice in %s', async (locale) => {
     const previousLocale = i18n.global.locale.value;
     i18n.global.locale.value = locale;
-    const panel = await inspectorAt([1080, 720]);
+    const panel = await inspectorAt([1080, 720], { small: 2097152 });
     try {
-      useMediaSizeStore().processMediaSizePayload({ groupId: 'choices', item: { id: 'choice-item', filesize: 2097152 }, format: { trackType: TrackType.both, height: 720, fps: 30 } } as never);
-      await nextTick();
       expect(panel.get('[role="radio"][value="small"] bdi[dir=ltr]').text()).toMatch(locale === 'fr' ? /^2,1\sMo$/ : /^2\.1 MB$/);
     } finally {
       panel.unmount();
       i18n.global.locale.value = previousLocale;
     }
+  });
+
+  it('gives the selected estimate one accessible name', async () => {
+    const panel = await inspectorAt([1080, 720], { best: 31380100, small: 18565100, audio: 1480100 });
+    try {
+      const estimate = panel.get('[role="group"][aria-label="About 31 MB"]');
+      expect(estimate.get('[aria-hidden="true"]').text()).toBe('About 31 MB');
+      for (const [preset, label] of [['best', '31 MB'], ['small', '19 MB'], ['audio', '1.5 MB']]) {
+        expect(panel.get(`[role="radio"][value="${preset}"] bdi`).text()).toBe(label);
+      }
+    } finally { panel.unmount(); }
+  });
+
+  it('shows the Audio Only estimate and clears it when the output bitrate changes', async () => {
+    const audio = useSettingsStore().settings.output.audio;
+    const previousAudio = { ...audio };
+    audio.postprocessPreset = AudioPostprocessPreset.custom;
+    audio.postprocessArgs = '-b:a 192k -q:a -1';
+    const panel = await inspectorAt([1080, 720], {
+      audio: 2060400,
+      output: ['mp4', 'allowReencode', 'none', 'remux', false, false, 'mp3', 'allowReencode', 'custom', audio.postprocessArgs],
+    });
+    try {
+      const choice = panel.get('[role="radio"][value="audio"]');
+      expect(choice.get('bdi[dir=ltr]').text()).toBe('2.1 MB');
+      await choice.trigger('click');
+      expect(panel.get('[role="group"][aria-label="About 2.1 MB"]').text()).toBe('About 2.1 MB');
+
+      audio.postprocessArgs = '-b:a 256k -q:a -1';
+      await nextTick();
+      expect(choice.find('bdi').exists()).toBe(false);
+      expect(panel.find('[role="group"][aria-label^="About"]').exists()).toBe(false);
+    } finally {
+      Object.assign(audio, previousAudio);
+      panel.unmount();
+    }
+  });
+
+  it('shows estimates before SponsorBlock cuts for the presets and the matching Advanced tier', async () => {
+    const panel = await inspectorAt([1080, 720], {
+      best: 31051802,
+      small: 18251226,
+      output: ['mp4', 'allowReencode', 'none', 'remux', false, false, 'mp3', 'allowReencode', 'none', false],
+    }, 60);
+    const sponsorBlock = useSettingsStore().settings.sponsorBlock;
+    const previousParts = sponsorBlock.removeParts;
+    try {
+      sponsorBlock.removeParts = ['sponsor', 'selfpromo', 'intro'];
+      await nextTick();
+      expect(panel.get('[role="radio"][value="best"] bdi').text()).toBe('31 MB');
+      expect(panel.get('[role="radio"][value="small"] bdi').text()).toBe('18 MB');
+
+      const options = useMediaOptionsStore();
+      options.setOptions('choices', { ...f('v720', 720, 60), abr: 130, trackType: TrackType.both });
+      await nextTick();
+      expect(panel.get('[role="group"][aria-label="About 18 MB"]').text()).toBe('About 18 MB');
+    } finally {
+      sponsorBlock.removeParts = previousParts;
+      panel.unmount();
+    }
+  });
+
+  it('leaves an unknown preset blank even when the initial info includes a size', async () => {
+    const panel = await inspectorAt([1080, 720], { small: 18565100 });
+    try {
+      expect(panel.get('[role="radio"][value="best"]').find('bdi').exists()).toBe(false);
+      expect(panel.find('[role="group"][aria-label^="About"]').exists()).toBe(false);
+    } finally { panel.unmount(); }
+  });
+
+  it('requests and displays the estimate for a custom advanced format', async () => {
+    const panel = await inspectorAt([1080, 720, 480], { best: 31380100 });
+    const sizes = useMediaSizeStore();
+    const request = vi.spyOn(sizes, 'requestSize').mockResolvedValue(undefined);
+    const format = { ...f('v480', 480, 30), trackType: TrackType.both };
+    try {
+      useMediaOptionsStore().setOptions('choices', format);
+      await nextTick();
+      expect(request).toHaveBeenCalledExactlyOnceWith('https://example.com/v', 'choices', 'choice-item', format);
+      sizes.processMediaSizePayload({
+        groupId: 'choices', total: 1, format,
+        item: { ...useMediaGroupStore().findGroupLeader('choices')!, filesize: 8200000 },
+      });
+      await nextTick();
+      expect(panel.find('[role="group"][aria-label="About 8.2 MB"]').exists()).toBe(true);
+    } finally {
+      request.mockRestore();
+      panel.unmount();
+    }
+  });
+
+  it('drops the estimate when the output profile changes to a re-encode preset', async () => {
+    const panel = await inspectorAt([1080, 720], {
+      best: 31380100,
+      output: ['mp4', 'allowReencode', 'none', 'remux', false, false, 'mp3', 'allowReencode', 'none', false],
+    });
+    const video = useSettingsStore().settings.output.video;
+    try {
+      expect(panel.find('[role="group"][aria-label="About 31 MB"]').exists()).toBe(true);
+      video.postprocessPreset = VideoPostprocessPreset.fps30;
+      await nextTick();
+      expect(panel.find('[role="group"][aria-label^="About"]').exists()).toBe(false);
+      expect(panel.get('[role="radio"][value="best"]').find('bdi').exists()).toBe(false);
+    } finally { panel.unmount(); }
   });
 
   it('explains how to undo remembering a choice only once', async () => {
@@ -130,7 +266,8 @@ describe('row quality label', () => {
   });
   it.each(['urlNotSupported', 'drmProtected', 'networkNameResolutionFailed', 'telegramAppOnly'])('offers only useful recovery for %s', async (code) => {
     const open = vi.fn();
-    installTauriMock({ 'plugin:opener|open_url': open });
+    const catchOpen = vi.fn(() => ({ windowId: 'catch-1' }));
+    installTauriMock({ 'plugin:opener|open_url': open, 'catch_open': catchOpen });
     const groups = useMediaGroupStore();
     groups.createGroup({ id: 'refusal', url: 'https://t.me/bbcpersian/295504', title: 'Clip', mediaKind: 'video', total: 1, processed: 1, errored: 1, isCombined: false,
       audioCodecs: [], formats: [], filesize: 0, items: { item: { id: 'refusal-item', isLeader: true, url: 'https://example.com/v', audioCodecs: [], formats: [], filesize: 0 } } });
@@ -149,15 +286,21 @@ describe('row quality label', () => {
         expect(open).toHaveBeenCalledWith('plugin:opener|open_url', expect.objectContaining({ url: 'https://t.me/bbcpersian/295504' }));
       }
       if (code === 'urlNotSupported') {
-        const open = row.findAll('button').find(button => button.text().includes('Open in browser'));
-        expect(open).toBeDefined();
+        // A web page yt-dlp can't read: the Nezzel browser catches what it plays (#106), instead of the system browser.
+        expect(labels.some(label => label.includes('Open in browser'))).toBe(false);
+        const button = row.findAll('button').find(button => button.text().includes('Try in Nezzel browser'));
+        expect(button).toBeDefined();
+        await button!.trigger('click');
+        expect(catchOpen).toHaveBeenCalledWith('catch_open', { url: 'https://t.me/bbcpersian/295504' });
       }
     } finally { row.unmount(); }
   });
   // Every error whose advice says "open this link" gets the button; advice about Settings or other steps does not.
   it.each([
     ['storyExpired', true], ['accountAccessDenied', true], ['textOnlyPost', true], ['redditNetworkBlocked', true],
-    ['likeeUnavailable', true], ['legalRestriction451', true], ['blockedGeneric', true],
+    ['likeeUnavailable', true], ['legalRestriction451', true],
+    // A bot wall: the Nezzel browser's "Try in Nezzel browser" replaces the system-browser advice.
+    ['blockedGeneric', false],
     ['browserSafariAccessDenied', false], ['photosOnly', false],
   ] as const)('%s: open-in-browser button is %s', async (code, shown) => {
     const open = vi.fn();
@@ -943,4 +1086,107 @@ it.each(['en', 'ar', 'fr'] as const)('shows retry waits instead of stale progres
     wrapper.unmount();
     i18n.global.locale.value = previous;
   }
+});
+
+// Automatic catch (contract v2): a failed page read shows what the hidden Nezzel browser is doing instead of the error.
+describe('automatic catch rows', () => {
+  async function autoRow(state: Omit<CatchAutoState, 'groupId'> | null, handlers: Record<string, () => unknown> = {}, ready = false) {
+    installTauriMock(handlers);
+    const id = 'auto';
+    const url = 'https://films.example/watch/long-night';
+    useMediaGroupStore().createGroup({ id, url, title: ready ? 'Trailer' : undefined, mediaKind: 'video', total: 1, processed: 1, errored: ready ? 0 : 1, isCombined: false,
+      embeddedIn: ready ? url : undefined, audioCodecs: [], formats: ready ? [f('v720', 720, 30)] : [], filesize: 0,
+      items: { item: { id: `${id}-item`, isLeader: true, url, audioCodecs: [], formats: ready ? [f('v720', 720, 30)] : [], filesize: 0 } } });
+    if (ready) useMediaStateStore().setGroupState(id, MediaState.configure);
+    else {
+      useMediaStateStore().setGroupState(id, MediaState.error);
+      useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id: `${id}-item`, groupId: id, level: 'error', code: 'urlNotSupported', component: null, message: '', raw: '', timestamp: 1 });
+    }
+    if (state) useCatchAutoStore().apply({ groupId: id, ...state });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+    await router.push('/');
+    return mount(DownloadRow, { props: { group: useMediaGroupStore().findGroupById(id)! }, global: { plugins: [router, i18n] } });
+  }
+  const formats = [{ id: 'hd', label: 'video' as const, height: 1080, ext: 'mp4', best: true }, { id: 'sd', label: 'video' as const, height: 480, ext: 'mp4', best: false }];
+  const labels = (row: Awaited<ReturnType<typeof autoRow>>) => row.findAll('button').map(button => button.text().trim()).filter(Boolean);
+
+  it.each<[CatchAutoPhase, string, string[], string[]]>([
+    ['waiting', 'row-auto-looking', ['Cancel'], ['Try again', 'Open the page', 'Download']],
+    ['looking', 'row-auto-looking', ['Cancel'], ['Try again', 'Open the page', 'Download']],
+    ['found', 'row-auto-found', ['Options', 'Download'], ['Cancel', 'Open the page']],
+    ['live', 'row-auto-note', [], ['Cancel', 'Download', 'Open the page']],
+    ['encrypted', 'row-auto-note', [], ['Cancel', 'Download', 'Open the page']],
+    ['needsStep', 'row-auto-step', ['Open the page'], ['Try again', 'Cancel', 'Download']],
+    // Cancelled: the row is what it was (the manual "Try in Nezzel browser" step).
+    ['cancelled', 'row-catch-hint', ['Try in Nezzel browser'], ['Cancel', 'Download']],
+  ])('%s shows %s with %j and never %j', async (phase, shown, present, absent) => {
+    const row = await autoRow({ phase, beside: false, title: 'The Long Night', durationSec: 6738, formats });
+    try {
+      expect(row.find(`[data-testid="${shown}"]`).exists()).toBe(true);
+      expect(row.find('[data-testid="row-error"]').exists()).toBe(false);
+      for (const label of present) expect(labels(row)).toContain(label);
+      for (const label of absent) expect(labels(row)).not.toContain(label);
+      if (phase === 'found') expect(row.text()).toContain('The Long Night');
+      if (phase === 'encrypted') expect(row.text()).not.toMatch(/protected|DRM/i);
+    } finally { row.unmount(); }
+  });
+
+  it('a found title takes its own direction, a failed row without a title stays LTR', async () => {
+    const row = await autoRow({ phase: 'found', beside: false, title: 'الفيلم الطويل', formats });
+    try {
+      expect(row.get('[data-clip]').attributes('dir')).toBe('auto');
+    } finally { row.unmount(); }
+    const looking = await autoRow({ phase: 'looking', beside: false });
+    try {
+      expect(looking.get('[data-clip]').attributes('dir')).toBe('ltr');
+    } finally { looking.unmount(); }
+  });
+
+  it('Cancel calls catch_auto_cancel and the row goes back at once', async () => {
+    const cancel = vi.fn(() => new Promise(() => {}));
+    const row = await autoRow({ phase: 'looking', beside: false }, { catch_auto_cancel: cancel });
+    try {
+      await row.get('[data-testid="row-auto-cancel"]').trigger('click');
+      expect(cancel).toHaveBeenCalledWith('catch_auto_cancel', { groupId: 'auto' });
+      expect(row.find('[data-testid="row-catch-hint"]').exists()).toBe(true);
+    } finally { row.unmount(); }
+  });
+
+  it('Download uses catch_auto_download, not media_download, and says it is starting at once', async () => {
+    const download = vi.fn(() => new Promise(() => {}));
+    const mediaDownload = vi.fn();
+    const row = await autoRow({ phase: 'found', beside: false, formats }, { catch_auto_download: download, media_download: mediaDownload });
+    try {
+      await row.get('[data-testid="row-auto-download"]').trigger('click');
+      expect(download).toHaveBeenCalledWith('catch_auto_download', { groupId: 'auto', formatId: null });
+      expect(mediaDownload).not.toHaveBeenCalled();
+      expect(row.get('[data-testid="row-auto-download"]').text()).toContain('Starting');
+    } finally { row.unmount(); }
+  });
+
+  it('beside an embedded result: a quiet line while looking, the full video offered first when found', async () => {
+    const looking = await autoRow({ phase: 'looking', beside: true }, {}, true);
+    try {
+      expect(looking.find('[data-testid="row-auto-beside"]').exists()).toBe(true);
+      expect(looking.find('[data-testid="row-embed-hint"]').exists()).toBe(false);
+    } finally { looking.unmount(); }
+    useCatchAutoStore().apply({ groupId: 'auto', phase: 'found', beside: true, durationSec: 6738, formats });
+    const found = await autoRow(null, {}, true);
+    try {
+      expect(found.get('[data-testid="row-auto-beside-found"]').text()).toContain('Found the full video (1:52:18)');
+    } finally { found.unmount(); }
+  });
+
+  it('with the setting off the row stays the manual step', async () => {
+    const input = useSettingsStore().settings.input;
+    input.autoCatch = false;
+    const row = await autoRow({ phase: 'looking', beside: false });
+    try {
+      expect(row.find('[data-testid="row-auto-looking"]').exists()).toBe(false);
+      expect(row.find('[data-testid="row-catch-hint"]').exists()).toBe(true);
+    } finally {
+      row.unmount();
+      input.autoCatch = true;
+    }
+  });
 });

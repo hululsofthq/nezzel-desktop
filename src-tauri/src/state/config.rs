@@ -14,6 +14,7 @@ struct AppliedConfig {
   global_shortcuts: bool,
   capture_shortcut: String,
   language: String,
+  theme: String,
   tray_enabled: bool,
   auto_start_enabled: bool,
 }
@@ -24,6 +25,7 @@ impl From<&Config> for AppliedConfig {
       global_shortcuts: config.input.global_shortcuts,
       capture_shortcut: config.input.capture_shortcut.clone(),
       language: config.appearance.language.clone(),
+      theme: config.appearance.theme.clone(),
       tray_enabled: config.system.tray_enabled,
       auto_start_enabled: config.system.auto_start_enabled,
     }
@@ -154,6 +156,15 @@ impl JsonBackedState for Config {
         } else {
           i18n_handle.set_locale(&new_value.appearance.language);
         }
+        crate::events::emit(app, "appearance://language", &new_value.appearance.language);
+      }
+      if applied
+        .as_ref()
+        .is_none_or(|old| old.theme != new_value.appearance.theme)
+      {
+        let theme = &new_value.appearance.theme;
+        crate::catch::window::update_browser_theme(app, theme);
+        crate::events::emit(app, "appearance://theme", theme);
       }
       match actions.tray {
         TrayAction::None => {}

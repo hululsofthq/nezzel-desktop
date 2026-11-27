@@ -3,4 +3,9 @@
 <plist version="1.0"><dict>
   <key>NSAppleEventsUsageDescription</key>
   <string>Nezzel reads the active browser tab only when you press the quick download shortcut. If you decline, Nezzel uses the clipboard.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoadsInWebContent</key>
+    <true/>
+  </dict>
 </dict></plist>

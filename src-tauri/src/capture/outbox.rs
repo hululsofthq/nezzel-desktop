@@ -21,12 +21,26 @@ pub(crate) const PULL_MS: u64 = 1500;
 pub(super) enum ForMain {
   /// A claim on an offer (`Action::CLAIMS`).
   Action(CaptureAction),
+  /// Links accepted by the clipboard watcher, with the adopted card when there is one.
+  Watched {
+    urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    card: Option<CaptureAction>,
+  },
   /// The media item of a row whose claim went out before its read finished. One per row (`Offers::claim`).
   Item(CaptureItem),
   /// The clipboard's supported link for the main window's link field ("" = none). Only the newest waits.
-  Prefill { url: String },
+  Prefill {
+    url: String,
+  },
   /// A failed read → Report: open Report a problem.
   Report(CaptureReport),
+  CatchReport {
+    shape: Option<String>,
+  },
+  CatchShowDownload {
+    id: String,
+  },
 }
 
 #[derive(Clone, Serialize)]
@@ -97,18 +111,41 @@ pub(super) fn send_to_main(app: &AppHandle, body: ForMain) {
   let _ = app.emit_to("main", "capture_wake", ());
 }
 
+pub(crate) fn report_catch_page(app: &AppHandle, shape: Option<String>) {
+  send_to_main(app, ForMain::CatchReport { shape });
+}
+
+pub(crate) fn show_catch_download(app: &AppHandle, id: String) {
+  send_to_main(app, ForMain::CatchShowDownload { id });
+}
+
 /// Sends a claim; when its row's item is still being read, the item follows once the read ends.
 pub(super) fn emit_action(app: &AppHandle, action: CaptureAction) {
   let (id, awaits_item) = (action.id, action.awaits_item);
   tracing::info!(id, action = %action.action, "Capture action sent to the main window");
   send_to_main(app, ForMain::Action(action));
   if awaits_item {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-      let item = wait_for_item(&app.state::<CaptureState>(), id).await;
-      send_to_main(&app, ForMain::Item(CaptureItem { id, item }));
-    });
+    emit_item_when_ready(app, id);
   }
+}
+
+pub(super) fn emit_watched(app: &AppHandle, urls: Vec<String>, card: Option<CaptureAction>) {
+  let item_id = card
+    .as_ref()
+    .filter(|card| card.awaits_item)
+    .map(|card| card.id);
+  send_to_main(app, ForMain::Watched { urls, card });
+  if let Some(id) = item_id {
+    emit_item_when_ready(app, id);
+  }
+}
+
+fn emit_item_when_ready(app: &AppHandle, id: u64) {
+  let app = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let item = wait_for_item(&app.state::<CaptureState>(), id).await;
+    send_to_main(&app, ForMain::Item(CaptureItem { id, item }));
+  });
 }
 
 pub(super) fn pull(state: &CaptureState, after: u64) -> Vec<Message> {

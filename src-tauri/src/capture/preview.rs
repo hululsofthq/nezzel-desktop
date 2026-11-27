@@ -97,6 +97,51 @@ pub fn fail_reason(stderr: &str) -> FailReason {
     .unwrap_or(FailReason::Unknown)
 }
 
+/// The capture copy uses a reason word, while automatic catch needs the winning diagnostic.
+pub(super) struct ReadFailure {
+  pub(super) reason: FailReason,
+  pub(super) code: Option<&'static str>,
+  pub(super) generic: bool,
+}
+
+impl From<FailReason> for ReadFailure {
+  fn from(reason: FailReason) -> Self {
+    Self {
+      reason,
+      code: None,
+      generic: false,
+    }
+  }
+}
+
+impl ReadFailure {
+  pub(super) fn from_ytdlp(url: &str, reason: FailReason, stderr: &str) -> Self {
+    use crate::extract::{
+      chain::StageResult,
+      outcome::{DiagnosticCode, StageId},
+      precedence, registry,
+    };
+    use crate::parsers::ytdlp_error::{DiagnosticMatcher, YtdlpErrorParser};
+
+    let Ok(matcher) = DiagnosticMatcher::shared() else {
+      return reason.into();
+    };
+    let parser = YtdlpErrorParser::new("capture", "capture", matcher).with_source_url(url);
+    let diagnostics = parser.parse_lines(stderr.lines().collect(), false);
+    let mut stage = StageResult::<()>::new(StageId::Ytdlp, registry::claim(StageId::Ytdlp, url));
+    stage.record_diagnostics(&diagnostics, false, std::time::Instant::now());
+    let code = precedence::final_code(&stage.attempts);
+    let generic = code == Some("unknown")
+      && stage.attempts.first().and_then(|attempt| attempt.code)
+        == Some(DiagnosticCode::UNKNOWN_GENERIC_PAGE);
+    Self {
+      reason,
+      code,
+      generic,
+    }
+  }
+}
+
 /// What the quick bar shows about a link: plain facts, never raw format ids.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +173,9 @@ pub struct PreviewDetails {
   /// The copied-link card's format menu: one row per height (and 60 fps tier), then audio bitrates.
   #[serde(default)]
   pub choices: Vec<CardChoice>,
+  /// The link's page only embeds this media from another site: the card offers to open the page in the Nezzel browser.
+  #[serde(default)]
+  pub embedded: bool,
 }
 
 /// One row of the copied-link card's format menu. Plain facts only, never a raw format id or URL.
@@ -284,6 +332,7 @@ pub fn summarize(item: &Value) -> PreviewDetails {
     small_height: small_video.and_then(|f| height(f)),
     small_size: small_video.and_then(|f| with_audio(f)),
     choices,
+    embedded: item.get("embeddedIn").is_some_and(Value::is_string),
   }
 }
 
@@ -379,7 +428,7 @@ fn card_choices(
   out
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub async fn read_output(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
@@ -387,7 +436,7 @@ pub async fn read_output(
   read_output_reason(command, process_guard).await.ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 /// Like `read_output`, but a failure says why (`fail_reason` over at most 64 KiB of stderr, or `slow`).
 pub async fn read_output_reason(
   command: &mut Command,
@@ -399,31 +448,41 @@ pub async fn read_output_reason(
 }
 
 /// Bounded stderr is retained only for capture's response-gated URL retries.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) async fn read_output_stderr(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
 ) -> Result<Vec<u8>, (FailReason, String)> {
-  read_output_stderr_with_limit(command, process_guard, super::read::READ_LIMIT).await
+  read_output_stderr_with_limit(command, process_guard, super::read::READ_LIMIT)
+    .await
+    .map_err(|error| (error.reason, error.stderr))
 }
 
 /// Largest dump a preview reads. YouTube's `automatic_captions` alone passed 11 MB in 2026-11
 /// (every caption language x format); the main window's fetch has no cap and read those links.
 const MAX_DUMP_BYTES: usize = 64 * 1024 * 1024;
 
+pub(super) struct ReadError {
+  pub reason: FailReason,
+  pub stderr: String,
+  pub exited_nonzero: bool,
+}
+
 pub(super) async fn read_output_stderr_with_limit(
   command: &mut Command,
   process_guard: tokio::sync::OwnedRwLockReadGuard<()>,
   limit: std::time::Duration,
-) -> Result<Vec<u8>, (FailReason, String)> {
+) -> Result<Vec<u8>, ReadError> {
   command
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .kill_on_drop(true);
-  let mut child = command
-    .spawn()
-    .map_err(|_| (FailReason::Unknown, String::new()))?;
+  let mut child = command.spawn().map_err(|_| ReadError {
+    reason: FailReason::Unknown,
+    stderr: String::new(),
+    exited_nonzero: false,
+  })?;
   // Drained concurrently so a chatty stderr can never block stdout; capped, never forwarded as text.
   let stderr = child.stderr.take().map(|stderr| {
     tokio::spawn(async move {
@@ -444,10 +503,18 @@ pub(super) async fn read_output_stderr_with_limit(
         .read_to_end(&mut bytes)
         .await
         .ok()?;
-      if bytes.len() > MAX_DUMP_BYTES || !child.wait().await.ok()?.success() {
+      if bytes.len() > MAX_DUMP_BYTES {
         return None;
       }
-      Some(bytes)
+      Some(
+        child
+          .wait()
+          .await
+          .ok()?
+          .success()
+          .then_some(bytes)
+          .ok_or(()),
+      )
     });
     let result = tokio::select! {
       result = read => result.map_err(|_| FailReason::Slow),
@@ -461,14 +528,22 @@ pub(super) async fn read_output_stderr_with_limit(
   let result = owner.await.unwrap_or(Ok(None));
   drop(cancel);
   match result {
-    Ok(Some(bytes)) => Ok(bytes),
-    Err(reason) => Err((reason, String::new())),
-    Ok(None) => {
-      let text = match stderr {
+    Ok(Some(Ok(bytes))) => Ok(bytes),
+    Err(reason) => Err(ReadError {
+      reason,
+      stderr: String::new(),
+      exited_nonzero: false,
+    }),
+    Ok(failure) => {
+      let stderr = match stderr {
         Some(task) => task.await.unwrap_or_default(),
         None => String::new(),
       };
-      Err((fail_reason(&text), text))
+      Err(ReadError {
+        reason: fail_reason(&stderr),
+        stderr,
+        exited_nonzero: failure.is_some(),
+      })
     }
   }
 }

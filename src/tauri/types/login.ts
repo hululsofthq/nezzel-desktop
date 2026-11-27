@@ -32,6 +32,8 @@ export interface LoginUsing {
   selectedOnly?: boolean;
 }
 
+export type LoginUsingUpdate = LoginUsing | { id: string; groupId: string; candidate: null };
+
 /** First actual login use: browser family and canonical site only, never profile/cookie data. */
 export interface LoginNotice {
   token: string;

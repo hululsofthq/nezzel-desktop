@@ -21,12 +21,41 @@ fn check_output_space(
 #[derive(Clone)]
 pub struct DownloadSender(pub UnboundedSender<DispatchRequest<DownloadRequest>>);
 
+impl DownloadSender {
+  pub(crate) fn send_counted_batch(
+    &self,
+    group_id: &str,
+    generation: u64,
+    items: Vec<DownloadItem>,
+  ) {
+    if let Err(error) = self
+      .0
+      .send(DispatchRequest::Pipeline(DownloadRequest::Batch {
+        group_id: group_id.to_owned(),
+        generation,
+        items,
+      }))
+    {
+      let mut counters = DOWNLOAD_COUNTERS.lock().unwrap();
+      if counters
+        .get(group_id)
+        .is_some_and(|(run, _)| *run == generation)
+      {
+        counters.remove(group_id);
+      }
+      crate::scheduling::group_state::finish_group_run(group_id, generation);
+      tracing::error!(group_id = %group_id, error = %error, "Download dispatcher is gone");
+    }
+  }
+}
+
 #[derive(Clone)]
 pub enum DownloadRequest {
   Resume(Box<DownloadEntry>),
+  Captured(Box<DownloadEntry>),
   Batch {
     group_id: String,
-    /// From `ensure_group_running` in the command that queued it.
+    /// From `start_counted_batch` in the command that queued it.
     generation: u64,
     items: Vec<DownloadItem>,
   },
@@ -56,6 +85,8 @@ pub struct DownloadEntry {
   pub generation: u64,
   /// Set only by the Instagram yt-dlp → gallery-dl hand-off: carousel items yt-dlp already saved.
   pub kept_carousel: Option<KeptCarousel>,
+  pub(crate) catch: Option<Arc<crate::catch::handoff::QueuedCapture>>,
+  pub(crate) page_file: Option<Arc<crate::catch::handoff::PageFileRequest>>,
 }
 
 /// Carousel items saved before gallery-dl took over the post. Identity of an item is its
@@ -98,6 +129,8 @@ impl From<(DownloadItem, String)> for DownloadEntry {
       login_was_accepted,
       generation: 0,
       kept_carousel: None,
+      catch: None,
+      page_file: None,
     }
   }
 }
@@ -157,29 +190,34 @@ pub fn setup_download_dispatcher(
   app: &AppHandle,
   sem: Arc<DynamicSemaphore>,
 ) -> GenericDispatcher<DownloadRequest> {
+  let queue_app = app.clone();
   GenericDispatcher::start(
     app.clone(),
     sem,
-    |req: DownloadRequest| match req {
+    move |req: DownloadRequest| match req {
       DownloadRequest::Resume(entry) => vec![*entry],
+      DownloadRequest::Captured(entry) => {
+        crate::catch::handoff::announce_download(&queue_app, &entry);
+        count_batch(&entry.group_id, entry.generation, 1);
+        vec![*entry]
+      }
+
       DownloadRequest::Batch {
         group_id,
         generation,
         items,
-      } => {
-        count_batch(&group_id, generation, items.len());
-        items
-          .into_iter()
-          .map(|item| DownloadEntry {
-            generation,
-            ..DownloadEntry::from((item, group_id.clone()))
-          })
-          .collect()
-      }
+      } => items
+        .into_iter()
+        .map(|item| DownloadEntry {
+          generation,
+          ..DownloadEntry::from((item, group_id.clone()))
+        })
+        .collect(),
     },
     |tx, app: AppHandle, entry: DownloadEntry| async move {
       tracing::info!(download_id = %entry.id, "Starting download");
       let started_generation = crate::scheduling::group_state::group_generation(&entry.group_id);
+      let from_browser = entry.catch.is_some() || entry.page_file.is_some();
       if let Some(progress) = starting_progress(
         &entry.id,
         &entry.group_id,
@@ -187,7 +225,9 @@ pub fn setup_download_dispatcher(
       ) {
         crate::events::emit(&app, crate::events::MEDIA_PROGRESS_STAGE, progress);
       }
-      crate::usage::download_started(&app, &entry);
+      if !from_browser {
+        crate::usage::download_started(&app, &entry);
+      }
 
       let _awake = super::keep_awake::acquire(&app);
       let root = if entry.fetch_engine == Some(crate::models::parsed::FetchEngine::Files) {
@@ -225,7 +265,7 @@ pub fn setup_download_dispatcher(
         Ok(()) => crate::usage::store::End::Finished,
         Err(_) => crate::usage::store::End::Failed,
       };
-      if !matches!(result, Err(YtdlpDownloadError::LoginPending)) {
+      if !from_browser && !matches!(result, Err(YtdlpDownloadError::LoginPending)) {
         crate::usage::download_ended(&app, &entry, end);
       }
       if let Err(e) = result {
@@ -235,7 +275,7 @@ pub fn setup_download_dispatcher(
         tracing::warn!(
           download_id = %entry.id,
           group_id = %entry.group_id,
-          error = %e,
+          error = %if from_browser { "catch download failed".into() } else { e.to_string() },
           "Failed to run media download",
         );
       }
@@ -255,17 +295,39 @@ fn still_running(group_id: &str, started_generation: Option<u64>) -> bool {
 }
 
 /// Batches of the same run add up; a newer run replaces the count of the run it resumed.
-fn count_batch(group_id: &str, generation: u64, total: usize) {
+fn count_locked(
+  counters: &mut HashMap<String, (u64, usize)>,
+  group_id: &str,
+  generation: u64,
+  total: usize,
+) {
   if total == 0 {
     return;
   }
-  let mut counters = DOWNLOAD_COUNTERS.lock().unwrap();
   match counters.get_mut(group_id) {
     Some((counted, count)) if *counted == generation => *count = count.saturating_add(total),
     _ => {
       counters.insert(group_id.to_owned(), (generation, total));
     }
   }
+}
+
+fn count_batch(group_id: &str, generation: u64, total: usize) {
+  count_locked(
+    &mut DOWNLOAD_COUNTERS.lock().unwrap(),
+    group_id,
+    generation,
+    total,
+  );
+}
+
+/// Join or start the UI download run and count the batch before a finishing job can end the run.
+pub(crate) fn start_counted_batch(group_id: &str, total: usize) -> u64 {
+  // Take the counter lock before the group-state lock, as finish_download does.
+  let mut counters = DOWNLOAD_COUNTERS.lock().unwrap();
+  let generation = crate::scheduling::group_state::start_group_run(group_id);
+  count_locked(&mut counters, group_id, generation, total);
+  generation
 }
 
 /// `generation`: the run that queued the job; a job of an older run does not count down this one.
@@ -332,6 +394,50 @@ mod tests {
   fn counter(group: &str) -> Option<(u64, usize)> {
     let counters = DOWNLOAD_COUNTERS.lock().unwrap();
     counters.get(group).copied()
+  }
+
+  #[test]
+  fn a_batch_joining_a_running_group_is_counted_before_the_dispatcher_reads_it() {
+    let group = "counter-join-while-busy";
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let run = start_counted_batch(group, 1);
+    let joined = start_counted_batch(group, 2);
+    assert_eq!(joined, run);
+    assert_eq!(counter(group), Some((run, 3)));
+
+    finish_download(&tx, group, "first", run, true);
+    assert_eq!(counter(group), Some((run, 2)));
+    assert!(
+      rx.try_recv().is_err(),
+      "the joined batch keeps the run alive"
+    );
+
+    crate::scheduling::group_state::remove_group(group);
+    forget_group_counter(group);
+  }
+
+  #[test]
+  fn a_closed_dispatcher_releases_the_counted_run_for_retry() {
+    use crate::scheduling::group_state::remove_group;
+
+    let group = "counter-dispatcher-closed";
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let items = vec![serde_json::from_value(serde_json::json!({
+      "id": "item",
+      "url": "https://example.com/video",
+      "format": { "trackType": "video" },
+      "templateContext": { "values": {} }
+    }))
+    .unwrap()];
+    let run = start_counted_batch(group, items.len());
+
+    DownloadSender(tx).send_counted_batch(group, run, items);
+
+    assert_eq!(counter(group), None);
+    assert_ne!(start_counted_batch(group, 1), run);
+    remove_group(group);
+    forget_group_counter(group);
   }
 
   #[test]

@@ -13,6 +13,7 @@ use crate::parsers::ytdlp_info::parse_ytdlp_info_for_url;
 use crate::resolve::{self, Reason, Resolution, ResolvedInput};
 use crate::runners::{
   login::{CookieRetry, LoginRequest, LoginSession},
+  preset_sizes::PresetProbe,
   retry_policy::RetryAction,
   ytdlp_runner::YtdlpRunner,
 };
@@ -225,7 +226,7 @@ async fn run_attempts(
       media.fetch_engine = Some(crate::models::parsed::FetchEngine::Reader);
       stage.media = Some(ParsedMedia::Single(media));
       if login.has_session {
-        login.succeeded(app, &entry.group_id);
+        login.succeeded(app, &entry.id, &entry.group_id);
       }
       return Some(Outcome::Verified);
     }
@@ -257,29 +258,60 @@ async fn run_attempts(
       audio_track: None,
       video_track: None,
     });
-    let runner = YtdlpRunner::new(app)
-      .with_format_args(&entry.url, &format, entry.overrides.as_ref())
-      .with_input_args(entry.overrides.as_ref())
-      .with_input_filter_args(entry.overrides.as_ref())
-      .with_auth_args(
-        entry.overrides.as_ref(),
-        login.browser.as_deref(),
-        &entry.url,
-      )
-      .with_network_args(entry.overrides.as_ref())
-      .with_args([
-        "-j",
-        "--flat-playlist",
-        "--playlist-end",
-        "100",
-        "--lazy-playlist",
-      ])
-      .with_args(super::reliability::playlist_args(child))
-      .with_args(resolve::facebook_photo_share(&entry.url).then_some("--ignore-no-formats-error"))
-      .with_resolved_input(&input);
+    let preset_probe = if entry.format.is_none() {
+      let cfg = app.state::<crate::SharedConfig>().load();
+      if cfg.performance.auto_load_size {
+        let output = super::override_resolver::resolve_with_patch(
+          &cfg.output,
+          entry
+            .overrides
+            .as_ref()
+            .and_then(|value| value.output.as_ref()),
+        );
+        PresetProbe::new(&entry.url, &output, cfg.output.video.keep_original_codec)
+      } else {
+        None
+      }
+    } else {
+      None
+    };
     login.has_session = false;
-    let timeout = runner.fetch_info_timeout(&input.url);
-    let output = match runner.output_with_timeout(&entry.group_id, timeout).await {
+    let result = PresetProbe::run_with_fallback(
+      preset_probe.as_ref(),
+      |probe| {
+        let runner = YtdlpRunner::new(app)
+          .with_format_args(&entry.url, &format, entry.overrides.as_ref())
+          .with_args(probe.into_iter().flat_map(PresetProbe::args))
+          .with_input_args(entry.overrides.as_ref())
+          .with_input_filter_args(entry.overrides.as_ref())
+          .with_auth_args(
+            entry.overrides.as_ref(),
+            login.browser.as_deref(),
+            &entry.url,
+          )
+          .with_network_args(entry.overrides.as_ref())
+          .with_args([
+            "-j",
+            "--flat-playlist",
+            "--playlist-end",
+            "100",
+            "--lazy-playlist",
+          ])
+          .with_args(super::reliability::playlist_args(child))
+          .with_args(
+            resolve::facebook_photo_share(&entry.url).then_some("--ignore-no-formats-error"),
+          )
+          .with_resolved_input(&input);
+        let timeout = runner.fetch_info_timeout(&input.url);
+        runner.output_with_timeout(&entry.group_id, timeout)
+      },
+      |result| {
+        matches!(result, Ok(Some(output)) if output.code != 0
+          && PresetProbe::startup_failed(&String::from_utf8_lossy(&output.stderr)))
+      },
+    )
+    .await;
+    let output = match result {
       Ok(Some(output)) => output,
       Ok(None) => return Some(Outcome::Cancelled),
       Err(error) if error == FETCH_TIMEOUT => {
@@ -475,7 +507,7 @@ async fn run_attempts(
         photo_start,
       );
       if gallery.media.is_some() {
-        login.succeeded(app, &entry.group_id);
+        login.succeeded(app, &entry.id, &entry.group_id);
       }
       stage.media = gallery.media;
       stage.attempts.extend(gallery.attempts);
@@ -527,7 +559,7 @@ async fn run_attempts(
         }
         crate::diagnostics::send::network_response_received();
         input.retain_fetch_target(&mut media);
-        login.succeeded(app, &entry.group_id);
+        login.succeeded(app, &entry.id, &entry.group_id);
         stage.media = Some(media);
         Some(Outcome::Verified)
       }

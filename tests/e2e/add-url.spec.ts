@@ -11,9 +11,27 @@ test('a pasted link opens the options sheet with the three plain choices', async
   for (const choice of ['Best quality', 'Audio only', 'Smaller file']) {
     await expect(sheet.getByRole('radio', { name: new RegExp(choice) })).toBeVisible();
   }
+  await expect(sheet.getByRole('group', { name: 'About 31 MB', exact: true })).toBeVisible();
+  await expect(sheet.getByRole('radio', { name: /Smaller file.*about 19 MB/ })).toBeVisible();
+  await expect(sheet.getByRole('radio', { name: /Audio only.*about 1.5 MB/ })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
   await expect(page.locator(ROW_SELECTOR).getByText('Test Video')).toBeVisible();
+});
+
+test.describe('with a changed output profile', () => {
+  test.use({ mockData: { settings: { output: { video: { postprocessPreset: 'fps30' } } } } });
+
+  test('the options sheet hides the estimates from the old profile', async ({ page }) => {
+    await page.goto('/');
+    await page.fill('#queue-url-input', 'https://example.com/video');
+    await page.getByRole('button', { name: 'Download', exact: true }).click();
+    const sheet = page.getByRole('dialog');
+    await expect(sheet.getByText('Test Video')).toBeVisible();
+    await expect(sheet.getByRole('radio')).toHaveCount(3);
+    await expect(sheet.getByRole('group', { name: /^About / })).toHaveCount(0);
+    await expect(sheet.getByRole('radio', { name: /about .* MB/ })).toHaveCount(0);
+  });
 });
 
 test('Cmd/Ctrl+V anywhere in the window pastes the copied link into the field', async ({ page, context }) => {

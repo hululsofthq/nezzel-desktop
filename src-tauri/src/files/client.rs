@@ -116,6 +116,7 @@ type Resolver = Arc<dyn Fn(&str) -> Vec<IpAddr> + Send + Sync>;
 #[derive(Clone)]
 pub(crate) struct Client {
   policy: AddressPolicy,
+  pub(crate) page_file: Option<Arc<crate::catch::handoff::PageFileRequest>>,
   #[cfg(test)]
   pub script: Option<Script>,
   #[cfg(test)]
@@ -127,6 +128,7 @@ impl Client {
   pub fn new() -> Result<Self> {
     Ok(Self {
       policy: AddressPolicy::Public,
+      page_file: None,
       #[cfg(test)]
       script: None,
       #[cfg(test)]
@@ -139,6 +141,7 @@ impl Client {
   pub fn local() -> Self {
     Self {
       policy: AddressPolicy::Loopback,
+      page_file: None,
       script: None,
       #[cfg(test)]
       hop_script: None,
@@ -256,6 +259,9 @@ impl Client {
         .header("Accept", "*/*")
         .header("Accept-Encoding", "identity")
         .header("User-Agent", super::hosts::user_agent(&url));
+      if let Some(page_file) = &self.page_file {
+        request = request.headers(page_file.headers_for(&url));
+      }
       if let Some((start, end, validator)) = range {
         request = request
           .header(
@@ -610,6 +616,52 @@ mod share_tests {
       .unwrap();
     assert_eq!(response.response.bytes().await.unwrap().as_ref(), b"data");
   }
+  #[tokio::test]
+  async fn page_file_redirect_drops_cookie_on_port_change() {
+    use crate::catch::handoff::PageFileRequest;
+    use reqwest::{header::COOKIE, ResponseBuilderExt};
+    use tauri::webview::Cookie;
+
+    const ORIGINAL: &str = "https://files.example.co.uk/signed/manual.pdf";
+    const REDIRECT: &str = "https://files.example.co.uk:444/signed/manual.pdf";
+
+    let mut client = Client::local();
+    let cookie = Cookie::build(("session", "fixture"))
+      .domain("files.example.co.uk")
+      .path("/signed")
+      .secure(true)
+      .build();
+    client.page_file = Some(Arc::new(PageFileRequest::with_test_cookie(
+      Url::parse(ORIGINAL).unwrap(),
+      cookie,
+    )));
+    client.hop_script = Some(Arc::new(|request| {
+      let url = request.url();
+      let response = http::Response::builder().url(url.clone());
+      match url.as_str() {
+        ORIGINAL => {
+          assert_eq!(request.headers()[COOKIE], "session=fixture");
+          Ok(
+            response
+              .status(302)
+              .header("location", REDIRECT)
+              .body(Vec::<u8>::new())
+              .unwrap()
+              .into(),
+          )
+        }
+        REDIRECT => {
+          assert!(!request.headers().contains_key(COOKIE));
+          Ok(response.body(b"data".to_vec()).unwrap().into())
+        }
+        _ => panic!("unexpected request URL: {url}"),
+      }
+    }));
+    let (_tx, rx) = watch::channel(true);
+    let response = client.get(ORIGINAL, None, rx).await.unwrap();
+    assert_eq!(response.response.bytes().await.unwrap().as_ref(), b"data");
+  }
+
   #[tokio::test]
   async fn shared_redirect_to_google_login_is_an_honest_error() {
     use reqwest::ResponseBuilderExt;

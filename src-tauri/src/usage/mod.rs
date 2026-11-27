@@ -253,6 +253,14 @@ impl Usage {
     });
   }
 
+  fn note_catch(&self, event: &str, page: &tauri::Url) {
+    let mut counts = vec![event.to_owned()];
+    if let Some(domain) = keys::site_of(page.as_str()) {
+      counts.push(format!("{event}:{domain}"));
+    }
+    self.count_keys(&counts);
+  }
+
   fn clear(&self) {
     {
       let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -340,6 +348,12 @@ pub fn forget_group(app: &AppHandle, group_id: &str) {
 pub fn count(app: &AppHandle, key: &str) {
   if let Some(usage) = usage(app) {
     usage.count_keys(&[key]);
+  }
+}
+
+pub(crate) fn count_catch(app: &AppHandle, event: &str, page: &tauri::Url) {
+  if let Some(usage) = usage(app) {
+    usage.note_catch(event, page);
   }
 }
 
@@ -542,6 +556,40 @@ mod tests {
   use super::*;
   use std::collections::BTreeSet;
 
+  #[test]
+  fn catch_counts_only_its_events_and_the_page_domain_when_enabled() {
+    let usage = Usage::new(
+      None,
+      Some("https://usage.example.org".into()),
+      "0.1.5".into(),
+    );
+    let page = tauri::Url::parse("https://account.example.org/private/video?token=secret").unwrap();
+    usage.set_on(true);
+    for event in [keys::CATCH_USED, keys::CATCH_SAVED, keys::CATCH_DRM] {
+      usage.note_catch(event, &page);
+    }
+    usage.note_catch(
+      keys::CATCH_USED,
+      &tauri::Url::parse("http://192.168.0.1/video").unwrap(),
+    );
+    let counts = usage.snapshot_state().counts;
+    assert_eq!(
+      counts,
+      [
+        ("catch_used".into(), 2),
+        ("catch_used:example.org".into(), 1),
+        ("catch_saved".into(), 1),
+        ("catch_saved:example.org".into(), 1),
+        ("catch_drm".into(), 1),
+        ("catch_drm:example.org".into(), 1),
+      ]
+      .into()
+    );
+    usage.set_on(false);
+    usage.note_catch(keys::CATCH_USED, &page);
+    assert!(usage.snapshot_state().counts.is_empty());
+  }
+
   /// Lesson from Android (clip.accepted never arrived): every allowed key has a producer. Keys counted straight
   /// at a call site are listed with the call site; everything else is produced by running the hook logic.
   #[test]
@@ -564,6 +612,15 @@ mod tests {
       keys::QUICK_OPTIONS,         // capture::usage_keys::action_keys
       keys::CARD_FORMAT_VIDEO,     // capture::usage_keys::action_keys
       keys::CARD_FORMAT_AUDIO,     // capture::usage_keys::action_keys
+      keys::CATCH_USED,            // Catch page load
+      keys::CATCH_SAVED,           // Catch queue admission
+      keys::CATCH_DRM,             // Catch document protection
+      keys::CATCH_AUTO_USED,       // catch::auto, hidden session started
+      keys::CATCH_AUTO_FOUND,      // catch::auto, hidden session found a video
+      keys::CATCH_TAB_OPENED,      // catch::window::tab_new
+      keys::CATCH_SIGNIN_IMPORTED, // catch::site_tools, browser sign-in imported
+      keys::CATCH_MOBILE_RETRY,    // catch::site_tools, reloaded as iPhone
+      keys::CATCH_ADBLOCK_OFF,     // catch::adblock, a site's blocking switched off
     ];
     let mut made: BTreeSet<String> = call_sites.iter().map(|k| k.to_string()).collect();
     made.extend(keys::UI_KEYS.iter().map(|k| k.to_string()));

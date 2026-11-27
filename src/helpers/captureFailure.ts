@@ -6,7 +6,8 @@ import { FAIL_REASONS, type FailReason } from '@/generated/contract';
 import type { AuthSettings } from '../tauri/types/config';
 
 export type { FailReason };
-export type FailAction = 'retry' | 'options' | 'report';
+/** `catch`: open the page in the Nezzel browser and catch what it plays (#106). */
+export type FailAction = 'retry' | 'options' | 'report' | 'catch';
 
 /** The preview is anonymous; an enabled automatic login is used by the real info/download job. */
 export function canUseAutomaticLogin(reason: string | null | undefined, auth: Pick<AuthSettings, 'cookieBrowser' | 'alwaysUseBrowserLogins' | 'browserLoginConsent'> | undefined): boolean {
@@ -31,8 +32,15 @@ const ACTIONS: Record<FailReason, { primary: FailAction | null; secondary: FailA
   unknown: { primary: 'retry', secondary: ['options'] },
 };
 
-export function failActions(reason: FailReason): { primary: FailAction | null; secondary: FailAction[] } {
-  const { primary, secondary } = ACTIONS[reason];
+/**
+ * `catchable`: a web page the Nezzel browser may save (helpers/catchOffer `readCanCatch`, same table as the row).
+ * Unsupported: "Open the page" leads, Report stays quiet. A login wall or an unknown failure: the browser is one more
+ * way beside every action the reason already has, never instead of one.
+ */
+export function failActions(reason: FailReason, catchable = false): { primary: FailAction | null; secondary: FailAction[] } {
+  if (catchable && reason === 'unsupported') return { primary: 'catch', secondary: ['report'] };
+  const { primary, secondary: own } = ACTIONS[reason];
+  const secondary: FailAction[] = catchable && (reason === 'login' || reason === 'unknown') ? [...own, 'catch'] : own;
   // A login wall is not a bug: nothing to report.
   if (reason === 'login') return { primary, secondary };
   return { primary, secondary: primary === 'report' ? secondary : [...secondary, 'report'] };

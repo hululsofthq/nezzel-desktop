@@ -240,3 +240,40 @@ describe('quick bar when macOS refuses the browser read', () => {
     expect(wrapper.get('[data-testid=capture-empty-hint]').text()).toBe(i18n.global.t(hint));
   });
 });
+
+describe('automatic catch in the capture window', () => {
+  const read = (auto: object) => ({ id: 21, url: 'https://example.com/page', read: true, failed: true, reason: 'unsupported', details: emptyDetails(), auto });
+  const harness = () => {
+    let capture!: ReturnType<typeof useCaptureOffer>;
+    wrapper = mount(defineComponent({ setup() {
+      capture = useCaptureOffer();
+      onMounted(() => void capture.start());
+      return () => null;
+    } }), { global: { plugins: [i18n] } });
+    return () => capture;
+  };
+
+  it('keeps the needs-step view when Download is refused with catchAutoNeedsStep', async () => {
+    installTauriMock({
+      capture_snapshot: () => read({ groupId: 'g1', phase: 'found', beside: false, title: 'Film' }),
+      catch_auto_download: () => { throw 'catchAutoNeedsStep'; },
+    });
+    const capture = harness();
+    await flushPromises();
+    await capture().onAuto('download');
+    expect(capture().error.value).toBe(false);
+  });
+
+  it('keeps asking Rust for the offer while the automatic catch is still looking', async () => {
+    vi.useFakeTimers();
+    try {
+      const snapshot = vi.fn(() => ({ ...read({ groupId: 'g1', phase: 'looking', beside: false }), failed: false }));
+      installTauriMock({ capture_snapshot: snapshot });
+      harness();
+      await flushPromises();
+      const before = snapshot.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(snapshot.mock.calls.length).toBeGreaterThan(before);
+    } finally { vi.useRealTimers(); }
+  });
+});

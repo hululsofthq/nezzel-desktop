@@ -7,6 +7,10 @@ pub struct TemplateContext {
   pub values: HashMap<String, String>,
 }
 
+/// Stands for a `%` of a substituted value while the template's own `%%` are folded. Values
+/// cannot contain it: `sanitize_template_value` replaces control characters.
+const LITERAL_PERCENT: &str = "\u{0}";
+
 impl TemplateContext {
   #[allow(dead_code)]
   pub fn insert<K: Into<String>, V: Into<String>>(&mut self, key: K, value: V) {
@@ -116,10 +120,13 @@ impl TemplateContext {
             }
           }
 
-          return out;
+          // The value is text from a page or site, and the result is yt-dlp's `-o` template:
+          // its `%` are literal (doubled after the `%%` pass below), never a template field.
+          return out.replace('%', LITERAL_PERCENT);
         }
 
-        let fallback = Self::sanitize_template_value(val);
+        // Inside `%(field|default)s` yt-dlp reads `%` and brackets as syntax, with no escape.
+        let fallback = Self::sanitize_template_value(val).replace(['%', '(', ')'], "_");
 
         return format!("%({primary_key}|{fallback}){fmt}");
       }
@@ -127,7 +134,7 @@ impl TemplateContext {
       default_part.unwrap_or("").to_string()
     });
 
-    replaced.replace("%%", "%")
+    replaced.replace("%%", "%").replace(LITERAL_PERCENT, "%%")
   }
 
   fn sanitize_template_value(input: String) -> String {
@@ -320,6 +327,24 @@ mod tests {
 
     let out = ctx.render_template("%(playlist_title,album)s-%(title).200s");
     assert_eq!(out, "my playlist-%(title).200s");
+  }
+
+  #[test]
+  fn a_fallback_value_cannot_end_or_extend_the_field() {
+    let ctx = create_context(&[("playlist_title", "Best of (2020) 50% %(url)s")]);
+
+    let out = ctx.render_template("%(album,playlist_title)s-%(title).200s");
+    assert_eq!(out, "%(album|Best of _2020_ 50_ __url_s)s-%(title).200s");
+  }
+
+  #[test]
+  fn a_value_percent_is_literal_for_yt_dlp() {
+    let ctx = create_context(&[("title", "50% %(url)s %%")]);
+
+    assert_eq!(
+      ctx.render_template("%%-%(title)s-%(title).4B"),
+      "%-50%% %%(url)s %%%%-50%% "
+    );
   }
 
   #[test]

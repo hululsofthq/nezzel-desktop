@@ -13,6 +13,7 @@ import { useMediaDiagnosticsStore } from '../../src/stores/media/diagnostics';
 import { installTauriMock } from '../utils/tauriMock';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useLoginStore } from '../../src/stores/login';
+import { useCatchAutoStore } from '../../src/stores/catchAuto';
 
 describe('download failure presentation', () => {
   it.each(['en', 'ar', 'fr'] as const)('shows the move failure and retry action without a local path in %s', async (locale) => {
@@ -40,49 +41,115 @@ describe('download failure presentation', () => {
     }
   });
 
-  it.each(['en', 'ar', 'fr'] as const)('acknowledges live requests immediately and opens protected pages in %s', async (locale) => {
+  it.each(['en', 'ar', 'fr'] as const)('acknowledges live requests, offers the Nezzel browser on a login wall and nothing on DRM in %s', async (locale) => {
     const previous = i18n.global.locale.value;
     i18n.global.locale.value = locale;
     const count = vi.fn(() => new Promise<void>(() => {}));
     const open = vi.fn();
-    installTauriMock({ 'usage_count': count, 'plugin:opener|open_url': open });
+    const catchOpen = vi.fn(() => ({ windowId: 'catch-1' }));
+    installTauriMock({ 'usage_count': count, 'plugin:opener|open_url': open, 'catch_open': catchOpen });
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }, { path: '/settings/logins', name: 'settings.logins', component: { template: '<div />' } }] });
     await router.push('/');
+    const t = i18n.global.t;
+    const mountRow = (id: string, code: string, url: string) => {
+      const groups = useMediaGroupStore();
+      groups.createGroup({ id, url, title: 'Video', total: 1, processed: 0, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
+        items: { [id]: { id, isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
+      useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id, groupId: id, code, level: 'error', component: null, message: '', raw: '', timestamp: 1 });
+      useMediaStateStore().setGroupState(id, MediaState.error);
+      return mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+    };
     try {
-      for (const [id, code, url, action] of [
-        ['live', 'liveNow', 'https://example.com/live', 'wantLiveDownload'],
-        ['vimeo-login', 'signInRequired', 'https://player.vimeo.com/video/123', 'openVimeo'],
-        ['vimeo', 'drmProtected', 'https://player.vimeo.com/video/123', 'openVimeo'],
-        ['other', 'drmProtected', 'https://example.com/video', 'openBrowser'],
-        ['lookalike', 'drmProtected', 'https://vimeo.com.example.org/video', 'openBrowser'],
-      ]) {
-        const groups = useMediaGroupStore();
-        groups.createGroup({ id, url, title: 'Video', total: 1, processed: 0, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
-          items: { [id]: { id, isLeader: true, url, audioCodecs: [], formats: [], filesize: 0 } } });
-        useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id, groupId: id, code, level: 'error', component: null, message: '', raw: '', timestamp: 1 });
-        useMediaStateStore().setGroupState(id, MediaState.error);
-        const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n] } });
+      const live = mountRow(`${locale}-live`, 'liveNow', 'https://example.com/live');
+      try {
+        const button = live.findAll('button').find(b => b.text() === t('downloads.row.wantLiveDownload'));
+        await button!.trigger('click');
+        expect(button!.text()).toBe(t('downloads.row.liveRequestNoted'));
+        expect(button!.attributes('disabled')).toBeDefined();
+        expect(button!.find('svg').exists()).toBe(true);
+        await button!.trigger('click');
+        expect(count).toHaveBeenCalledExactlyOnceWith('usage_count', { key: 'want.live_download' });
+      } finally { live.unmount(); }
+
+      // Vimeo refuses without a login: sign in inside the Nezzel browser, not the system one.
+      const vimeo = mountRow(`${locale}-vimeo`, 'signInRequired', 'https://player.vimeo.com/video/123');
+      try {
+        expect(vimeo.get('[data-testid="row-error"]').text()).toContain(t('errors.runner.vimeoSignInRequired.message'));
+        const button = vimeo.get('[data-testid="row-catch-open"]');
+        expect(button.text()).toBe(t('catch.row.try'));
+        await button.trigger('click');
+        expect(catchOpen).toHaveBeenLastCalledWith('catch_open', expect.objectContaining({ url: 'https://player.vimeo.com/video/123' }));
+      } finally { vimeo.unmount(); }
+
+      // DRM: no browser can save it, so no "open" action suggests one could (and no Retry).
+      for (const url of ['https://player.vimeo.com/video/123', 'https://example.com/video']) {
+        const drm = mountRow(`${locale}-drm-${url.length}`, 'drmProtected', url);
         try {
-          const t = i18n.global.t;
-          if (code !== 'signInRequired') expect(row.findAll('button').some(b => b.text() === t('downloads.row.retry'))).toBe(false);
-          const key = `downloads.row.${action}`;
-          expect(i18n.global.te(key, locale)).toBe(true);
-          const button = row.findAll('button').find(b => b.text() === t(key));
-          expect(button).toBeDefined();
-          await button!.trigger('click');
-          if (code === 'liveNow') {
-            expect(button!.text()).toBe(t('downloads.row.liveRequestNoted'));
-            expect(button!.attributes('disabled')).toBeDefined();
-            expect(button!.find('svg').exists()).toBe(true);
-            await button!.trigger('click');
-            expect(count).toHaveBeenCalledExactlyOnceWith('usage_count', { key: 'want.live_download' });
-          } else {
-            expect(row.get('[data-testid="row-error"]').text()).toContain(t(code === 'signInRequired' ? 'errors.runner.vimeoSignInRequired.message' : 'errors.runner.drmProtected.shortMessage'));
-            expect(open).toHaveBeenLastCalledWith('plugin:opener|open_url', expect.objectContaining({ url }));
-          }
-        } finally { row.unmount(); }
+          expect(drm.get('[data-testid="row-error"]').text()).toContain(t('errors.runner.drmProtected.shortMessage'));
+          const labels = drm.findAll('button').map(b => b.text());
+          expect(labels).not.toContain(t('downloads.row.openBrowser'));
+          expect(labels).not.toContain(t('downloads.row.retry'));
+          expect(drm.find('[data-testid="row-catch-open"]').exists()).toBe(false);
+        } finally { drm.unmount(); }
       }
+      expect(open).not.toHaveBeenCalled();
     } finally { i18n.global.locale.value = previous; }
+  });
+
+  describe('"Try in Nezzel browser" on a failed row', () => {
+    const t = i18n.global.t;
+    const page = 'https://example.com/watch/1';
+    async function failedRow(id: string, code: string) {
+      installTauriMock({});
+      const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+      await router.push('/');
+      const groups = useMediaGroupStore();
+      groups.createGroup({ id, url: page, title: 'Video', total: 1, processed: 0, errored: 0, isCombined: false, audioCodecs: [], formats: [], filesize: 0,
+        items: { [id]: { id, isLeader: true, url: page, audioCodecs: [], formats: [], filesize: 0 } } });
+      useMediaDiagnosticsStore().processMediaDiagnosticPayload({ id, groupId: id, code, level: 'error', component: null, message: '', raw: '', timestamp: 1 });
+      useMediaStateStore().setGroupState(id, MediaState.error);
+      // The right-click menu lists the same actions as the ⋯ menu: rendered in place so its items can be read.
+      const slot = { template: '<slot />' };
+      const stubs = { ContextMenu: slot, ContextMenuTrigger: slot, ContextMenuContent: { template: '<div data-testid="row-menu"><slot /></div>' }, ContextMenuItem: { template: '<div role="menuitem"><slot /></div>' }, ContextMenuSeparator: true };
+      const row = mount(DownloadRow, { props: { group: groups.findGroupById(id)! }, global: { plugins: [router, i18n], stubs } });
+      const menu = () => row.findAll('[data-testid="row-menu"] [role=menuitem]').map(item => item.text().trim());
+      return { row, menu, labels: () => row.findAll('button').map(button => button.text().trim()) };
+    }
+
+    it.each([
+      // Retry may still work: the real error stays red, the browser is the second way, in the row and in its menu.
+      ['accessForbidden403', true, 'bg-destructive-soft'],
+      ['unknown', true, 'bg-destructive-soft'],
+      // An age gate is a sign-in wall: sign in inside the Nezzel browser, like the other login codes.
+      ['ageRestricted', true, 'bg-destructive-soft'],
+      // Retry cannot work: the browser is the one step left (amber, "needs you").
+      ['urlNotSupported', true, 'bg-amber-soft'],
+      // Removed or unavailable media: the browser would fail the same way.
+      ['mediaUnavailable', false, 'bg-destructive-soft'],
+      ['drmProtected', false, 'bg-destructive-soft'],
+    ] as const)('%s → offered %s, row tint %s', async (code, offered, tint) => {
+      const { row, menu } = await failedRow(`catch-${code}`, code);
+      try {
+        expect(row.find('[data-testid="row-catch-open"]').exists()).toBe(offered);
+        expect(row.find('[data-testid="row-catch-hint"]').exists()).toBe(tint === 'bg-amber-soft');
+        expect(row.find('[data-testid="row-error"]').exists()).toBe(tint !== 'bg-amber-soft');
+        expect(row.html()).toContain(tint);
+        expect(row.html()).not.toContain(tint === 'bg-amber-soft' ? 'bg-destructive-soft' : 'bg-amber-soft');
+        expect(menu().includes(t('catch.row.try'))).toBe(offered);
+      } finally { row.unmount(); }
+    });
+
+    it.each(['encrypted', 'live'] as const)('never when the automatic catch found the page is %s: not in the row, not in its menu', async (phase) => {
+      const { row, menu, labels } = await failedRow(`auto-${phase}`, 'urlNotSupported');
+      try {
+        useCatchAutoStore().apply({ groupId: `auto-${phase}`, phase, beside: false });
+        await flushPromises();
+        expect(row.find('[data-testid="row-auto-note"]').exists()).toBe(true);
+        expect(labels()).not.toContain(t('catch.row.try'));
+        expect(menu()).toContain(t('downloads.row.copyLink'));
+        expect(menu()).not.toContain(t('catch.row.try'));
+      } finally { row.unmount(); }
+    });
   });
 
   it.each(['en', 'ar', 'fr'] as const)('keeps partial-success and listing notices visible in %s', async (locale) => {

@@ -216,8 +216,10 @@ pub(super) async fn resolved_ytdlp_post(
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[cfg(unix)]
   use crate::runners::gallery_files::Staging;
   use serde_json::json;
+  #[cfg(unix)]
   use std::path::PathBuf;
 
   #[tokio::test]

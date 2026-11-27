@@ -6,6 +6,7 @@ import { createPinia, disposePinia, setActivePinia } from 'pinia';
 import { InvokeArgs } from '@tauri-apps/api/core';
 import { mediaHandlers } from './tests/utils/mocks/mediaHandlers';
 import { MockData } from './tests/e2e/utils/mockData';
+import { writeQueue } from './src/helpers/queueRecovery';
 
 // Component tests select locales synchronously; windows await these messages before mounting.
 beforeAll(async () => {
@@ -15,6 +16,7 @@ beforeAll(async () => {
 let testPinia: ReturnType<typeof createPinia>;
 beforeEach(() => {
   clearMocks();
+  writeQueue([]);
   installTauriMock({ ...mediaHandlers });
   testPinia = createPinia();
   setActivePinia(testPinia);

@@ -122,7 +122,7 @@ describe('LinkField', () => {
     downloadSearchQuery.value = '';
   });
 
-  async function mountField() {
+  async function mountField(tooltip: object = { template: '<slot />' }) {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -132,23 +132,89 @@ describe('LinkField', () => {
     });
     await router.push('/');
     await router.isReady();
-    const wrapper = mount(LinkField, { global: { plugins: [router, i18n], stubs: { Tooltip: { template: '<slot />' } } } });
+    const wrapper = mount(LinkField, { global: { plugins: [router, i18n], stubs: { Tooltip: tooltip } } });
     return { router, wrapper };
   }
 
   const submitButton = (wrapper: Awaited<ReturnType<typeof mountField>>['wrapper']) =>
     wrapper.findAll('button').find(button => button.text().trim() === 'Download')!;
 
-  it('keeps invalid input and the current page, with a warning', async () => {
+  it('describes the Browser button once, with its shortcut readable left to right in Arabic', async () => {
+    const previous = i18n.global.locale.value;
+    i18n.global.locale.value = 'ar';
+    const { wrapper } = await mountField({ props: ['content'], template: '<span :data-tip="content"><slot /></span>' });
+    try {
+      const button = wrapper.get('[data-testid="toolbar-browser"]');
+      expect(button.text()).toBe(i18n.global.t('catch.entry.button'));
+      // The tooltip is the one description (it becomes aria-describedby on focus).
+      expect(button.attributes('aria-description')).toBeUndefined();
+      expect(button.element.parentElement!.dataset.tip).toBe(`${i18n.global.t('catch.entry.label')}  \u2066Ctrl+Shift+B\u2069`);
+      expect(button.attributes('aria-keyshortcuts')).toBe('Meta+Shift+B Control+Shift+B');
+    } finally {
+      wrapper.unmount();
+      i18n.global.locale.value = previous;
+    }
+  });
+
+  it('keeps plain text and announces how to fix it on Return', async () => {
     const { router, wrapper } = await mountField();
     await router.push('/input-filters');
-    await wrapper.get('#queue-url-input').setValue('hello');
+    const field = wrapper.get<HTMLInputElement>('#queue-url-input');
+    await field.setValue('this is not a link');
+    await field.trigger('keydown', { key: 'Enter' });
+    // jsdom does not synthesize the form submit from Enter.
+    await wrapper.get('form').trigger('submit');
+    expect(field.element.value).toBe('this is not a link');
+    expect(router.currentRoute.value.name).toBe('input-filters');
+    const status = wrapper.get('#queue-url-status');
+    expect(status.text()).toBe('Copy the web address from the site and paste it here.');
+    expect(showToast).not.toHaveBeenCalled();
+    expect(addUrlBatch).not.toHaveBeenCalled();
+    await field.setValue('edited');
+    expect(status.text()).toBe('');
+    wrapper.unmount();
+  });
+
+  it('treats whitespace-only input as empty on Return', async () => {
+    const { wrapper } = await mountField();
+    const field = wrapper.get<HTMLInputElement>('#queue-url-input');
+    await field.setValue('  \t\n  ');
+    await field.trigger('keydown', { key: 'Enter' });
+    // jsdom does not synthesize the form submit from Enter.
+    await wrapper.get('form').trigger('submit');
+    expect(field.element.value).toBe('');
+    expect(field.attributes('placeholder')).toBe('Paste a link first');
+    expect(addUrlBatch).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('submits a usable link and reports the skipped item until the field is edited', async () => {
+    const { wrapper } = await mountField();
+    const field = wrapper.get<HTMLInputElement>('#queue-url-input');
+    await field.setValue('https://example.com/video invalid');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
-    expect((wrapper.get('#queue-url-input').element as HTMLInputElement).value).toBe('hello');
-    expect(router.currentRoute.value.name).toBe('input-filters');
-    expect(showToast).toHaveBeenCalledWith('That doesn\'t look like a link', { style: 'warning' });
-    expect(addUrlBatch).not.toHaveBeenCalled();
+    expect(addUrlBatch).toHaveBeenCalledWith(['https://example.com/video']);
+    expect(field.element.value).toBe('');
+    const status = wrapper.get('#queue-url-status');
+    expect(status.text()).toBe('Skipped 1 item.');
+    await field.setValue('https://example.com/another');
+    expect(status.text()).toBe('');
+    wrapper.unmount();
+  });
+
+  it('separates consecutive pastes and submits a duplicate once', async () => {
+    const { wrapper } = await mountField();
+    const field = wrapper.get<HTMLInputElement>('#queue-url-input');
+    const text = 'https://example.com/video';
+    await field.setValue(text);
+    field.element.setSelectionRange(text.length, text.length);
+    await field.trigger('paste', { clipboardData: { getData: () => text } });
+    expect(field.element.value).toBe(text + ' ' + text);
+    await wrapper.get('form').trigger('submit');
+    expect(addUrlBatch).toHaveBeenCalledWith([text]);
+    expect(addUrlBatchAndDownload).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 
   it.each(['field', 'drop'])('clears search immediately when accepting a new link via %s', async (source) => {
@@ -188,8 +254,8 @@ describe('LinkField', () => {
     expect(sheet.groupId).toBe('group-1');
   });
 
-  it.each(['native', 'backend'])('preserves all links in a multiline %s paste', async (source) => {
-    const text = 'https://example.com/a\r\nhttps://example.com/b';
+  it.each(['native', 'backend'])('repairs wrapped links in a multiline %s paste', async (source) => {
+    const text = 'https://www.you\r\ntube.com/watch?v=abc\r\nhttps://example.com/b';
     const { wrapper } = await mountField();
     if (source === 'native') await wrapper.get('#queue-url-input').trigger('paste', { clipboardData: { getData: () => text } });
     else {
@@ -198,7 +264,7 @@ describe('LinkField', () => {
     }
     await wrapper.get('form').trigger('submit');
     await flushPromises();
-    expect(addUrlBatchAndDownload).toHaveBeenCalledWith(['https://example.com/a', 'https://example.com/b'], false, true);
+    expect(addUrlBatchAndDownload).toHaveBeenCalledWith(['https://www.youtube.com/watch?v=abc', 'https://example.com/b'], false, true);
     wrapper.unmount();
   });
 
@@ -319,7 +385,7 @@ describe('LinkField', () => {
     await wrapper.get('form').trigger('submit');
     await flushPromises();
     expect(addUrlBatch).not.toHaveBeenCalled();
-    expect(showToast).toHaveBeenCalledWith(expect.any(String), { style: 'warning' });
+    expect(wrapper.get('#queue-url-status').text()).toBe('Copy the web address from the site and paste it here.');
   });
 
   it('pastes native clipboard text without submitting or adding it twice', async () => {

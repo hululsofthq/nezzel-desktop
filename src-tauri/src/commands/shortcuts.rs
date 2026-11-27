@@ -48,6 +48,7 @@ pub fn shortcuts_pause(app: AppHandle, window: WebviewWindow, paused: bool) {
     return;
   }
   PAUSED.store(paused, Ordering::Relaxed);
+  crate::menu::pause_keys(&app, paused);
   let Some(current) = current_shortcut(&app) else {
     return;
   };

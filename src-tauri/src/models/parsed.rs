@@ -139,6 +139,9 @@ pub struct ParsedSingleVideo {
   pub resolved_url: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub media_kind: Option<MediaKind>,
+  /// The pasted page, when it only embeds this media from another site (`parsers::ytdlp_info::embedding_page`).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub embedded_in: Option<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub attachments: Vec<MediaAttachment>,
   pub url: Option<String>,
@@ -163,6 +166,16 @@ pub struct ParsedSingleVideo {
   pub subtitle_inventory: SubtitleInventory,
   pub chapters: Vec<Chapter>,
   pub filesize: Option<u64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub preset_sizes: Option<PresetSizes>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetSizes {
+  #[serde(flatten)]
+  pub bytes: std::collections::BTreeMap<String, u64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub output: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

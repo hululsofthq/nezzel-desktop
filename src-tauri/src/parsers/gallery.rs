@@ -812,6 +812,7 @@ impl GalleryPost {
       resolved_url: (self.extract_url != self.source).then_some(self.extract_url),
       url: Some(self.source),
       media_kind: Some(kind),
+      embedded_in: None,
       thumbnail: self
         .assets
         .iter()
@@ -837,6 +838,7 @@ impl GalleryPost {
       subtitle_inventory: Default::default(),
       chapters: vec![],
       filesize: None,
+      preset_sizes: Default::default(),
     }
   }
 }

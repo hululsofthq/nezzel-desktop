@@ -1001,6 +1001,7 @@
       "emptyHint": "Try another word, like folder, language or proxy",
       "emptyReport": "Report a missing setting",
       "synonyms": {
+        "searchEngine": "search engine, google, bing, duckduckgo, brave, browser",
         "saveFolder": "folder, save, location, destination, downloads folder, directory, path, where",
         "defaultChoice": "quality, best, small, audio only, format, resolution, default",
         "askEach": "ask, options, prompt, every link, choose quality, sheet",
@@ -1033,6 +1034,7 @@
         "globalShortcuts": "shortcut, hotkey, keyboard, global, anywhere, keys",
         "quickShortcut": "shortcut, hotkey, quick download, keys, keyboard",
         "pasteShortcut": "shortcut, paste, keys, keyboard",
+        "browserShortcut": "shortcut, browser, website, catch, keys, keyboard",
         "downloadAllShortcut": "shortcut, download all, start all, keys, keyboard",
         "addAndDownloadShortcut": "shortcut, add, download now, keys, keyboard",
         "loginsLink": "login, account, cookies, browser, sign in",
@@ -1059,7 +1061,8 @@
         "extractorArgs": "developer, extractor, yt-dlp, arguments, advanced, debug",
         "version": "version, update, about, check for updates",
         "reportProblem": "report, bug, problem, feedback, contact, help, support",
-        "licenses": "licenses, open source, credits, third party, legal"
+        "licenses": "licenses, open source, credits, third party, legal",
+        "autoCatch": "catch, browser, web page, automatic, hidden, find video"
       }
     }
   },
@@ -1293,7 +1296,7 @@
       "geoBlocked": {
         "shortMessage": "Not available in your country",
         "message": "This content isn’t available in your region",
-        "action": "Nezzel can't change this. Try a link from another source"
+        "action": "If you use a VPN, turn it on, then try again"
       },
       "textOnlyPost": {
         "shortMessage": "This post has only text",
@@ -1361,8 +1364,8 @@
         "action": "Update the download tools in Settings, then try again"
       },
       "drmProtected": {
-        "shortMessage": "This is protected by the site and can't be saved",
-        "message": "This is protected by the site and can't be saved.",
+        "shortMessage": "This site plays it only in its own player, so Nezzel can't save it",
+        "message": "This site plays it only in its own player, so Nezzel can't save it.",
         "action": "You can watch it on the site"
       },
       "embedOnly": {
@@ -1732,6 +1735,9 @@
       "filtersOnCount": "{count} filter is on | {count} filters are on",
       "moreWithFilters": "{more}. {filters}",
       "pasteFirst": "Paste a link first",
+      "localFile": "This is a file path. Paste a web link.",
+      "unsupportedScheme": "Paste a link that starts with http:// or https://.",
+      "skipped": "Skipped {count} item. | Skipped {count} items.",
       "captureSettings": "Set up quick download in Settings → Keyboard shortcuts",
       "captureShortcut": "Quick download from any app: {shortcut}"
     },
@@ -1757,7 +1763,11 @@
       "hintPaste": "Paste or drop a link. To add links from a file, open the … menu.",
       "hintQuick": "Quick download from any app, even your browser",
       "hintQuickClipboard": "Copy a link in any app, then press the Quick download shortcut",
-      "hintCopied": "Copy a link and {brand} offers it right away"
+      "hintCopied": "Copy a link and {brand} offers it right away",
+      "wayPaste": "Paste a link",
+      "wayPasteBody": "Copied from any app or website",
+      "waySite": "Open a website",
+      "waySiteBody": "Play the video there and {brand} saves it"
     },
     "finished": {
       "empty": "Finished downloads appear here",
@@ -1778,8 +1788,11 @@
       "pause": "Pause",
       "resume": "Resume",
       "paused": "Paused at {percent}",
+      "interrupted": "Interrupted",
       "remove": "Remove",
       "retry": "Try again",
+      "reloadLink": "Reload link",
+      "reloadLinkHint": "Reload the link to choose how to save it",
       "open": "Open",
       "openFirst": "Open first",
       "show": "Show in folder",
@@ -1788,7 +1801,6 @@
       "openPage": "Open the page",
       "wantLiveDownload": "I want this feature",
       "liveRequestNoted": "Thanks, noted",
-      "openVimeo": "Open in Vimeo",
       "openBrowser": "Open in browser",
       "perDownload": "Settings for this download",
       "saved": "Saved",
@@ -1985,6 +1997,8 @@
     },
     "saved": "Saved",
     "general": {
+      "searchEngine": "Search engine",
+      "searchEngineHint": "Used for words typed in the Nezzel browser",
       "folder": "Save to",
       "folderDefault": "Downloads / Nezzel",
       "change": "Change…",
@@ -2107,6 +2121,8 @@
         "quick": "Quick download",
         "defaultIs": "Default: {keys}",
         "paste": "Paste a link",
+        "browser": "Open Nezzel browser",
+        "browserHint": "Play a video on any site and Nezzel saves it. This one is fixed",
         "pasteHint": "Puts a copied link into Nezzel. This one is fixed",
         "downloadAll": "Download everything waiting",
         "addAndDownload": "Add and download now",
@@ -2120,7 +2136,10 @@
         "proxyHint": "Only if a site is blocked in your country or network. Your VPN app usually does this already",
         "proxyAddress": "Proxy address",
         "proxyExample": "For example socks5://127.0.0.1:1080 or http://proxy.example.com:8080",
+        "proxyBrowser": "The Nezzel browser uses it too (http:// or socks5:// only; macOS 13 and older use the system proxy). A change applies to the next browser window.",
         "proxyInvalid": "Use the form scheme://host:port, for example socks5://127.0.0.1:1080 (http, https, socks4 or socks5)",
+        "autoCatch": "Look for the video on web pages automatically",
+        "autoCatchHint": "When a link is a web page Nezzel can’t read, it opens the page out of sight and catches the video it plays, using your sign-in for that site from your browser. Off while a proxy is set",
         "impersonate": "Look like a browser",
         "impersonateHint": "Some sites block apps that don’t look like a browser. Leave this off unless a site refuses",
         "impersonateOff": "Off (recommended)",
@@ -2257,8 +2276,8 @@
         "hint": "A proxy in Settings > Advanced may help"
       },
       "protected": {
-        "title": "This video is copy-protected and can't be saved",
-        "hint": "Nezzel can't save DRM-protected streams"
+        "title": "This site plays this video only in its own player",
+        "hint": "Nezzel can't save this one"
       },
       "busy": {
         "title": "{site} is limiting requests right now",
@@ -2394,7 +2413,7 @@
     "source": "Source"
   },
   "feedback": {
-    "invalidLink": "That doesn't look like a link",
+    "invalidLink": "Copy the web address from the site and paste it here.",
     "addFailed": "Couldn't add the link. Try again",
     "linksUnreadable": "{n} link couldn't be read | {n} links couldn't be read",
     "clipboardFailed": "Couldn't read the clipboard",
@@ -2533,5 +2552,200 @@
     "resume": "Resume {n} download | Resume {n} downloads",
     "dismiss": "Dismiss",
     "changeFolder": "Change folder"
+  },
+  "catch": {
+    "search": {
+      "label": "Search engine",
+      "engine": "Search engine: {engine}",
+      "hint": "Searching with {engine}",
+      "change": "Change"
+    },
+    "windowTitle": "Nezzel browser",
+    "bar": "Nezzel browser controls",
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload",
+    "address": "Page address",
+    "invalidAddress": "Enter a valid web address",
+    "fileDownload": {
+      "saving": "Saving {name} in Nezzel",
+      "savingFile": "Saving the file in Nezzel",
+      "opened": "Opened {name} in your browser",
+      "openedFile": "Opened the file in your browser",
+      "failed": "Couldn't save {name}",
+      "failedFile": "Couldn't save the file",
+      "unsupported": "This file can't be saved from this page",
+      "private": "Files can't be opened from a private tab",
+      "proxied": "Files can't be opened while the proxy is on"
+    },
+    "addressPlaceholder": "Type or paste a page address",
+    "notSecure": "Not secure",
+    "popups": "No pop-ups blocked | {n} pop-up blocked | {n} pop-ups blocked",
+    "allowOnce": "Allow once",
+    "more": "More",
+    "menu": {
+      "cantFind": "Can't find the video?",
+      "cantFindHint": "Reload the page and look deeper for it",
+      "forget": "Forget sign-ins for this site",
+      "forgetHint": "Signs you out of {site} in this window",
+      "close": "Close window"
+    },
+    "hint": {
+      "title": "Play the video. Nezzel will find it",
+      "firstRun": "Ads may play first; pop-ups are blocked."
+    },
+    "nudge": {
+      "title": "Nothing found yet",
+      "sub": "Play the video and skip any ads"
+    },
+    "signIn": {
+      "title": "Sign in, then play the video"
+    },
+    "adPlaying": {
+      "title": "Ad playing, waiting for the video"
+    },
+    "found": {
+      "title": "Video found"
+    },
+    "drm": {
+      "title": "This site plays this video only in its own player, so Nezzel can't save it",
+      "why": "Why?",
+      "whyText": "The site locks (encrypts) this video so only its own player can play it. Videos on other sites still work.",
+      "report": "Report this site"
+    },
+    "live": {
+      "title": "This is a live stream",
+      "sub": "Saving live streams is coming later"
+    },
+    "crashed": {
+      "title": "This page stopped working",
+      "sub": "Reload it to try again"
+    },
+    "loadFailed": {
+      "title": "Couldn't open {site}",
+      "retry": "Try again"
+    },
+    "geoBlocked": {
+      "title": "This site isn’t available in your country",
+      "sub": "If you use a VPN, turn it on and reload"
+    },
+    "notFound": {
+      "title": "Nezzel couldn't catch this video",
+      "sub": "It played, but no video came through",
+      "reload": "Reload page",
+      "report": "Report this page"
+    },
+    "saving": {
+      "title": "Saving in Nezzel",
+      "show": "Show download"
+    },
+    "close": "Close window",
+    "save": "Save",
+    "saveFailed": "Couldn't start the download. Try again.",
+    "quality": "Choose quality",
+    "picker": {
+      "title": "Choose what to save",
+      "video": "Video {height}p",
+      "videoAny": "Video",
+      "audio": "Audio only",
+      "best": "Best",
+      "bestAvailable": "Best available",
+      "loading": "Reading the formats…",
+      "others": "Other videos on this page",
+      "othersHint": "Short clips and ads",
+      "untitled": "Video on {site}",
+      "cancel": "Cancel"
+    },
+    "firstRun": {
+      "title": "Two steps",
+      "step1": "Play the video on the page",
+      "step2": "When the bar turns green, press Save",
+      "privacy": "Sign-ins stay on this computer.",
+      "ok": "Got it"
+    },
+    "row": {
+      "hint": "This page needs one step: play its video and Nezzel will catch it",
+      "open": "Open the page",
+      "try": "Try in Nezzel browser"
+    },
+    "embed": {
+      "question": "Not the video you wanted?",
+      "open": "Open the page in Nezzel browser"
+    },
+    "read": {
+      "title": "This page needs one step",
+      "hint": "Open it and play the video, Nezzel will catch it"
+    },
+    "menuEntry": "Open a page to catch its video",
+    "menuEntryHint": "Play a video there and Nezzel catches it",
+    "entry": {
+      "button": "Browser",
+      "label": "Open Nezzel browser"
+    },
+    "openFailed": "Couldn't open the Nezzel browser",
+    "tabsFull": "Nezzel browser has 6 tabs open. Close one to open this page.",
+    "proxyUnusable": "The Nezzel browser can’t use the proxy set in Settings, so it loads no pages. Fix the address (http:// or socks5://, no user name or password) or turn the proxy off",
+    "auto": {
+      "waiting": "Waiting to look for the video on the page…",
+      "looking": "Looking for the video on the page…",
+      "besideWaiting": "Waiting to look for the full video on the page…",
+      "besideLooking": "Looking for the full video on the page…",
+      "found": "Found on the page",
+      "foundFull": "Found the full video ({duration})",
+      "foundFullNoLength": "Found the full video",
+      "cancel": "Cancel"
+    },
+    "shell": {
+      "toggle": "Show or hide the tab list",
+      "tabs": "Tabs",
+      "newTab": "New tab",
+      "newPrivateTab": "New private tab",
+      "openTabs": "Open tabs",
+      "closeTab": "Close tab",
+      "private": "Private",
+      "linked": "Opened by the tab above",
+      "asleep": "Asleep. Reloads when you open it",
+      "found": "Video found here",
+      "loading": "Loading",
+      "singleHint": "Sign-in pages a site opens show up here as tabs",
+      "shared": "Tabs share one sign‑in",
+      "limitTitle": "{n} tabs is the most",
+      "limitBody": "Close one to open the new tab:",
+      "limitClose": "Close this tab",
+      "limitCancel": "Keep all",
+      "privateHint": "Its own sign‑in, forgotten when you close it",
+      "dismiss": "Dismiss"
+    },
+    "tools": {
+      "thisSite": "This site",
+      "signin": "Use my browser's sign‑in",
+      "signinBusy": "Reading your browser's sign-in…",
+      "signinDone": "Signed in from {browser}",
+      "signinDoneAny": "Signed in from your browser",
+      "signinNone": "No browser on this computer is signed in to this site. Sign in on the page instead.",
+      "signinDenied": "Nezzel wasn't allowed to read your browser's sign-in. Allow it when your computer asks, then try again.",
+      "signinUnsupported": "Nezzel can't read sign-ins from your browser on this computer. Sign in on the page instead.",
+      "signinFailed": "Couldn't use your browser's sign-in. Try again.",
+      "signinAlready": "Already reading your browser's sign-in. Wait a moment.",
+      "iphone": "Load the phone version",
+      "iphoneHint": "Video not found? Some sites send phones a simpler player. The page may look the same",
+      "adblock": "Block ads",
+      "adblockHint": "Stops ads and trackers on this site. Turn it off if the page stops working.",
+      "adblockCount": "No ads or trackers blocked | {n} ad or tracker blocked | {n} ads and trackers blocked",
+      "popupsTool": "Blocked pop-ups"
+    },
+    "home": {
+      "title": "Find a video to save",
+      "sub": "Open the page, play the video, then press Save",
+      "field": "Search or page address",
+      "placeholder": "Search with {engine} or paste a link",
+      "paste": "Paste",
+      "go": "Go",
+      "recentSites": "Recent sites",
+      "recentSaved": "Recently saved",
+      "noSites": "Sites you open show up here.",
+      "noSaved": "Nothing saved yet. Videos you save show up here.",
+      "show": "Show in folder"
+    }
   }
 }

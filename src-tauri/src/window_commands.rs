@@ -9,7 +9,14 @@ pub(crate) fn allowed_for_window(label: &str, command: &str) -> bool {
     "main" => true,
     CARD_LABEL => matches!(
       command,
-      "config_get" | "capture_snapshot" | "capture_action" | "capture_retry" | "capture_fit"
+      "config_get"
+        | "capture_snapshot"
+        | "capture_action"
+        | "capture_retry"
+        | "capture_fit"
+        | "catch_open"
+        | "catch_auto_cancel"
+        | "catch_auto_download"
     ),
     BAR_LABEL => matches!(
       command,
@@ -19,14 +26,17 @@ pub(crate) fn allowed_for_window(label: &str, command: &str) -> bool {
         | "capture_retry"
         | "capture_edit"
         | "get_platform"
+        | "catch_open"
+        | "catch_auto_cancel"
+        | "catch_auto_download"
         | "capture_open_automation_settings"
     ),
     NOTE_LABEL => matches!(
       command,
       "config_get" | "close_note_ready" | "close_note_done"
     ),
-    // Includes site-login-* and any future window until its access is explicitly defined.
-    _ => false,
+    // Catch bars have their own allowlist. Remote Catch pages and site-login-* fall through.
+    _ => crate::catch::commands::bar_command(label, command),
   }
 }
 
@@ -47,6 +57,12 @@ mod tests {
       (CARD_LABEL, "capture_action", true),
       (CARD_LABEL, "capture_retry", true),
       (CARD_LABEL, "capture_fit", true),
+      (CARD_LABEL, "catch_auto_cancel", true),
+      (CARD_LABEL, "catch_auto_download", true),
+      (BAR_LABEL, "catch_auto_cancel", true),
+      (BAR_LABEL, "catch_auto_download", true),
+      (NOTE_LABEL, "catch_auto_download", false),
+      ("site-login-0", "catch_auto_cancel", false),
       (CARD_LABEL, "stronghold_get", false),
       (CARD_LABEL, "config_set", false),
       (CARD_LABEL, "media_trash_file", false),

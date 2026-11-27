@@ -13,6 +13,8 @@ pub struct BrowserCandidate {
   pub profile: String,
   pub modified: SystemTime,
   pub signed_in: bool,
+  /// Live cookies of the site itself (any site; `signed_in` needs a known session cookie).
+  pub site_cookies: bool,
   pub app_bound: bool,
   pub active_time: f64,
 }
@@ -335,6 +337,7 @@ fn discover_in(
           },
           modified,
           signed_in: hint.signed_in,
+          site_cookies: hint.signed_in || hint.last_access > 0,
           app_bound: hint.app_bound,
           active_time: if hint.signed_in {
             hint.last_access as f64
@@ -373,6 +376,7 @@ fn discover_in(
               id: source.spec(),
               profile: format!("{} · {}", candidate.profile, name),
               signed_in: hint.signed_in,
+              site_cookies: hint.signed_in || hint.last_access > 0,
               active_time: hint.last_access as f64,
               ..candidate.clone()
             });
@@ -396,6 +400,7 @@ fn discover_in(
             profile: "Default".into(),
             modified: m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
             signed_in: false,
+            site_cookies: false,
             app_bound: false,
             active_time: 0.0,
           });
@@ -460,6 +465,11 @@ fn discover_in(
 
 pub fn discover(remembered: Option<&str>, host: &str) -> Vec<BrowserCandidate> {
   discover_in(&BrowserEnv::current(), remembered, Some(host))
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn discover_mac_fixture(home: &Path, host: &str) -> Vec<BrowserCandidate> {
+  discover_in(&BrowserEnv::test(Os::Mac).at(home), None, Some(host))
 }
 
 fn chromium_profile_name(info: &serde_json::Value, directory: &str) -> String {
@@ -567,6 +577,7 @@ pub fn describe(id: &str) -> Option<BrowserCandidate> {
     profile,
     modified: SystemTime::UNIX_EPOCH,
     signed_in: false,
+    site_cookies: false,
     app_bound: false,
     active_time: 0.0,
   })

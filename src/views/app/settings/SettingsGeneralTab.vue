@@ -35,6 +35,9 @@
       <settings-row search-id="language" for-id="pref-language" :label="t('prefs.general.language')">
         <SelectField id="pref-language" v-model="settings.appearance.language" :options="languageSelectOptions" />
       </settings-row>
+      <settings-row search-id="searchEngine" for-id="pref-search-engine" :label="t('prefs.general.searchEngine')" :help="t('prefs.general.searchEngineHint')">
+        <SelectField id="pref-search-engine" v-model="searchEngine" :options="searchEngineOptions" />
+      </settings-row>
       <settings-row search-id="theme" for-id="pref-theme" :label="t('prefs.general.theme')">
         <SelectField id="pref-theme" v-model="settings.appearance.theme" :options="themeOptions" />
       </settings-row>
@@ -43,7 +46,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, unref } from 'vue';
+import { computed, onMounted, unref } from 'vue';
+import { usePreferencesStore } from '../../../stores/preferences';
+import { SEARCH_ENGINES, type SearchEngine } from '../../../tauri/types/preferences';
 import { useI18n } from 'vue-i18n';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/select';
@@ -66,6 +71,19 @@ const capturePlatform = useCapturePlatform();
 const { skipOptionsSheet, defaultChoice } = useUiPrefs();
 const { systemTheme } = useTheme();
 const { openPathDialog } = useDialog();
+
+const preferencesStore = usePreferencesStore();
+const searchEngine = computed({
+  get: () => preferencesStore.preferences.searchEngine ?? 'duckduckgo',
+  set: (value: SearchEngine) => {
+    void preferencesStore.patchNow({ searchEngine: value });
+  },
+});
+const searchEngineOptions = Object.entries(SEARCH_ENGINES).map(([value, engine]) => ({ value: value as SearchEngine, label: engine.name }));
+// The Nezzel browser can change it too.
+onMounted(() => {
+  void preferencesStore.load().catch(() => {});
+});
 
 const askEach = computed({
   get: () => !skipOptionsSheet.value,

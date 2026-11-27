@@ -12,7 +12,7 @@
         :data-phase="phase"
         :data-group-id="group.id"
         :data-playlist-id="nested ? parentId : undefined"
-        :aria-busy="phase === 'reading' || phase === 'downloading' ? 'true' : undefined"
+        :aria-busy="phase === 'reading' || phase === 'downloading' || autoLooking ? 'true' : undefined"
         tabindex="0"
         :aria-keyshortcuts="canOpen ? 'Enter' : undefined"
         @keydown="onKey"
@@ -74,14 +74,42 @@
           <Tooltip :content="title" side="top" :disabled="!titleClipped">
             <!-- The flex line packs at the UI start; the title is its own dir=auto box, so a Latin title in Arabic UI cuts at its own end. -->
             <p class="flex min-w-0 font-medium leading-5" @pointerenter="measureTitle">
-              <span :dir="group.title ? 'auto' : 'ltr'" data-clip class="min-w-0 truncate" :class="canOpen && 'cursor-pointer decoration-foreground/40 underline-offset-2 hover:underline'" @click="openFromRow">{{ title }}</span>
+              <span :dir="group.title || (autoFound && autoState?.title) ? 'auto' : 'ltr'" data-clip class="min-w-0 truncate" :class="canOpen && 'cursor-pointer decoration-foreground/40 underline-offset-2 hover:underline'" @click="openFromRow">{{ title }}</span>
             </p>
           </Tooltip>
 
           <login-needed v-if="loginCard" class="mt-1" :card="loginCard" :site="site" :diagnostic-code="diagnostic.code" :details="diagnostic.raw === 'unknown' ? undefined : diagnostic.raw" @retry="retry" />
           <p v-if="vimeoLogin && loginCard" class="mt-1 text-[12.5px] text-destructive-foreground" data-testid="row-error">{{ t('errors.runner.vimeoSignInRequired.message') }}</p>
-          <template v-if="!loginCard && phase === 'error'">
-          <p class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
+          <!-- Automatic catch (contract v2): the hidden Nezzel browser works on this page; the row says that instead of the error. -->
+          <template v-if="autoOwnsRow">
+            <p v-if="auto!.kind === 'looking'" class="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-muted-foreground" role="status" data-testid="row-auto-looking">
+              <LoaderCircle class="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              <span class="truncate">{{ t(auto!.text) }}</span>
+            </p>
+            <p v-else-if="auto!.kind === 'found'" class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground" data-testid="row-auto-found">
+              <template v-for="(part, index) in autoMeta" :key="index">
+                <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
+                <bdi :dir="part.ltr ? 'ltr' : undefined" :class="part.ltr ? 'shrink-0 tnum' : 'min-w-0 truncate'">{{ part.text }}</bdi>
+              </template>
+            </p>
+            <p v-else-if="auto!.kind === 'needsStep'" class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-amber-foreground" data-testid="row-auto-step">
+              <AppWindow class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span class="line-clamp-2 text-pretty">{{ t(auto!.text) }}</span>
+            </p>
+            <p v-else class="mt-0.5 flex items-start gap-1.5 text-[12.5px] text-muted-foreground" role="status" data-testid="row-auto-note">
+              <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span class="line-clamp-2 text-pretty"><span class="font-medium text-foreground/85">{{ t(auto!.text) }}</span><template v-if="auto!.sub">{{ ' ' }}{{ t(auto!.sub) }}</template></span>
+            </p>
+            <p v-if="autoFailed" class="mt-0.5 text-[12px] text-destructive-foreground" role="alert">{{ t('catch.saveFailed') }}</p>
+          </template>
+          <template v-else-if="!loginCard && phase === 'error'">
+          <!-- yt-dlp can't read this page, but its video plays in a browser: one step, not a failure (#106). Where Retry
+               may still work, the real error stays and the browser is only the second way. -->
+          <p v-if="canCatch && catchLeads" class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-amber-foreground" data-testid="row-catch-hint">
+            <AppWindow class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span class="line-clamp-2 text-pretty">{{ t('catch.row.hint') }}</span>
+          </p>
+          <p v-else class="mt-0.5 flex items-start gap-1.5 text-[12.5px] font-medium text-destructive-foreground">
             <triangle-alert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
             <!-- What happened, then what to do (muted): every runner error carries both. -->
             <i18n-t v-if="errorDisplay.action" keypath="errors.rowLine" tag="span" scope="global" class="line-clamp-2 text-pretty" data-testid="row-error">
@@ -99,9 +127,9 @@
           </div>
           </template>
           <div v-else-if="showProgress || phase === 'reading'" class="mt-1 flex min-w-0 items-center gap-2.5 text-[12px] text-muted-foreground">
-            <nz-progress :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="flex-[1_1_120px]" :class="nested ? 'max-w-[140px]' : 'max-w-[180px]'" />
+            <nz-progress v-if="!interrupted" :value="phase === 'reading' ? null : percent" :muted="phase === 'paused'" class="flex-[1_1_120px]" :class="nested ? 'max-w-[140px]' : 'max-w-[180px]'" />
             <span class="flex min-w-0 items-center gap-1.5 truncate">
-              <template v-for="(part, index) in metaLine.slice(1)" :key="index">
+              <template v-for="(part, index) in metaLine.slice(site ? 1 : 0)" :key="index">
                 <span v-if="index > 0" class="nz-sep" aria-hidden="true" />
                 <bdi class="tnum">{{ part }}</bdi>
               </template>
@@ -114,6 +142,34 @@
             </template>
           </p>
 
+          <!-- The page only embeds another site's video (a film page's trailer): quiet way to the page's own video. -->
+          <!-- A hidden catch runs beside the embedded result: a quiet second line; what it finds is offered first. -->
+          <p v-if="autoBeside && auto!.kind === 'looking'" class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground" role="status" data-testid="row-auto-beside">
+            <LoaderCircle class="size-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <span class="truncate">{{ t(auto!.text) }}</span>
+            <Button variant="link" class="h-auto min-h-6 shrink-0 px-0 text-[12px] text-muted-foreground" data-testid="row-auto-cancel" @click.stop="autoCancel">{{ t('catch.auto.cancel') }}</Button>
+          </p>
+          <div v-else-if="autoBeside && auto!.kind === 'found'" class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1" data-testid="row-auto-beside-found">
+            <span class="min-w-0 truncate text-[12.5px] font-medium text-foreground">{{ autoFullLabel }}</span>
+            <span class="flex shrink-0 items-center gap-1">
+              <Button :disabled="autoStarting" :aria-busy="autoStarting || undefined" data-testid="row-auto-download" @click.stop="autoDownload()">
+                <LoaderCircle v-if="autoStarting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />{{ autoStarting ? t('capture.starting') : t('downloads.row.download') }}
+              </Button>
+              <dropdown-menu v-if="auto!.actions.includes('options')">
+                <dropdown-menu-trigger as-child>
+                  <Button variant="outline" :disabled="autoStarting" data-testid="row-auto-options">{{ t('downloads.row.options') }}</Button>
+                </dropdown-menu-trigger>
+                <dropdown-menu-content>
+                  <dropdown-menu-item v-for="format in autoFormats" :key="format.id" @select="autoDownload(format.id)">{{ format.label }}</dropdown-menu-item>
+                </dropdown-menu-content>
+              </dropdown-menu>
+            </span>
+            <p v-if="autoFailed" class="w-full text-[12px] text-destructive-foreground" role="alert">{{ t('catch.saveFailed') }}</p>
+          </div>
+          <p v-else-if="embedPage && phase === 'ready'" class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground" data-testid="row-embed-hint">
+            <span class="truncate">{{ t('catch.embed.question') }}</span>
+            <Button variant="link" class="h-auto min-h-6 shrink-0 px-0 text-[12px]" data-testid="row-embed-open" @click.stop="openCatch(embedPage)">{{ t('catch.embed.open') }}</Button>
+          </p>
           <p v-if="sponsorNote" class="mt-0.5 text-[12px] text-muted-foreground" data-testid="row-sponsor-note">{{ sponsorNote }}</p>
           <p v-if="['galleryItemsSkipped', 'listingPartial'].includes(lastDiagnostic?.code ?? '')" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t(`errors.runner.${lastDiagnostic!.code}.message`) }}</p>
           <p v-if="(group.entries?.length ?? group.attachments?.length ?? 0) >= 100" class="mt-0.5 text-[12px] text-muted-foreground" role="status">{{ t('downloads.row.listingCapped') }}</p>
@@ -135,17 +191,40 @@
         </span>
 
         <!-- Trailing actions: one column, same inset on every row. -->
-        <div class="flex shrink-0 items-center gap-1 self-center @min-[1040px]/list:w-[200px] @min-[1040px]/list:justify-end">
-          <template v-if="phase === 'ready'">
+        <!-- Beside a found full video the row's own pair stays on the title line, so each pair sits with its video. -->
+        <div class="flex shrink-0 items-center gap-1 @min-[1040px]/list:w-[200px] @min-[1040px]/list:justify-end" :class="autoBeside && auto!.kind === 'found' ? 'self-start' : 'self-center'">
+          <Button v-if="phase === 'needsRefresh'" variant="outline" @click="retry"><rotate-cw />{{ t('downloads.row.reloadLink') }}</Button>
+          <template v-else-if="phase === 'ready'">
             <Button variant="outline" @click="sheet.show(group.id)">{{ t('downloads.row.options') }}</Button>
-            <Button @click="download">{{ t('downloads.row.download') }}</Button>
+            <!-- Beside a found full video the embedded result is the second choice. -->
+            <Button :variant="autoBeside && auto!.kind === 'found' ? 'outline' : 'default'" @click="downloadEmbedded">{{ t('downloads.row.download') }}</Button>
           </template>
-          <Button v-else-if="phase === 'cancelled'" variant="outline" @click="retry"><rotate-cw />{{ t('downloads.row.retry') }}</Button>
-          <Button v-else-if="phase === 'error' && loginOwnsAction && vimeoLogin" variant="outline" @click="openPage"><ExternalLink />{{ openBrowserLabel }}</Button>
+          <Button v-else-if="phase === 'cancelled' && !group.caught" variant="outline" @click="retry"><rotate-cw />{{ t('downloads.row.retry') }}</Button>
+          <template v-else-if="autoOwnsRow">
+            <Button v-if="auto!.kind === 'looking'" variant="outline" data-testid="row-auto-cancel" @click.stop="autoCancel">{{ t('catch.auto.cancel') }}</Button>
+            <template v-else-if="auto!.kind === 'found'">
+              <dropdown-menu v-if="auto!.actions.includes('options')">
+                <dropdown-menu-trigger as-child>
+                  <Button variant="outline" :disabled="autoStarting" data-testid="row-auto-options">{{ t('downloads.row.options') }}</Button>
+                </dropdown-menu-trigger>
+                <dropdown-menu-content>
+                  <dropdown-menu-item v-for="format in autoFormats" :key="format.id" @select="autoDownload(format.id)">{{ format.label }}</dropdown-menu-item>
+                </dropdown-menu-content>
+              </dropdown-menu>
+              <Button :disabled="autoStarting" :aria-busy="autoStarting || undefined" data-testid="row-auto-download" @click.stop="autoDownload()">
+                <LoaderCircle v-if="autoStarting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />{{ autoStarting ? t('capture.starting') : t('downloads.row.download') }}
+              </Button>
+            </template>
+            <Button v-else-if="auto!.kind === 'needsStep'" variant="amber" data-testid="row-catch-open" @click.stop="openCatch(group.url)"><AppWindow />{{ t('catch.row.open') }}</Button>
+          </template>
+          <!-- The login card owns the main action; signing in inside the Nezzel browser is the second way. -->
+          <Button v-else-if="phase === 'error' && loginOwnsAction && canCatch" variant="outline" data-testid="row-catch-open" @click.stop="openCatch(group.url)"><AppWindow />{{ t('catch.row.try') }}</Button>
           <template v-else-if="phase === 'error' && !loginOwnsAction">
             <Button v-if="['diskFull', 'diskSpaceUnavailable', 'fileSpace'].includes(diagnostic.code)" variant="outline" @click="changeDownloadFolder"><FolderOpen />{{ t('reliability.changeFolder') }}</Button>
             <Button v-if="errorIsFilter" variant="ghost" @click="router.push({ name: 'input-filters' })">{{ t('media.steps.error.filters') }}</Button>
-            <Button v-if="errorCanOpenBrowser" variant="outline" @click="openPage"><ExternalLink />{{ openBrowserLabel }}</Button>
+            <!-- Amber when it is the only way forward; beside Retry it is the second choice. -->
+            <Button v-if="canCatch" :variant="catchLeads ? 'amber' : 'outline'" data-testid="row-catch-open" @click.stop="openCatch(group.url)"><AppWindow />{{ t('catch.row.try') }}</Button>
+            <Button v-else-if="errorCanOpenBrowser" variant="outline" @click="openPage"><ExternalLink />{{ openBrowserLabel }}</Button>
             <!-- Thanks state: same box, the border and fill fade out (a quiet label, not a greyed control).
                  The ::after sizer holds the wider label so the row never reflows on the swap. -->
             <Button
@@ -165,10 +244,10 @@
               </span>
             </Button>
             <Button v-if="diagnostic.code === 'photosOnly'" variant="outline" @click="downloadPhotos"><Images />{{ t('downloads.row.downloadPhotos') }}</Button>
-            <Button v-if="!errorIsPermanent" variant="outline" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
+            <Button v-if="!group.caught && !errorIsPermanent" variant="outline" @click="recover"><Film v-if="recoveryIsSwitch" /><rotate-cw v-else />{{ recoveryLabel }}</Button>
           </template>
           <template v-else-if="phase === 'downloading' || phase === 'paused'">
-            <tooltip v-if="!processing && loginCard?.kind !== 'needed'" :content="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')">
+            <tooltip v-if="!group.caught && !processing && loginCard?.kind !== 'needed'" :content="phase === 'paused' ? t('downloads.row.resume') : t('downloads.row.pause')">
               <Button
                 size="icon-xs"
                 variant="outline"
@@ -338,7 +417,7 @@
 import { open as chooseFolder } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
-import { remoteImagesAllowed } from '../../helpers/remoteImages';
+import { isCaughtThumbnail, remoteImagesAllowed } from '../../helpers/remoteImages';
 import LoginProfile from './LoginProfile.vue';
 import FileTypeIcon from './FileTypeIcon.vue';
 import { revealsInFolder } from '../../helpers/fileCategory';
@@ -348,7 +427,7 @@ import { siteLogo } from '../../helpers/siteLogo';
 import { isPermanentError } from '../../helpers/errorOutcome';
 import { computed, nextTick, onBeforeUnmount, ref, toRef, watch, type ObjectDirective } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Check, ChevronRight, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
+import { AppWindow, Check, ChevronRight, Copy, Ellipsis, ExternalLink, File, Film, FolderOpen, Image as ImageIcon, Images, Info, ListX, LoaderCircle, MessageSquareWarning, Music, Pause, Play, RotateCw, ThumbsUp, Trash2, TriangleAlert, Wrench, X } from '@lucide/vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { useRouter } from 'vue-router';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
@@ -374,6 +453,11 @@ import { useReportStore } from '../../stores/report';
 import { useMediaDiagnosticsStore } from '../../stores/media/diagnostics';
 import { countUsage } from '../../tauri/usage';
 import { downloadReportContext } from '../../helpers/reportContext';
+import { embedCatchPage, rowCanCatch } from '../../helpers/catchOffer';
+import { useOpenCatch } from '../../composables/useOpenCatch';
+import { useCatchAutoStore } from '../../stores/catchAuto';
+import { formatDuration } from '../../helpers/units';
+import type { CatchFormat } from '../../tauri/types/catch';
 
 defineOptions({ inheritAttrs: false });
 const props = defineProps<{
@@ -406,7 +490,7 @@ const playlistSummary = computed(() => {
   return t('inputFilters.playlistSelection.checkedCount', { count, total: group.value.entries?.length ?? 0 }, count);
 });
 const colCls = 'hidden shrink-0 self-center truncate text-[12.5px] text-muted-foreground @min-[1040px]/list:block';
-const { phase, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, fileKind, readingStuck, processing } = useDownloadRow(group);
+const { phase, interrupted, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, fileKind, readingStuck, processing } = useDownloadRow(group);
 const logo = computed(() => siteLogo(group.value.url));
 /** Not known (yet): a typographic placeholder, not copy, so it needs no translation. */
 const EMPTY_CELL = '\u2014';
@@ -414,7 +498,7 @@ const cells = computed(() => [
   { key: 'site', value: site.value, cls: 'w-32', num: false },
   { key: 'quality', value: columns.value.quality, cls: 'w-24', num: false },
   { key: 'size', value: columns.value.size, cls: 'w-20 text-end', num: true },
-  { key: 'length', value: columns.value.length, cls: 'w-16 text-end', num: true },
+  { key: 'length', value: autoFound.value && autoDuration.value ? autoDuration.value : columns.value.length, cls: 'w-16 text-end', num: true },
 ]);
 const { download, pause, retry, downloadPhotos, recover, recoveryLabel, recoveryIsSwitch, remove, cancel, downloadAgain, openFile, revealFile, openSavedFile, revealSavedFile, openPage, copyLink, deleteFile, canTrash } = useDownloadActions(group);
 /** A finished row that saved several files lists them under it on demand (closed by default). */
@@ -494,7 +578,7 @@ const loginCard = computed<LoginCard | null>(() => loginStore.cardFor(group.valu
 const loginOwnsAction = computed(() => loginCard.value?.kind === 'needed'
   || (loginCard.value?.kind === 'failed' && ['exhausted', 'dismissed', 'expired'].includes(loginCard.value.failure.reason)));
 
-const title = computed(() => group.value.title ?? group.value.url ?? '');
+const title = computed(() => (autoFound.value && autoState.value?.title) || (group.value.title ?? group.value.url ?? ''));
 const showProgress = computed(() => phase.value === 'downloading' || phase.value === 'paused');
 
 const diagnostic = computed<MediaDiagnostic>(() => {
@@ -525,15 +609,57 @@ const errorIsFilter = computed(() => diagnostic.value.code === 'rejectedByFilter
 const errorIsPermanent = computed(() => isPermanentError(diagnostic.value.code));
 /** Codes whose advice says to open the link itself; the button carries that advice as its label. */
 const OPEN_ADVICE_CODES = ['telegramAppOnly', 'storyExpired', 'accountAccessDenied', 'textOnlyPost', 'appPost', 'redditNetworkBlocked', 'likeeUnavailable', 'legalRestriction451', 'blockedGeneric'];
-const errorCanOpenBrowser = computed(() => vimeoLogin.value || ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', 'drmProtected', ...OPEN_ADVICE_CODES].includes(diagnostic.value.code));
+/** DRM gets no "open" button: no browser can save it, so one would only suggest it could work. */
+const errorCanOpenBrowser = computed(() => ['urlNotSupported', 'unknownUrlType', 'mediaUnavailable', ...OPEN_ADVICE_CODES].includes(diagnostic.value.code));
 
-const openBrowserLabel = computed(() => {
-  if (OPEN_ADVICE_CODES.includes(diagnostic.value.code)) return t(`errors.runner.${diagnostic.value.code}.action`);
-  const host = hostOf(group.value.url);
-  return t(['drmProtected', 'signInRequired'].includes(diagnostic.value.code) && (host === 'vimeo.com' || host.endsWith('.vimeo.com'))
-    ? 'downloads.row.openVimeo'
-    : 'downloads.row.openBrowser');
-});
+/** A failure the page itself may get past (helpers/catchOffer table): "Try in Nezzel browser". Not for Nezzel's own
+ *  internal errors, which share the `unknown` code. */
+const canCatch = computed(() => phase.value === 'error' && !lastFatal.value?.internal && rowCanCatch(diagnostic.value.code, group.value.url)
+  // The automatic catch already opened the page and found DRM or a live stream: the browser cannot save those.
+  && !(autoOwnsRow.value && auto.value?.kind === 'note'));
+/** No Retry beside it (a permanent failure or a caught row): the browser is the way forward and leads. */
+const catchLeads = computed(() => group.value.caught || errorIsPermanent.value);
+const openCatch = useOpenCatch();
+/** The pasted page, when the media found is another site's video it only embeds. */
+const embedPage = computed(() => (group.value.caught ? null : embedCatchPage(group.value.embeddedIn)));
+
+/** Automatic catch (contract v2): the latest hidden-session state for this row, null when off or none. */
+const catchAuto = useCatchAutoStore();
+const autoState = computed(() => catchAuto.states[group.value.id]);
+const auto = computed(() => catchAuto.view(group.value.id));
+/** A failed read the hidden session works on: it replaces the error (looking, found, a note, or one step). */
+const autoOwnsRow = computed(() => !!auto.value && !auto.value.beside && phase.value === 'error' && !loginCard.value);
+/** A session beside a usable embedded result: the ready row stays, with a quiet second line. */
+const autoBeside = computed(() => !!auto.value?.beside && phase.value === 'ready');
+const autoLooking = computed(() => (autoOwnsRow.value || autoBeside.value) && auto.value?.kind === 'looking');
+const autoFound = computed(() => autoOwnsRow.value && auto.value?.kind === 'found');
+const autoStarting = computed(() => !!catchAuto.starting[group.value.id]);
+const autoFailed = computed(() => !!catchAuto.failed[group.value.id]);
+const autoDuration = computed(() => (autoState.value?.durationSec ? formatDuration(autoState.value.durationSec) : ''));
+const autoMeta = computed(() => [
+  ...(site.value ? [{ text: site.value }] : []),
+  { text: t('catch.auto.found') },
+  ...(autoDuration.value ? [{ text: autoDuration.value, ltr: true }] : []),
+]);
+const autoFullLabel = computed(() => (autoDuration.value ? t('catch.auto.foundFull', { duration: autoDuration.value }) : t('catch.auto.foundFullNoLength')));
+const formatLabel = (format: CatchFormat) => format.label === 'audio'
+  ? t('catch.picker.audio')
+  : format.height ? t('catch.picker.video', { height: format.height }) : t('catch.picker.videoAny');
+const autoFormats = computed(() => (autoState.value?.formats ?? []).map(format => ({
+  id: format.id,
+  label: `${formatLabel(format)} · ${format.ext.toUpperCase()}${format.best ? ` · ${t('catch.picker.best')}` : ''}`,
+})));
+const autoCancel = () => catchAuto.cancel(group.value.id);
+const autoDownload = (formatId?: string) => catchAuto.download(group.value.id, formatId);
+/** Downloading the embedded result ends the session running beside it. */
+function downloadEmbedded() {
+  if (autoBeside.value) void catchAuto.cancel(group.value.id);
+  return download();
+}
+
+const openBrowserLabel = computed(() => (OPEN_ADVICE_CODES.includes(diagnostic.value.code)
+  ? t(`errors.runner.${diagnostic.value.code}.action`)
+  : t('downloads.row.openBrowser')));
 const liveRequestNoted = ref(false);
 watch(() => group.value.id, () => {
   liveRequestNoted.value = false;
@@ -560,12 +686,18 @@ const menuGroups = computed<RowAction[][]>(() => {
   if (phase.value === 'done') {
     if (!revealsFile.value) primary.push({ key: 'open', label: t('downloads.row.open'), icon: File, run: openFile, disabled: !destination.value });
     primary.push({ key: 'show', label: t('downloads.row.show'), icon: FolderOpen, run: revealFile, disabled: !destination.value });
-    if (alreadySaved.value) primary.push({ key: 'again', label: t('downloads.row.downloadAgain'), icon: RotateCw, run: downloadAgain });
+    if (!group.value.caught && alreadySaved.value) primary.push({ key: 'again', label: t('downloads.row.downloadAgain'), icon: RotateCw, run: downloadAgain });
   }
-  if (phase.value === 'downloading' && !processing.value) primary.push({ key: 'pause', label: t('downloads.row.pause'), icon: Pause, run: pause });
+  if (!group.value.caught && phase.value === 'downloading' && !processing.value) primary.push({ key: 'pause', label: t('downloads.row.pause'), icon: Pause, run: pause });
   if (phase.value === 'paused') primary.push({ key: 'resume', label: t('downloads.row.resume'), icon: Play, run: download });
-  if (phase.value === 'cancelled') primary.push({ key: 'retry', label: t('downloads.row.retry'), icon: RotateCw, run: retry });
-  if (phase.value === 'error' && !errorIsPermanent.value && !loginOwnsAction.value) primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
+  if (phase.value === 'needsRefresh') primary.push({ key: 'reloadLink', label: t('downloads.row.reloadLink'), icon: RotateCw, run: retry });
+  if (!group.value.caught && phase.value === 'cancelled') primary.push({ key: 'retry', label: t('downloads.row.retry'), icon: RotateCw, run: retry });
+  if (!group.value.caught && phase.value === 'error' && !errorIsPermanent.value && !loginOwnsAction.value && !autoOwnsRow.value) primary.push({ key: 'retry', label: recoveryLabel.value, icon: recoveryIsSwitch.value ? Film : RotateCw, run: recover });
+  if (canCatch.value) primary.push({ key: 'catch', label: t('catch.row.try'), icon: AppWindow, run: () => openCatch(group.value.url) });
+  else if (embedPage.value) {
+    const page = embedPage.value;
+    primary.push({ key: 'catch', label: t('catch.embed.open'), icon: AppWindow, run: () => openCatch(page) });
+  }
   if (phase.value === 'error' && diagnostic.value.code === 'photosOnly' && !loginOwnsAction.value) primary.push({ key: 'photos', label: t('downloads.row.downloadPhotos'), icon: Images, run: downloadPhotos });
   const more: RowAction[] = [
     { key: 'copy', label: t('downloads.row.copyLink'), icon: Copy, run: copyLink, disabled: !group.value.url },
@@ -591,7 +723,9 @@ function reportProblem() {
   });
 }
 
-const tint = computed(() => (props.highlighted || selected.value ? 'bg-primary-soft' : (loginCard.value?.kind === 'needed' || phase.value === 'ready' || phase.value === 'playlist') ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
+/** Looking or a plain note is neither "needs you" nor "failed": the row stays untinted. */
+const autoQuiet = computed(() => autoOwnsRow.value && (auto.value?.kind === 'looking' || auto.value?.kind === 'note'));
+const tint = computed(() => (props.highlighted || selected.value ? 'bg-primary-soft' : autoQuiet.value ? 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft' : (loginCard.value?.kind === 'needed' || phase.value === 'ready' || phase.value === 'needsRefresh' || phase.value === 'playlist' || (canCatch.value && catchLeads.value && !loginCard.value) || autoOwnsRow.value) ? 'bg-amber-soft' : phase.value === 'error' ? 'bg-destructive-soft' : 'hover:bg-foreground/[0.025] focus-visible:bg-primary-soft'));
 
 /** Native list keys: ↑/↓ move between rows, Enter opens (done) or starts (ready), Delete removes, Space pauses/resumes. */
 function onKey(event: KeyboardEvent) {
@@ -606,7 +740,9 @@ function onKey(event: KeyboardEvent) {
     document.querySelector<HTMLElement>(`${ROW_SELECTOR}[data-group-id="${CSS.escape(props.parentId)}"]`)?.focus();
   } else if (event.key === 'Enter') {
     if (canOpen.value) openFromRow();
-    else if (phase.value === 'ready') void download();
+    else if (autoFound.value) void autoDownload();
+    else if (phase.value === 'needsRefresh') void retry();
+    else if (phase.value === 'ready') void downloadEmbedded();
     else if (phase.value === 'playlist') sheet.show(group.value.id);
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault();
@@ -664,7 +800,12 @@ const thumbFailed = ref(false);
 watch(() => group.value.thumbnail, () => {
   thumbFailed.value = false;
 });
-const thumbUrl = computed(() => (!thumbFailed.value && remoteImagesAllowed(settingsStore.settings.network, group.value.thumbnail) && group.value.thumbnail) || null);
+const thumbUrl = computed(() => {
+  // The caught picture is a data: JPEG Rust already fetched through an admitted request.
+  const caught = autoState.value?.thumbnail;
+  if (autoFound.value && isCaughtThumbnail(caught) && !thumbFailed.value) return caught;
+  return (!thumbFailed.value && remoteImagesAllowed(settingsStore.settings.network, group.value.thumbnail) && group.value.thumbnail) || null;
+});
 const kindIcon = computed(() => {
   const kind = group.value.mediaKind;
   if (kind === 'audio') return Music;

@@ -125,5 +125,5 @@ export function finishedIds<T extends { id: string; status: RowStatus; cleared?:
 
 /** A choice or a live consent prompt needs the user, even while the engine waits. */
 export function needsAttention(state: MediaState, loginNeeded: boolean): boolean {
-  return loginNeeded || ['ready', 'playlist', 'cancelled'].includes(phaseOf(state));
+  return loginNeeded || ['ready', 'needsRefresh', 'playlist', 'cancelled'].includes(phaseOf(state));
 }

@@ -2,6 +2,7 @@ import { computed, onScopeDispose, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { i18n as globalI18n } from '../i18n';
 import { MediaState, useMediaStateStore } from '../stores/media/state';
+import { useMediaStore } from '../stores/media/media';
 import { useMediaProgressStore } from '../stores/media/progress';
 import { useMediaOptionsStore } from '../stores/media/options';
 import { useMediaDiagnosticsStore } from '../stores/media/diagnostics';
@@ -59,6 +60,7 @@ export function useDownloadRow(group: Ref<Group>) {
   const isolate = (text: string) => i18n.locale.value.startsWith('ar') ? `\u2066${text}\u2069` : text;
   const { percent: formatPct, size: formatSizeLocal, speed: formatSpeedLocal, count: formatCount } = useLocaleNumber();
   const stateStore = useMediaStateStore();
+  const mediaStore = useMediaStore();
   const progressStore = useMediaProgressStore();
   const optionsStore = useMediaOptionsStore();
   const diagnosticsStore = useMediaDiagnosticsStore();
@@ -66,6 +68,7 @@ export function useDownloadRow(group: Ref<Group>) {
 
   const state = computed(() => stateStore.getGroupState(group.value.id) ?? MediaState.fetching);
   const phase = computed<Phase>(() => phaseOf(state.value));
+  const interrupted = computed(() => mediaStore.isInterrupted(group.value.id));
   const isList = computed(() => group.value.isCombined || state.value === MediaState.downloadingList || state.value === MediaState.pausedList);
 
   const site = computed(() => groupSite(group.value));
@@ -208,6 +211,9 @@ export function useDownloadRow(group: Ref<Group>) {
         if (group.value.isCombined) parts.push(t('downloads.row.items', { n: group.value.total }, group.value.total));
         else parts.push(choiceLabel.value);
         break;
+      case 'needsRefresh':
+        parts.push(t('downloads.row.reloadLinkHint'));
+        break;
       case 'downloading':
         if (group.value.total > 1) parts.push(t('downloads.row.items', { n: group.value.total }, group.value.total));
         if (queued.value) parts.push(statusLocalization.value[ProgressStage.queued]);
@@ -221,7 +227,7 @@ export function useDownloadRow(group: Ref<Group>) {
         }
         break;
       case 'paused':
-        parts.push(t('downloads.row.paused', { percent: formatPct(percent.value ?? 0) }));
+        parts.push(interrupted.value ? t('downloads.row.interrupted') : t('downloads.row.paused', { percent: formatPct(percent.value ?? 0) }));
         break;
       case 'cancelled':
         parts.push(t('downloads.row.cancelledState'));
@@ -237,7 +243,7 @@ export function useDownloadRow(group: Ref<Group>) {
 
   /** Wide list columns: what was chosen, how big, how long. Empty string = unknown yet. */
   const columns = computed(() => ({
-    quality: group.value.isCombined ? t('downloads.row.items', { n: group.value.total }, group.value.total) : (phase.value === 'reading' ? '' : choiceLabel.value),
+    quality: phase.value === 'needsRefresh' ? '' : group.value.isCombined ? t('downloads.row.items', { n: group.value.total }, group.value.total) : (phase.value === 'reading' ? '' : choiceLabel.value),
     size: group.value.filesize ? formatSizeLocal(group.value.filesize) : '',
     length: group.value.duration ? formatDuration(group.value.duration) : '',
   }));
@@ -246,5 +252,5 @@ export function useDownloadRow(group: Ref<Group>) {
   const lastFatal = computed(() => diagnosticsStore.findLastFatalByGroupId(group.value.id));
   const needsLogin = computed(() => phase.value === 'error' && (LOGIN_CODES as readonly string[]).includes(lastDiagnostic.value?.code ?? ''));
 
-  return { state, phase, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, choice, fileKind, readingStuck, processing };
+  return { state, phase, interrupted, isList, site, percent, metaLine, columns, needsLogin, lastDiagnostic, lastFatal, destination, savedFiles, alreadySaved, sponsorNote, choice, fileKind, readingStuck, processing };
 }

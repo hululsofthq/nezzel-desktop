@@ -366,6 +366,7 @@ fn tray_monitor(window: &WebviewWindow) -> Option<tauri::Monitor> {
 /// Where the tray probably is when the OS won't say: the screen edge a panel reserves (work area
 /// smaller than the screen), else the desktop's default panel (KDE Plasma: bottom; GNOME and the
 /// rest: top). Wayland reports no work area, so the default decides there.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn panel_anchor(
   screen: Area,
   work: Area,

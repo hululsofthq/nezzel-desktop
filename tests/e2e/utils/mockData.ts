@@ -2,6 +2,7 @@ import { BinariesMockData } from '../../utils/mocks/binaryHandlers';
 import { UpdaterMockData } from '../../utils/mocks/updateHandlers';
 import { StrongholdMockData } from '../../utils/mocks/strongholdHandlers';
 import { CaptureMockData } from '../../utils/mocks/captureHandlers';
+import { CatchMockData } from '../../utils/mocks/catchHandlers';
 import { SettingsMockData } from '../../utils/mocks/configHandlers';
 import { PreferencesMockData } from '../../utils/mocks/onboardingHandlers';
 
@@ -10,6 +11,7 @@ export type MockData = {
   updater?: UpdaterMockData;
   stronghold?: StrongholdMockData;
   capture?: CaptureMockData;
+  catch?: CatchMockData;
   settings?: SettingsMockData;
   preferences?: PreferencesMockData;
   /** Last run closed unexpectedly: `sent` = reported automatically, `pending` = reports off. */

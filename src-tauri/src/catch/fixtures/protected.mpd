@@ -1,0 +1,12 @@
+<dash:MPD xmlns:dash="urn:mpeg:dash:schema:mpd:2011" xmlns:enc="urn:mpeg:cenc:2013" type="dynamic">
+  <dash:Period>
+    <dash:AdaptationSet mimeType="video/mp4">
+      <dash:ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
+                              enc:default_KID="00000000-0000-0000-0000-000000000000"/>
+      <dash:ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"/>
+      <dash:Representation id="test" bandwidth="100000">
+        <dash:BaseURL>https://example.org/dash/test.mp4</dash:BaseURL>
+      </dash:Representation>
+    </dash:AdaptationSet>
+  </dash:Period>
+</dash:MPD>

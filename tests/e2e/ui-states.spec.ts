@@ -259,7 +259,9 @@ async function shoot(page: Page, state: GalleryState, locale: Locale, entries: I
         await expect(page.locator('aside[data-state]')).toHaveAttribute('data-state', 'expanded');
         await expect(page.locator('#queue-url-input')).toBeVisible();
         await expect(page.locator('button[type=submit]')).toBeVisible();
-        await expect(page.locator(`#${MAIN_PANE_ID} button`)).toHaveCount(0);
+        // The only buttons in the empty pane are the two ways in (paste a link, open a website).
+        await expect(page.locator(`#${MAIN_PANE_ID} button`)).toHaveCount(2);
+        await expect(page.locator(`#${MAIN_PANE_ID} [data-testid^="empty-way-"]`)).toHaveCount(2);
       }
       if (state.name.endsWith('ready-long')) {
         await expect(page.getByTestId('capture-best')).toBeVisible();

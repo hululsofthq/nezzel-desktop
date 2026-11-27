@@ -1,0 +1,13 @@
+{
+  "id": "master",
+  "title": "Ocean waves",
+  "extractor": "generic",
+  "formats": [
+    {"format_id": "audio-a", "vcodec": "none", "acodec": "opus", "ext": "webm", "protocol": "https"},
+    {"format_id": "audio-b", "vcodec": "none", "acodec": "mp4a.40.2", "ext": "m4a", "filesize": 100, "protocol": "https"},
+    {"format_id": "360p", "height": 360, "vcodec": "avc1", "acodec": "mp4a", "ext": "mp4", "protocol": "m3u8_native"},
+    {"format_id": "720p-a", "height": 720, "vcodec": "vp9", "acodec": "none", "ext": "webm", "protocol": "https"},
+    {"format_id": "720p-b", "height": 720, "vcodec": "avc1", "acodec": "none", "ext": "mp4", "filesize_approx": 2000.0, "protocol": "http_dash_segments"},
+    {"format_id": "drm", "height": 1080, "vcodec": "avc1", "acodec": "none", "ext": "mp4", "has_drm": true, "protocol": "https"}
+  ]
+}

@@ -280,12 +280,27 @@ async fn handle_fetch_entry(
         };
         let _ = app.emit("media_size", payload);
       } else {
+        let embedded = single.embedded_in.clone().map(|page| {
+          // `url` is the media's own page on the other site.
+          (page, single.duration, single.url.clone())
+        });
         let payload = MediaAddPayload {
           group_id: group_id.clone(),
           total,
           item: single,
         };
         let _ = app.emit("media_add", payload);
+        if let Some((page, duration, media)) = embedded.filter(|_| total == 1) {
+          crate::catch::auto::consider(
+            &app,
+            &group_id,
+            &page,
+            crate::catch::auto::Read::Embedded {
+              duration,
+              media: media.as_deref(),
+            },
+          );
+        }
       }
 
       let mut counters = GROUP_COUNTERS.lock().unwrap();

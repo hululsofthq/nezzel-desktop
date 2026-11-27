@@ -48,7 +48,7 @@ impl Partial {
   pub(super) fn new(engine: Engine, directory: PathBuf, url: &str, owner: &str) -> Self {
     let identity = engine.request_identity(url);
     Self {
-      engine,
+      engine: engine.with_page_file(None),
       directory,
       identity,
       owner: state::identity(owner),
@@ -183,42 +183,52 @@ async fn info_impl(
   if network.enable_proxy == Some(true) {
     return shared.then_some(Err(Error::Proxy));
   }
+  let cancel = subscribe_group(&entry.group_id);
+  let engine = Engine::new().ok()?;
+  let probe = match probe_metadata_impl(&engine, &entry.url, cancel.clone(), unsupported).await? {
+    Ok(p) => p,
+    Err(error) => return Some(Err(error)),
+  };
+  if !*cancel.borrow() {
+    return None;
+  }
+  let media = metadata(&entry.id, &entry.url, &probe).ok()?;
+  cache_probe(
+    &entry.id,
+    &entry.group_id,
+    engine.request_identity(&entry.url),
+    probe,
+  )
+  .ok()?;
+  Some(Ok(ParsedMedia::Single(media)))
+}
+
+fn cache_probe(id: &str, group: &str, identity: String, mut probe: Probe) -> Result<()> {
+  probe.body.release();
+  let created = Instant::now();
   {
-    let mut cache = PROBES.lock().ok()?;
+    let mut cache = PROBES.lock().map_err(|_| Error::State)?;
     cache.retain(|_, p| p.created.elapsed() < TTL);
     if cache.len() >= 4 {
       let key = cache
         .iter()
         .min_by_key(|(_, p)| p.created)
-        .map(|(k, _)| k.clone());
+        .map(|(key, _)| key.clone());
       if let Some(key) = key {
         cache.remove(&key);
       }
     }
+    cache.insert(
+      id.to_owned(),
+      Cached {
+        group: group.to_owned(),
+        identity,
+        created,
+        probe,
+      },
+    );
   }
-  let cancel = subscribe_group(&entry.group_id);
-  let engine = Engine::new().ok()?;
-  let mut probe =
-    match probe_metadata_impl(&engine, &entry.url, cancel.clone(), unsupported).await? {
-      Ok(p) => p,
-      Err(error) => return Some(Err(error)),
-    };
-  if !*cancel.borrow() {
-    return None;
-  }
-  let media = metadata(&entry.id, &entry.url, &probe).ok()?;
-  probe.body.release();
-  let created = Instant::now();
-  PROBES.lock().ok()?.insert(
-    entry.id.clone(),
-    Cached {
-      group: entry.group_id.clone(),
-      identity: engine.request_identity(&entry.url),
-      created,
-      probe,
-    },
-  );
-  let id = entry.id.clone();
+  let id = id.to_owned();
   tauri::async_runtime::spawn(async move {
     tokio::time::sleep(TTL).await;
     if let Ok(mut cache) = PROBES.lock() {
@@ -227,7 +237,46 @@ async fn info_impl(
       }
     }
   });
-  Some(Ok(ParsedMedia::Single(media)))
+  Ok(())
+}
+
+/// Probe before announcing the row so a request the file engine cannot start can fall back.
+pub(crate) async fn prepare_page_file(
+  app: &AppHandle,
+  entry: &mut DownloadEntry,
+) -> Result<String> {
+  if crate::net::proxied() {
+    return Err(Error::Proxy);
+  }
+  let request = entry.page_file.as_ref().ok_or(Error::State)?;
+  let engine = Engine::new()?.with_page_file(Some(request.clone()));
+  let (_active, cancel) = tokio::sync::watch::channel(true);
+  let url = request.url.as_str();
+  let probe = tokio::time::timeout(Duration::from_secs(5), engine.probe(url, cancel))
+    .await
+    .map_err(|_| Error::Network)??;
+  if probe.size == Some(0) {
+    return Err(Error::Empty);
+  }
+  crate::scheduling::disk_space::check(&root(app, entry)?, probe.size).map_err(|_| Error::Space)?;
+  let name = probe.name.clone();
+  entry
+    .template_context
+    .values
+    .insert("title".into(), name.clone());
+  if let Some(size) = probe.size {
+    entry
+      .template_context
+      .values
+      .insert("filesize".into(), size.to_string());
+  }
+  cache_probe(
+    &entry.id,
+    &entry.group_id,
+    engine.request_identity(url),
+    probe,
+  )?;
+  Ok(name)
 }
 #[cfg(test)]
 pub(crate) async fn probe_metadata(
@@ -295,9 +344,13 @@ pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()>
   let mut cancel = cancel;
   let start = tokio::time::Instant::now();
   let mut recovery = crate::runners::reliability::Recovery::default();
+  let url = entry
+    .page_file
+    .as_ref()
+    .map_or(entry.url.as_str(), |file| file.url.as_str());
   loop {
     loop {
-      let delay = crate::runners::reliability::host_delay(&entry.url);
+      let delay = crate::runners::reliability::host_delay(url);
       if delay.is_zero() {
         break;
       }
@@ -305,7 +358,7 @@ pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()>
         return Ok(());
       }
     }
-    let result = attempt(&app, &entry, cancel.clone(), &mut recovery).await;
+    let result = attempt(&app, &entry, url, cancel.clone(), &mut recovery).await;
     if let Err(error) = &result {
       if matches!(error, Error::Cancelled) || !*cancel.borrow() {
         return Ok(());
@@ -327,7 +380,7 @@ pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()>
       }
       if matches!(error, Error::RateLimited) {
         if let Some(delay) = recovery.busy_delay() {
-          crate::runners::reliability::cool_host(&entry.url, delay);
+          crate::runners::reliability::cool_host(url, delay);
           continue;
         }
       }
@@ -339,6 +392,7 @@ pub(crate) async fn download(app: AppHandle, entry: DownloadEntry) -> Result<()>
 async fn attempt(
   app: &AppHandle,
   entry: &DownloadEntry,
+  url: &str,
   cancel: tokio::sync::watch::Receiver<bool>,
   recovery: &mut crate::runners::reliability::Recovery,
 ) -> Result<()> {
@@ -371,12 +425,13 @@ async fn attempt(
     .join("file-engine");
   let engine = Engine::new()?
     .for_file_row()
+    .with_page_file(entry.page_file.clone())
     .with_state_directory(state_directory);
   let probe = PROBES
     .lock()
     .map_err(|_| Error::State)?
     .remove(&entry.id)
-    .filter(|p| p.created.elapsed() < TTL && p.identity == engine.request_identity(&entry.url))
+    .filter(|p| p.created.elapsed() < TTL && p.identity == engine.request_identity(url))
     .map(|p| p.probe);
   crate::events::emit(
     app,
@@ -394,7 +449,7 @@ async fn attempt(
     if !*cancel.borrow() {
       return Err(Error::Cancelled);
     }
-    let partial = Partial::new(engine.clone(), dir.clone(), &entry.url, &entry.id);
+    let partial = Partial::new(engine.clone(), dir.clone(), url, &entry.id);
     let group = partials.entry(entry.group_id.clone()).or_default();
     group.retain(|p| {
       p.identity != partial.identity || p.owner != partial.owner || p.directory != partial.directory
@@ -403,53 +458,46 @@ async fn attempt(
   }
   let mut previous_bytes = None;
   let path = engine
-    .download(
-      &entry.url,
-      &dir,
-      &entry.id,
-      probe,
-      cancel.clone(),
-      &mut |event| {
-        if !*cancel.borrow() {
-          return;
+    .download(url, &dir, &entry.id, probe, cancel.clone(), &mut |event| {
+      if !*cancel.borrow() {
+        return;
+      }
+      if let Event::Progress {
+        bytes,
+        total,
+        speed,
+      } = event
+      {
+        if previous_bytes.is_some_and(|previous| bytes > previous) {
+          recovery.progressed();
         }
-        if let Event::Progress {
-          bytes,
-          total,
-          speed,
-        } = event
-        {
-          if previous_bytes.is_some_and(|previous| bytes > previous) {
-            recovery.progressed();
-          }
-          previous_bytes = Some(bytes);
-          crate::usage::speed_sample(app, &entry.group_id, &entry.id, Some(speed));
-          crate::events::emit(
-            app,
-            crate::events::MEDIA_PROGRESS,
-            MediaProgress {
-              id: entry.id.clone(),
-              group_id: entry.group_id.clone(),
-              category: ProgressCategory::Other,
-              percentage: total
-                .filter(|n| *n > 0)
-                .map(|n| bytes as f64 / n as f64 * 100.0),
-              speed_bps: Some(speed),
-              eta_secs: total
-                .filter(|n| *n >= bytes && speed > 0.0)
-                .map(|n| ((n - bytes) as f64 / speed) as u64),
-            },
-          );
-        }
-      },
-    )
+        previous_bytes = Some(bytes);
+        crate::usage::speed_sample(app, &entry.group_id, &entry.id, Some(speed));
+        crate::events::emit(
+          app,
+          crate::events::MEDIA_PROGRESS,
+          MediaProgress {
+            id: entry.id.clone(),
+            group_id: entry.group_id.clone(),
+            category: ProgressCategory::Other,
+            percentage: total
+              .filter(|n| *n > 0)
+              .map(|n| bytes as f64 / n as f64 * 100.0),
+            speed_bps: Some(speed),
+            eta_secs: total
+              .filter(|n| *n >= bytes && speed > 0.0)
+              .map(|n| ((n - bytes) as f64 / speed) as u64),
+          },
+        );
+      }
+    })
     .await?;
   if !*cancel.borrow() {
     return Err(Error::Cancelled);
   }
   if let Ok(mut partials) = PARTIALS.lock() {
     if let Some(group) = partials.get_mut(&entry.group_id) {
-      let identity = engine.request_identity(&entry.url);
+      let identity = engine.request_identity(url);
       let owner = state::identity(&entry.id);
       group.retain(|p| p.identity != identity || p.owner != owner || p.directory != dir);
       if group.is_empty() {

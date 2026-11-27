@@ -74,8 +74,8 @@
 
     <!-- Trailing actions: fixed slot for Pause/Resume so the column never shifts when it swaps. -->
     <div class="flex shrink-0 items-center gap-1 self-center">
-      <Button v-if="a.phase === 'ready'" :disabled="busy" @click.stop="run(resumeAll)">{{ t('downloads.playlist.downloadAll') }}</Button>
-      <Button v-else-if="a.phase === 'paused' || a.phase === 'cancelled'" variant="soft" :disabled="busy" @click.stop="run(resumeAll)">
+      <Button v-if="a.phase === 'ready' && a.ready > 0" :disabled="busy" @click.stop="run(resumeAll)">{{ t('downloads.playlist.downloadAll') }}</Button>
+      <Button v-else-if="(a.phase === 'ready' && a.paused > 0) || a.phase === 'paused' || a.phase === 'cancelled'" variant="soft" :disabled="busy" @click.stop="run(resumeAll)">
         <Play aria-hidden="true" />{{ t('downloads.playlist.resumeAll') }}
       </Button>
       <Button v-else-if="a.phase === 'failed'" variant="outline" :disabled="busy" @click.stop="run(retryFailed)">
@@ -215,7 +215,7 @@ function toggle() {
 }
 
 const showBar = computed(() => ['reading', 'downloading', 'waiting', 'paused'].includes(a.value.phase));
-const canCancel = computed(() => ['downloading', 'waiting', 'paused', 'ready'].includes(a.value.phase) || (a.value.phase === 'reading' && a.value.active + a.value.paused > 0));
+const canCancel = computed(() => a.value.active + a.value.queued + a.value.paused + a.value.ready > 0);
 
 type MetaPart = { key: string; text: string; danger?: boolean };
 const meta = computed<MetaPart[]>(() => {
@@ -229,7 +229,7 @@ const meta = computed<MetaPart[]>(() => {
   const saved = { key: 'saved', text: t('downloads.playlist.saved', { n: count(x.done) }, x.done) };
   const byPhase: Record<string, (MetaPart | null | false)[]> = {
     reading: [{ key: 'reading', text: t('downloads.playlist.reading') }],
-    ready: [{ key: 'items', text: t('downloads.playlist.items', { n: count(x.total) }, x.total) }, { key: 'ready', text: t('downloads.playlist.ready') }],
+    ready: [{ key: 'items', text: t('downloads.playlist.items', { n: count(x.total) }, x.total) }, { key: 'ready', text: t(x.ready ? 'downloads.playlist.ready' : 'downloads.sections.needsYou') }],
     downloading: [
       of, bytes,
       x.speedBps > 0 && { key: 'speed', text: isolate(formatSpeed(x.speedBps)) },

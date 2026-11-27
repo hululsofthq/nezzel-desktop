@@ -1,10 +1,11 @@
 //! Link capture: the copied-link card and the Quick download bar, from the link to the main window's queue.
 
+pub(crate) mod auto;
 mod browser;
 pub(crate) mod choice;
 pub mod clipboard;
 mod commands;
-mod outbox;
+pub(crate) mod outbox;
 mod policy;
 pub(crate) mod preview;
 mod read;
@@ -19,6 +20,8 @@ pub(crate) use choice::GENERIC_HEIGHTS;
 pub use commands::*;
 #[cfg(test)]
 pub(crate) use outbox::PULL_MS;
+/// The main path's link gate, for the Nezzel browser's page offer (`catch::page_video`).
+pub(crate) use policy::{is_feed_page, supported_url};
 pub use state::{Action, CaptureState};
 pub use watch::open_quick_bar;
 #[cfg(test)]

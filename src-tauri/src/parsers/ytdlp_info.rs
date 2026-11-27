@@ -1,7 +1,9 @@
-use crate::models::{ParsedMedia, YtdlpInfo};
+use crate::models::{parsed::PresetSizes, ParsedMedia, YtdlpInfo};
 use crate::parsers::ytdlp_livestream::parse_livestream;
 use crate::parsers::ytdlp_playlist::parse_playlist;
 use crate::parsers::ytdlp_single::parse_single;
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub enum InfoType {
   Single,
@@ -87,6 +89,7 @@ pub fn parse_ytdlp_info_for_url(
   }
   let info: YtdlpInfo =
     serde_json::from_value(value.clone()).map_err(|e| format!("JSON parse error: {e}"))?;
+  let embedded_in = embedding_page(source, &value);
   let source = source
     .or_else(|| value["webpage_url"].as_str())
     .or_else(|| value["original_url"].as_str());
@@ -142,10 +145,108 @@ pub fn parse_ytdlp_info_for_url(
       let mut media = parse_single(info, id);
       if let ParsedMedia::Single(single) = &mut media {
         single.media_kind = super::post::media_kind(&value);
+        single.embedded_in = embedded_in;
+        single.preset_sizes = preset_sizes(&value);
       }
       media
     }
   })
+}
+
+fn preset_sizes(info: &Value) -> Option<PresetSizes> {
+  let formats = info["formats"].as_array()?;
+  let positive = |value: &Value| value.as_f64().filter(|number| *number > 0.0);
+  let valid_bytes =
+    |size: f64| (size >= 1.0 && size < u64::MAX as f64).then_some(size.round() as u64);
+  let stream_size = |id: &Value, audio: bool| {
+    let id = id.as_str()?;
+    let format = formats
+      .iter()
+      .find(|format| format["format_id"].as_str() == Some(id))?;
+    let duration = || positive(&format["duration"]).or_else(|| positive(&info["duration"]));
+    let from_kbps = |kbps: f64| valid_bytes(kbps * duration()? * 125.0);
+    if audio {
+      // Allow 1% for the container around the encoded audio.
+      if let Some(target_size) = positive(&info["_nezzel_preset_audio_bitrate"])
+        .and_then(|bps| valid_bytes(bps * duration()? / 8.0 * 1.01))
+      {
+        return Some(target_size);
+      }
+      if format["vcodec"].as_str() != Some("none") {
+        // A muxed source's total size and bitrate include video.
+        return positive(&format["abr"]).and_then(from_kbps);
+      }
+    }
+    ["filesize", "filesize_approx"]
+      .iter()
+      .find_map(|key| format[*key].as_f64().and_then(valid_bytes))
+      .or_else(|| {
+        let audio_kbps = if audio {
+          positive(&format["abr"])
+        } else {
+          None
+        };
+        audio_kbps
+          .or_else(|| positive(&format["tbr"]))
+          .and_then(from_kbps)
+      })
+  };
+  let bytes: BTreeMap<_, _> = ["best", "small", "audio"]
+    .into_iter()
+    .filter_map(|preset| {
+      let streams = info["_nezzel_preset_formats"][preset].as_array()?;
+      let audio = preset == "audio";
+      let max_streams = if audio { 1 } else { 2 };
+      if !(1..=max_streams).contains(&streams.len()) {
+        return None;
+      }
+      let size = streams.iter().try_fold(0_u64, |total, id| {
+        total.checked_add(stream_size(id, audio)?)
+      })?;
+      Some((preset.to_owned(), size))
+    })
+    .collect();
+  (!bytes.is_empty()).then(|| PresetSizes {
+    bytes,
+    output: info["_nezzel_preset_output"].as_array().cloned(),
+  })
+}
+
+/// The pasted page only embeds another site's video (a film page with a YouTube trailer): yt-dlp's
+/// generic extractor found the embed and handed it to that site's extractor, so the result may not be
+/// the video the user meant. In yt-dlp's JSON `original_url` is the pasted link, `webpage_url` the
+/// media's own page and `extractor_key` the extractor that read it. Returns the pasted page, so the UI
+/// can offer to catch what that page itself plays.
+///
+/// Not an embed: the page's own extractor (`Generic` reading the page itself), any host of a site
+/// Nezzel knows (`youtu.be`, a Reddit post linking YouTube: that site's extractor chose the media),
+/// a link-shortener (`t.co/AbC12`), or the same registrable domain (`m.example.com`).
+pub(crate) fn embedding_page(source: Option<&str>, raw: &serde_json::Value) -> Option<String> {
+  let pasted = source.or_else(|| raw["original_url"].as_str())?;
+  let page = reqwest::Url::parse(pasted).ok()?;
+  let media = reqwest::Url::parse(raw["webpage_url"].as_str()?).ok()?;
+  if !matches!(page.scheme(), "http" | "https")
+    || raw["extractor_key"]
+      .as_str()
+      .is_none_or(|key| key.eq_ignore_ascii_case("generic"))
+  {
+    return None;
+  }
+  let (page_host, media_host) = (page.host_str()?, media.host_str()?);
+  if crate::sites::site_of(page_host).is_some() || short_link(&page) {
+    return None;
+  }
+  let domain = |host: &str| psl::domain_str(host).unwrap_or(host).to_ascii_lowercase();
+  (domain(page_host) != domain(media_host)).then(|| pasted.to_owned())
+}
+
+/// A link-shortener's shape: a short domain and one short alphanumeric code (`bit.ly/3xYz`).
+fn short_link(url: &reqwest::Url) -> bool {
+  let domain = url.host_str().and_then(psl::domain_str).unwrap_or_default();
+  let mut segments = url.path().split('/').filter(|s| !s.is_empty());
+  domain.len() <= 11
+    && matches!((segments.next(), segments.next()), (Some(code), None)
+      if code.len() <= 16 && code.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 pub fn detect_info_type(info: &YtdlpInfo) -> InfoType {
@@ -234,6 +335,73 @@ mod tests {
   use serde_json::{json, Value};
 
   #[test]
+  fn options_sheet_estimates_follow_only_the_streams_selected_for_each_preset() {
+    let raw: serde_json::Value =
+      serde_json::from_str(include_str!("fixtures/ytdlp-preset-sizes.json")).unwrap();
+    for (preset, ids, expected) in [
+      (
+        "best",
+        Some(serde_json::json!(["299", "140"])),
+        Some(31_380_100),
+      ),
+      (
+        "small",
+        Some(serde_json::json!(["298", "140"])),
+        Some(18_565_100),
+      ),
+      ("audio", Some(serde_json::json!(["140"])), Some(1_480_100)),
+      ("best", Some(serde_json::json!(["18"])), Some(4_800_000)),
+      ("best", Some(serde_json::json!(["299", "missing"])), None),
+      ("best", Some(serde_json::json!(["sb0"])), None),
+      ("best", None, None),
+    ] {
+      let mut dump = raw.clone();
+      if let Some(ids) = ids {
+        dump["_nezzel_preset_formats"][preset] = ids;
+      } else {
+        dump["_nezzel_preset_formats"]
+          .as_object_mut()
+          .unwrap()
+          .remove(preset);
+      }
+      let ParsedMedia::Single(item) = parse_ytdlp_info(&dump.to_string(), "row".into()).unwrap()
+      else {
+        panic!("expected one video");
+      };
+      let wire = serde_json::to_value(item).unwrap();
+      assert_eq!(wire["presetSizes"][preset].as_u64(), expected, "{preset}");
+    }
+  }
+
+  #[test]
+  fn options_sheet_audio_estimates_prefer_target_bitrate_and_fall_back_to_source() {
+    let raw: Value =
+      serde_json::from_str(include_str!("fixtures/ytdlp-preset-sizes.json")).unwrap();
+    for (bitrate, duration, audio_ids, expected) in [
+      (json!(192_000), json!(85), json!(["140"]), Some(2_060_400)),
+      (json!(192_000), Value::Null, json!(["140"]), Some(1_480_100)),
+      (Value::Null, json!(85), json!(["140"]), Some(1_480_100)),
+      (Value::Null, json!(85), json!(["18"]), None),
+      (Value::Null, json!(85), json!(["missing"]), None),
+    ] {
+      let mut dump = raw.clone();
+      dump["duration"] = duration.clone();
+      dump["_nezzel_preset_audio_bitrate"] = bitrate.clone();
+      dump["_nezzel_preset_formats"]["audio"] = audio_ids.clone();
+      let ParsedMedia::Single(item) = parse_ytdlp_info(&dump.to_string(), "row".into()).unwrap()
+      else {
+        panic!("expected one video");
+      };
+      let wire = serde_json::to_value(item).unwrap();
+      assert_eq!(
+        wire["presetSizes"]["audio"].as_u64(),
+        expected,
+        "bitrate {bitrate}, duration {duration}, source {audio_ids}"
+      );
+    }
+  }
+
+  #[test]
   fn empty_output_under_input_filters_is_a_filter_rejection() {
     let listed = json!({"_type":"playlist", "entries":[]}).to_string();
     let listing_error = parse_ytdlp_info_for_url(&listed, "row".into(), None).unwrap_err();
@@ -251,6 +419,108 @@ mod tests {
     assert_eq!(
       filtered_empty_code(&video, "unableToExtractIdOrInfo", true),
       "unableToExtractIdOrInfo"
+    );
+  }
+
+  #[test]
+  fn media_found_on_another_site_than_the_pasted_page_is_marked_embedded() {
+    let youtube = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    let movie = "https://www.cinema-house.example/movies/the-long-night-2024/";
+    let article = "https://news.example.org/2024/05/storm-video";
+    for (pasted, webpage_url, extractor_key, embedded) in [
+      // Generic found a trailer embedded in a film page and handed it to YouTube.
+      (movie, youtube, "Youtube", true),
+      // News articles embedding Vimeo or a post from X.
+      (article, "https://vimeo.com/76979871", "Vimeo", true),
+      (article, "https://x.com/user/status/123", "Twitter", true),
+      // The media site's own short link, own page or a sister host: no hint.
+      ("https://youtu.be/dQw4w9WgXcQ", youtube, "Youtube", false),
+      (youtube, youtube, "Youtube", false),
+      (
+        "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+        youtube,
+        "Youtube",
+        false,
+      ),
+      (
+        "https://redd.it/abc123",
+        "https://www.reddit.com/r/videos/comments/abc123/x/",
+        "Reddit",
+        false,
+      ),
+      (
+        "https://fb.watch/abcDEF12/",
+        "https://www.facebook.com/watch/?v=123",
+        "Facebook",
+        false,
+      ),
+      (
+        "https://twitter.com/user/status/123",
+        "https://x.com/user/status/123",
+        "Twitter",
+        false,
+      ),
+      // A known site's extractor chose the media (a Reddit post linking YouTube).
+      (
+        "https://www.reddit.com/r/videos/comments/abc/x/",
+        youtube,
+        "Youtube",
+        false,
+      ),
+      // Link shorteners redirect to the media page.
+      (
+        "https://t.co/AbC123xyz",
+        "https://x.com/user/status/123",
+        "Twitter",
+        false,
+      ),
+      ("https://bit.ly/3xYzAb", youtube, "Youtube", false),
+      // The page's own video (generic read it) or a subdomain of the same site.
+      (movie, movie, "Generic", false),
+      (
+        movie,
+        "https://cdn.cinema-house.example/v/1",
+        "Generic",
+        false,
+      ),
+      (
+        article,
+        "https://video.news.example.org/v/1",
+        "NewsPlayer",
+        false,
+      ),
+      // Only web pages.
+      ("ftp://files.example/v.mp4", youtube, "Youtube", false),
+    ] {
+      let info = json!({"id":"a", "title":"Trailer", "webpage_url":webpage_url, "original_url":pasted, "extractor_key":extractor_key, "formats":[]});
+      let ParsedMedia::Single(media) =
+        parse_ytdlp_info_for_url(&info.to_string(), "row".into(), Some(pasted)).unwrap()
+      else {
+        panic!("single expected");
+      };
+      assert_eq!(
+        media.embedded_in.as_deref(),
+        embedded.then_some(pasted),
+        "{pasted} → {webpage_url}"
+      );
+    }
+    // Without the pasted link, yt-dlp's `original_url` names the page.
+    let info =
+      json!({"id":"a", "webpage_url":youtube, "original_url":movie, "extractor_key":"Youtube"});
+    assert_eq!(embedding_page(None, &info).as_deref(), Some(movie));
+    // Facebook's own title fallback is unchanged, and Facebook is never an embed of itself.
+    let info = json!({"id":"1", "title":"www.facebook.com", "description":"Caption", "webpage_url":"https://www.facebook.com/watch/?v=1", "extractor_key":"Facebook"});
+    let ParsedMedia::Single(media) = parse_ytdlp_info_for_url(
+      &info.to_string(),
+      "row".into(),
+      Some("https://www.facebook.com/user/videos/1/"),
+    )
+    .unwrap() else {
+      panic!("single expected");
+    };
+    assert_eq!(
+      (media.title.as_deref(), media.embedded_in),
+      (Some("Caption"), None)
     );
   }
 

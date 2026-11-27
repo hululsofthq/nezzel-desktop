@@ -25,6 +25,10 @@ impl Rank {
 
 /// Choose one final error; success and silent cancellation have no error code.
 pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
+  final_cause(attempts).map(|(code, _)| code)
+}
+
+pub(super) fn final_cause(attempts: &[Attempt]) -> Option<(&'static str, Option<&Attempt>)> {
   let last = attempts.last()?;
   if attempts
     .iter()
@@ -55,7 +59,7 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
         .code
         .is_some_and(|code| code.as_str() == "signInRequired")
   });
-  let mut best: Option<(Rank, Confidence, &'static str)> = None;
+  let mut best: Option<(Rank, &'static str, &Attempt)> = None;
   let authenticated_terminal = attempts.iter().any(|attempt| {
     attempt.auth != AuthUsed::Anonymous
       && (attempt
@@ -209,39 +213,41 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
     if let (Some(rank), Some(code)) = (rank, code) {
       let replace = match best {
         None => true,
-        Some((best_rank, confidence, _)) => {
-          rank < best_rank || (rank == best_rank && attempt.confidence > confidence)
+        Some((best_rank, _, best_attempt)) => {
+          rank < best_rank || (rank == best_rank && attempt.confidence > best_attempt.confidence)
         }
       };
       if replace {
-        best = Some((rank, attempt.confidence, code));
+        best = Some((rank, code, attempt));
       }
     }
   }
   Some(best.map_or(
-    if all_unsupported {
-      "urlNotSupported"
-    } else {
-      attempts
-        .iter()
-        .find(|attempt| {
-          matches!(attempt.outcome, Outcome::Network(_))
-            && attempt
-              .code
-              .is_some_and(|code| code.as_str() != "sponsorBlockUnreachable")
-        })
-        .and_then(|attempt| attempt.code)
-        .map_or("unknown", DiagnosticCode::as_str)
-    },
-    |(_, _, code)| {
-      if code == "photosOnly"
+    (
+      if all_unsupported {
+        "urlNotSupported"
+      } else {
+        attempts
+          .iter()
+          .find(|attempt| {
+            matches!(attempt.outcome, Outcome::Network(_))
+              && attempt
+                .code
+                .is_some_and(|code| code.as_str() != "sponsorBlockUnreachable")
+          })
+          .and_then(|attempt| attempt.code)
+          .map_or("unknown", DiagnosticCode::as_str)
+      },
+      None,
+    ),
+    |(_, code, attempt)| {
+      let code = if code == "photosOnly"
         && attempts.iter().any(|attempt| {
           attempt.stage == StageId::Gallery
             && attempt.code.is_some_and(|code| {
               matches!(code.as_str(), "noMediaFound" | "imageSourceUnavailable")
             })
-        })
-      {
+        }) {
         "noMediaFound"
       } else if code == "photosOnly"
         && attempts.iter().any(|attempt| {
@@ -266,7 +272,8 @@ pub fn final_code(attempts: &[Attempt]) -> Option<&'static str> {
         "imageSourceUnavailable"
       } else {
         code
-      }
+      };
+      (code, Some(attempt))
     },
   ))
 }

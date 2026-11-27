@@ -34,5 +34,12 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
       },
     },
+    {
+      name: 'webkit',
+      testMatch: '**/catch-hooks.spec.ts',
+      use: {
+        ...devices['Desktop Safari'],
+      },
+    },
   ],
 });

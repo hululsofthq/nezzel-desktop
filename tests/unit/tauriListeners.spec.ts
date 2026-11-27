@@ -6,6 +6,7 @@ import { effectScope } from 'vue';
 import { flushPromises } from '@vue/test-utils';
 import { installTauriMock } from '../utils/tauriMock';
 import { capturePrefill, startCaptureDelivery, type CaptureMessage } from '../../src/tauri/listeners/capture';
+import { registerProgressListeners } from '../../src/tauri/listeners/progress';
 import { registerMediaListeners } from '../../src/tauri/listeners/media';
 import { useMediaStore } from '../../src/stores/media/media';
 import { useMediaOptionsStore } from '../../src/stores/media/options';
@@ -13,6 +14,7 @@ import { useMediaGroupStore } from '../../src/stores/media/group';
 import { MediaState, useMediaStateStore } from '../../src/stores/media/state';
 import { useDownloadSheetStore } from '../../src/stores/downloadSheet';
 import { useReportStore } from '../../src/stores/report';
+import { useUiPrefs } from '../../src/composables/useUiPrefs';
 import tauriListeners from '../../src/plugins/tauriListeners';
 import type { CaptureChoice } from '../../src/generated/contract';
 import { TrackType, type MediaItem } from '../../src/tauri/types/media';
@@ -47,6 +49,7 @@ describe('capture delivery to the main window', () => {
   let activeScope: ReturnType<typeof effectScope>;
   afterEach(() => {
     activeScope?.stop();
+    useUiPrefs().skipOptionsSheet.value = false;
     vi.useRealTimers();
   });
 
@@ -56,7 +59,7 @@ describe('capture delivery to the main window', () => {
     const afters: number[] = [];
     const queue_ = (body: Body) => queue.push({ ...body, seq: queue.length + 1 } as CaptureMessage);
     queued.forEach(queue_);
-    const info = vi.fn(() => new Promise(() => {}));
+    const info = vi.fn<(cmd: string, args: unknown) => Promise<unknown>>(() => new Promise(() => {}));
     const download = vi.fn().mockResolvedValue('started');
     const ready = vi.fn();
     installTauriMock({
@@ -82,11 +85,42 @@ describe('capture delivery to the main window', () => {
     return { info, download, ready, afters, send, groups: useMediaGroupStore(), states: useMediaStateStore(), sheet: useDownloadSheetStore() };
   }
 
+  it('shows the native Catch queue row and opens a shape-only report through the main window', async () => {
+    const { send, groups, states, download } = await setup();
+    registerProgressListeners();
+    const row = { id: 'caught-id', url: 'https://example.org', title: 'Caught media', kind: 'video', height: 720, thumbnail: 'data:image/jpeg;base64,AA==' };
+    await emit('catch://queued', row);
+    expect(groups.findGroupById(row.id)?.title).toBe(row.title);
+    // The caught picture stays on the row and its leader (the finished row and history read it).
+    expect(groups.findGroupById(row.id)?.thumbnail).toBe(row.thumbnail);
+    expect(groups.findGroupLeader(row.id)?.thumbnail).toBe(row.thumbnail);
+    expect(states.getState(row.id)).toBe(MediaState.downloading);
+    await emit('media_complete', { id: row.id, groupId: row.id });
+    expect(states.getState(row.id)).toBe(MediaState.done);
+    expect(download).not.toHaveBeenCalled();
+
+    await send({ kind: 'catchShowDownload', id: row.id }, { kind: 'catchReport', shape: 'example.org/{id}' });
+    expect(useMediaStore().duplicateFocus?.id).toBe(row.id);
+    expect(useReportStore().open).toBe(true);
+    expect(useReportStore().download?.url).toBe('example.org/{id}');
+    expect(useReportStore().hasLinks).toBe(false);
+  });
+
+  it('adds a browser file as a single downloading file in the list', async () => {
+    const { groups, states, download } = await setup();
+    const row = { id: 'page-file', url: 'https://example.org', title: 'Manual.pdf', kind: 'file', height: null, sizeBytes: 320 };
+    await emit('catch://queued', row);
+    expect(groups.findGroupById(row.id)).toMatchObject({ mediaKind: 'file', total: 1, filesize: 320 });
+    expect(groups.findGroupLeader(row.id)).toMatchObject({ mediaKind: 'file', title: 'Manual.pdf', filesize: 320 });
+    expect(states.getState(row.id)).toBe(MediaState.downloading);
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it('pulls what waited before it started, then turns native capture on', async () => {
     const { groups, ready, afters } = await setup([{ kind: 'action', id: 1, url, action: 'adopt', item: null, choice: null }]);
     expect(groups.orderedGroups).toHaveLength(1);
     expect(afters[0]).toBe(0);
-    expect(ready).toHaveBeenCalledOnce();
+    expect(ready).toHaveBeenCalledExactlyOnceWith('capture_ready', { skipOptionsSheet: false });
   });
 
   it('a different capture of an existing pending link only focuses it, ignoring its later item', async () => {
@@ -138,6 +172,32 @@ describe('capture delivery to the main window', () => {
     expect(groups.orderedGroups[0].url).toBe(url);
     expect(info).not.toHaveBeenCalled();
     expect(download).not.toHaveBeenCalled();
+    expect(sheet.open).toBe(false);
+  });
+
+  it.each([
+    { ask: true, urls: [url, 'https://vimeo.com/42'] },
+    { ask: false, urls: [url] },
+    { ask: false, urls: [url, 'https://vimeo.com/42'] },
+  ])('handles $urls with “Ask how to save each link” = $ask', async ({ ask, urls }) => {
+    const { info, download, groups, states, sheet, ready, send } = await setup();
+    useUiPrefs().skipOptionsSheet.value = !ask;
+    info.mockImplementation((_cmd, args) => {
+      const group = args as { id: string; groupId: string; url: string };
+      return emit('media_add', { groupId: group.groupId, total: 1, item: { ...item, id: group.id, url: group.url } });
+    });
+
+    await send({ kind: 'watched', urls });
+    window.dispatchEvent(new Event('focus'));
+    await flushPromises();
+
+    expect(ready).toHaveBeenLastCalledWith('capture_ready', { skipOptionsSheet: !ask });
+    expect(groups.orderedGroups.map(group => group.url).sort()).toEqual([...urls].sort());
+    expect(info).toHaveBeenCalledTimes(urls.length);
+    expect(download).toHaveBeenCalledTimes(ask ? 0 : urls.length);
+    for (const group of groups.orderedGroups) {
+      expect(states.getGroupState(group.id)).toBe(ask ? MediaState.configure : MediaState.downloading);
+    }
     expect(sheet.open).toBe(false);
   });
 
@@ -274,6 +334,17 @@ describe('capture delivery to the main window', () => {
     expect(groups.orderedGroups).toHaveLength(1);
     expect(download).toHaveBeenCalledOnce();
     expect(states.getGroupState(groups.orderedGroups[0].id)).toBe(MediaState.downloading);
+  });
+
+  it('lets the copied-link card start its waiting row without creating a second one', async () => {
+    const { download, groups, states, sheet, send } = await setup();
+    await send({ kind: 'watched', urls: [url], card: { id: 5, url, action: 'adopt', item, choice: null } });
+    expect(states.getGroupState('capture-5')).toBe(MediaState.configure);
+    expect(download).not.toHaveBeenCalled();
+    expect(sheet.open).toBe(false);
+    await send({ kind: 'action', id: 5, url, action: 'download', item: null, choice: { kind: 'audio' } });
+    expect(groups.orderedGroups).toHaveLength(1);
+    expect(download).toHaveBeenCalledOnce();
   });
 
   it('handles each message once, however many pulls return it', async () => {

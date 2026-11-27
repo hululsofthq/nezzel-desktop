@@ -9,10 +9,22 @@
       <img :src="nezzelMark" alt="" class="size-16" />
       <h2 class="mt-5 text-[22px] font-semibold tracking-tight text-balance rtl:tracking-normal">{{ t('downloads.empty.title') }}</h2>
       <p class="mt-1.5 max-w-md text-[13.5px] text-muted-foreground text-balance">{{ t('downloads.empty.body') }}</p>
-      <!-- What Nezzel can do: three ways in, each with its real key. -->
+      <!-- The two ways in, side by side and flat: a copied link, or a website played in the Nezzel browser. -->
+      <div class="mt-8 grid w-full max-w-lg grid-cols-1 gap-2 sm:grid-cols-2" data-testid="empty-ways">
+        <button v-for="way in ways" :key="way.key" type="button" :class="wayCls" :data-testid="`empty-way-${way.key}`" @click="way.run">
+          <component :is="way.icon" class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <span class="min-w-0">
+            <span class="block text-[13px] font-medium text-foreground">{{ t(way.title) }}</span>
+            <i18n-t :keypath="way.body" tag="span" scope="global" class="mt-0.5 block text-[12px] text-muted-foreground text-pretty rtl:leading-[1.6]">
+              <template #brand><bdi dir="ltr">{{ brandName }}</bdi></template>
+            </i18n-t>
+          </span>
+        </button>
+      </div>
+      <!-- Quieter ways that need no click, each with its real key (pasting is the first choice above). -->
       <!-- Equal columns, top-aligned; icon | text grid so every hint starts at the same inline offset. -->
-      <ul class="mt-10 grid w-full max-w-xl grid-cols-1 items-start gap-x-6 gap-y-3 border-t border-hairline pt-5 text-start text-[12.5px] text-muted-foreground sm:grid-cols-3">
-        <li v-for="hint in hints" :key="hint.key" class="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-2">
+      <ul class="mt-8 grid w-full max-w-lg grid-cols-1 items-start gap-x-6 gap-y-3 border-t border-hairline pt-5 text-start text-[12.5px] text-muted-foreground sm:grid-cols-2">
+        <li v-for="hint in emptyHints" :key="hint.key" class="grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-2">
           <component :is="hint.icon" class="mt-0.5 size-4 text-primary" aria-hidden="true" />
           <div class="min-w-0 text-pretty rtl:leading-[1.6]">
             <!-- The brand stays a Latin island inside Arabic/French text. -->
@@ -171,12 +183,14 @@
 
 <script setup lang="ts">
 import { Input, type InputApi } from '../../components/ui/input';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { Search as SearchIcon, X } from '@lucide/vue';
 import nezzelMark from '../../assets/brand/nezzel-mark.svg';
-import { ClipboardCheck, ClipboardPaste, Zap } from '@lucide/vue';
+import { AppWindow, ClipboardCheck, ClipboardPaste, Zap } from '@lucide/vue';
+import { useOpenCatch } from '../../composables/useOpenCatch';
+import { PASTE_LINK } from '../../composables/usePasteLink';
 import { Button } from '@/components/ui/button';
 import Tooltip from '@/components/ui/tooltip/Tooltip.vue';
 import Kbd from '@/components/ui/kbd/Kbd.vue';
@@ -227,7 +241,10 @@ const hidden = useListVisibilityStore();
 const mediaStore = useMediaStore();
 const highlightedId = ref<string | null>(null);
 let highlightTimer: ReturnType<typeof setTimeout> | undefined;
-watch(() => mediaStore.duplicateFocus, async (request, _previous, onCleanup) => {
+watch(() => {
+  const request = mediaStore.duplicateFocus;
+  return request && rows.value.some(row => row.id === request.id) ? request : null;
+}, async (request, _previous, onCleanup) => {
   if (!request) return;
   let cancelled = false;
   onCleanup(() => {
@@ -269,6 +286,14 @@ const settingsStore = useSettingsStore();
 /** Product name: never translated, isolated as a Latin run inside RTL text. */
 const brandName = 'Nezzel';
 
+const openCatch = useOpenCatch();
+const pasteLink = inject(PASTE_LINK, null);
+const wayCls = 'flex items-start gap-2.5 rounded-lg border border-hairline px-3 py-2.5 text-start outline-none transition-colors duration-100 hover:bg-foreground/[0.04] active:bg-foreground/[0.07] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nz-focus)]';
+const ways = [
+  { key: 'paste', icon: ClipboardPaste, title: 'downloads.empty.wayPaste', body: 'downloads.empty.wayPasteBody', run: () => (pasteLink ? pasteLink() : document.getElementById('queue-url-input')?.focus()) },
+  { key: 'site', icon: AppWindow, title: 'downloads.empty.waySite', body: 'downloads.empty.waySiteBody', run: () => openCatch() },
+];
+const emptyHints = computed(() => hints.value.filter(hint => hint.key !== 'paste'));
 const hints = computed(() => {
   const input = settingsStore.settings.input;
   // The OS may have given Quick download the fallback combo; show what actually works.

@@ -900,6 +900,7 @@
       "emptyHint": "Essayez un autre mot, comme dossier, langue ou proxy",
       "emptyReport": "Signaler un réglage manquant",
       "synonyms": {
+        "searchEngine": "moteur de recherche, google, bing, duckduckgo, brave, navigateur",
         "saveFolder": "dossier, enregistrer, emplacement, destination, répertoire, chemin",
         "defaultChoice": "qualité, meilleure, petite, audio seul, format, résolution, défaut",
         "askEach": "demander, options, chaque lien, choisir la qualité",
@@ -932,6 +933,7 @@
         "globalShortcuts": "raccourci, clavier, touches, global, partout",
         "quickShortcut": "raccourci, téléchargement rapide, touches, clavier",
         "pasteShortcut": "raccourci, coller, touches, clavier",
+        "browserShortcut": "raccourci, navigateur, site, récupérer, touches, clavier",
         "downloadAllShortcut": "raccourci, tout télécharger, touches, clavier",
         "addAndDownloadShortcut": "raccourci, ajouter, télécharger maintenant, touches",
         "loginsLink": "connexion, compte, cookies, navigateur",
@@ -958,7 +960,8 @@
         "extractorArgs": "développeur, extracteur, yt-dlp, arguments, avancé, débogage",
         "version": "version, mise à jour, à propos, vérifier",
         "reportProblem": "signaler, bug, problème, avis, contact, aide, support",
-        "licenses": "licences, open source, crédits, tiers, mentions légales"
+        "licenses": "licences, open source, crédits, tiers, mentions légales",
+        "autoCatch": "capturer, navigateur, page web, automatique, trouver la vidéo, catch"
       }
     }
   },
@@ -1192,7 +1195,7 @@
       "geoBlocked": {
         "shortMessage": "Indisponible dans votre pays",
         "message": "Ce contenu n’est pas disponible dans votre région",
-        "action": "Nezzel ne peut rien y changer. Essayez un lien d'une autre source"
+        "action": "Si vous utilisez un VPN, activez-le puis réessayez"
       },
       "textOnlyPost": {
         "shortMessage": "Cette publication ne contient que du texte",
@@ -1260,8 +1263,8 @@
         "action": "Mettez à jour les outils de téléchargement dans les Réglages, puis réessayez"
       },
       "drmProtected": {
-        "shortMessage": "Ce contenu est protégé par le site et ne peut pas être enregistré",
-        "message": "Ce contenu est protégé par le site et ne peut pas être enregistré.",
+        "shortMessage": "Ce site le lit uniquement dans son propre lecteur, Nezzel ne peut donc pas l’enregistrer",
+        "message": "Ce site le lit uniquement dans son propre lecteur, Nezzel ne peut donc pas l’enregistrer.",
         "action": "Vous pouvez la regarder sur le site"
       },
       "embedOnly": {
@@ -1736,6 +1739,9 @@
       "filtersOnCount": "{count} filtre actif | {count} filtres actifs",
       "moreWithFilters": "{more}. {filters}",
       "pasteFirst": "Collez d’abord un lien",
+      "localFile": "C’est un chemin de fichier. Collez un lien web.",
+      "unsupportedScheme": "Collez un lien commençant par http:// ou https://.",
+      "skipped": "{count} élément ignoré. | {count} éléments ignorés.",
       "captureSettings": "Configurez le téléchargement rapide dans Paramètres → Raccourcis clavier",
       "captureShortcut": "Téléchargement rapide depuis toute application : {shortcut}"
     },
@@ -1761,7 +1767,11 @@
       "hintPaste": "Collez ou déposez un lien. Pour ajouter les liens d’un fichier, ouvrez le menu ….",
       "hintQuick": "Téléchargez vite depuis n’importe quelle app, même le navigateur",
       "hintQuickClipboard": "Copiez un lien dans n’importe quelle app, puis appuyez sur le raccourci de téléchargement rapide",
-      "hintCopied": "Copiez un lien et {brand} vous le propose aussitôt"
+      "hintCopied": "Copiez un lien et {brand} vous le propose aussitôt",
+      "wayPaste": "Coller un lien",
+      "wayPasteBody": "Copié depuis n’importe quelle app ou site",
+      "waySite": "Ouvrir un site",
+      "waySiteBody": "Lancez-y la vidéo et {brand} l’enregistre"
     },
     "finished": {
       "empty": "Les téléchargements terminés apparaissent ici",
@@ -1782,8 +1792,11 @@
       "pause": "Pause",
       "resume": "Reprendre",
       "paused": "En pause à {percent}",
+      "interrupted": "Interrompu",
       "remove": "Retirer",
       "retry": "Réessayer",
+      "reloadLink": "Relire le lien",
+      "reloadLinkHint": "Relisez le lien pour choisir comment l’enregistrer",
       "open": "Ouvrir",
       "openFirst": "Ouvrir le premier",
       "show": "Afficher dans le dossier",
@@ -1792,7 +1805,6 @@
       "openPage": "Ouvrir la page",
       "wantLiveDownload": "Je souhaite cette fonctionnalité",
       "liveRequestNoted": "Merci, c’est noté",
-      "openVimeo": "Ouvrir dans Vimeo",
       "openBrowser": "Ouvrir dans le navigateur",
       "perDownload": "Réglages de ce téléchargement",
       "saved": "Enregistré",
@@ -1989,6 +2001,8 @@
     },
     "saved": "Enregistré",
     "general": {
+      "searchEngine": "Moteur de recherche",
+      "searchEngineHint": "Pour les mots saisis dans le navigateur Nezzel",
       "folder": "Enregistrer dans",
       "folderDefault": "Téléchargements / Nezzel",
       "change": "Changer…",
@@ -2111,6 +2125,8 @@
         "quick": "Téléchargement rapide",
         "defaultIs": "Par défaut : {keys}",
         "paste": "Coller un lien",
+        "browser": "Ouvrir le navigateur Nezzel",
+        "browserHint": "Lancez une vidéo sur n’importe quel site et Nezzel l’enregistre. Celui-ci est fixe",
         "pasteHint": "Place un lien copié dans Nezzel. Ce raccourci est fixe",
         "downloadAll": "Télécharger tout ce qui attend",
         "addAndDownload": "Ajouter et télécharger maintenant",
@@ -2124,7 +2140,10 @@
         "proxyHint": "Seulement si un site est bloqué dans votre pays ou votre réseau. Votre app VPN le fait souvent déjà",
         "proxyAddress": "Adresse du proxy",
         "proxyExample": "Par exemple socks5://127.0.0.1:1080 ou http://proxy.example.com:8080",
+        "proxyBrowser": "Le navigateur Nezzel l’utilise aussi (http:// ou socks5:// uniquement ; sous macOS 13 et avant, c’est le proxy du système). Un changement s’applique à la prochaine fenêtre du navigateur.",
         "proxyInvalid": "Utilisez la forme schéma://hôte:port, par exemple socks5://127.0.0.1:1080 (http, https, socks4 ou socks5)",
+        "autoCatch": "Chercher la vidéo sur les pages web automatiquement",
+        "autoCatchHint": "Quand un lien est une page web que Nezzel ne sait pas lire, il ouvre la page en arrière-plan et récupère la vidéo qu’elle lit, avec votre connexion à ce site depuis votre navigateur. Désactivé avec un proxy",
         "impersonate": "Se présenter comme un navigateur",
         "impersonateHint": "Certains sites bloquent les apps qui ne ressemblent pas à un navigateur. Laissez désactivé sauf si un site refuse",
         "impersonateOff": "Désactivé (recommandé)",
@@ -2261,8 +2280,8 @@
         "hint": "Un proxy dans Réglages > Avancé peut aider"
       },
       "protected": {
-        "title": "Cette vidéo est protégée contre la copie",
-        "hint": "Nezzel ne peut pas enregistrer les flux protégés par DRM"
+        "title": "Ce site lit cette vidéo uniquement dans son propre lecteur",
+        "hint": "Nezzel ne peut pas enregistrer celle-ci"
       },
       "busy": {
         "title": "{site} limite les demandes en ce moment",
@@ -2398,7 +2417,7 @@
     "source": "Source"
   },
   "feedback": {
-    "invalidLink": "Cela ne ressemble pas à un lien",
+    "invalidLink": "Copiez l’adresse depuis le site et collez-la ici.",
     "addFailed": "Impossible d’ajouter le lien. Réessayez",
     "linksUnreadable": "{n} lien n’a pas pu être lu | {n} liens n’ont pas pu être lus",
     "clipboardFailed": "Impossible de lire le presse-papiers",
@@ -2537,5 +2556,200 @@
     "resume": "Reprendre {n} téléchargement | Reprendre {n} téléchargements",
     "dismiss": "Ignorer",
     "changeFolder": "Changer de dossier"
+  },
+  "catch": {
+    "search": {
+      "label": "Moteur de recherche",
+      "engine": "Moteur de recherche : {engine}",
+      "hint": "Recherche avec {engine}",
+      "change": "Changer"
+    },
+    "windowTitle": "Navigateur Nezzel",
+    "bar": "Commandes du navigateur Nezzel",
+    "back": "Retour",
+    "forward": "Suivant",
+    "reload": "Recharger",
+    "address": "Adresse de la page",
+    "invalidAddress": "Saisissez une adresse web valide",
+    "fileDownload": {
+      "saving": "Enregistrement de {name} dans Nezzel",
+      "savingFile": "Enregistrement du fichier dans Nezzel",
+      "opened": "{name} a été ouvert dans votre navigateur",
+      "openedFile": "Le fichier a été ouvert dans votre navigateur",
+      "failed": "Impossible d’enregistrer {name}",
+      "failedFile": "Impossible d’enregistrer le fichier",
+      "unsupported": "Ce fichier ne peut pas être enregistré depuis cette page",
+      "private": "Impossible d’ouvrir des fichiers depuis un onglet privé",
+      "proxied": "Impossible d’ouvrir des fichiers lorsque le proxy est activé"
+    },
+    "addressPlaceholder": "Saisissez ou collez l’adresse d’une page",
+    "notSecure": "Non sécurisé",
+    "popups": "Aucune fenêtre surgissante bloquée | {n} fenêtre surgissante bloquée | {n} fenêtres surgissantes bloquées",
+    "allowOnce": "Autoriser une fois",
+    "more": "Plus",
+    "menu": {
+      "cantFind": "Vous ne trouvez pas la vidéo ?",
+      "cantFindHint": "Recharger la page et chercher plus en profondeur",
+      "forget": "Oublier les connexions à ce site",
+      "forgetHint": "Vous déconnecte de {site} dans cette fenêtre",
+      "close": "Fermer la fenêtre"
+    },
+    "hint": {
+      "title": "Lancez la vidéo. Nezzel la trouvera",
+      "firstRun": "Des publicités peuvent passer d’abord ; les fenêtres surgissantes sont bloquées."
+    },
+    "nudge": {
+      "title": "Rien trouvé pour l’instant",
+      "sub": "Lancez la vidéo et passez les publicités"
+    },
+    "signIn": {
+      "title": "Connectez-vous, puis lancez la vidéo"
+    },
+    "adPlaying": {
+      "title": "Publicité en cours, en attente de la vidéo"
+    },
+    "found": {
+      "title": "Vidéo trouvée"
+    },
+    "drm": {
+      "title": "Ce site lit cette vidéo uniquement dans son propre lecteur, Nezzel ne peut donc pas l’enregistrer",
+      "why": "Pourquoi ?",
+      "whyText": "Le site verrouille (chiffre) cette vidéo pour que seul son propre lecteur puisse la lire. Les vidéos des autres sites fonctionnent toujours.",
+      "report": "Signaler ce site"
+    },
+    "live": {
+      "title": "C’est un direct",
+      "sub": "L’enregistrement des directs arrivera plus tard"
+    },
+    "crashed": {
+      "title": "Cette page a cessé de fonctionner",
+      "sub": "Rechargez-la pour réessayer"
+    },
+    "loadFailed": {
+      "title": "Impossible d’ouvrir {site}",
+      "retry": "Réessayer"
+    },
+    "geoBlocked": {
+      "title": "Ce site n’est pas disponible dans votre pays",
+      "sub": "Si vous utilisez un VPN, activez-le puis rechargez la page"
+    },
+    "notFound": {
+      "title": "Nezzel n’a pas pu récupérer cette vidéo",
+      "sub": "Elle a été lue, mais aucune vidéo n’est passée",
+      "reload": "Recharger la page",
+      "report": "Signaler cette page"
+    },
+    "saving": {
+      "title": "Enregistrement dans Nezzel",
+      "show": "Voir le téléchargement"
+    },
+    "close": "Fermer la fenêtre",
+    "save": "Enregistrer",
+    "saveFailed": "Impossible de lancer le téléchargement. Réessayez.",
+    "quality": "Choisir la qualité",
+    "picker": {
+      "title": "Choisissez quoi enregistrer",
+      "video": "Vidéo {height}p",
+      "videoAny": "Vidéo",
+      "audio": "Audio seul",
+      "best": "Meilleure",
+      "bestAvailable": "Meilleure qualité disponible",
+      "loading": "Lecture des formats…",
+      "others": "Autres vidéos de cette page",
+      "othersHint": "Clips courts et publicités",
+      "untitled": "Vidéo sur {site}",
+      "cancel": "Annuler"
+    },
+    "firstRun": {
+      "title": "Deux étapes",
+      "step1": "Lancez la vidéo sur la page",
+      "step2": "Quand la barre devient verte, appuyez sur Enregistrer",
+      "privacy": "Les connexions restent sur cet ordinateur.",
+      "ok": "Compris"
+    },
+    "row": {
+      "hint": "Cette page demande une étape : lancez sa vidéo et Nezzel la récupérera",
+      "open": "Ouvrir la page",
+      "try": "Essayer dans le navigateur Nezzel"
+    },
+    "embed": {
+      "question": "Ce n’est pas la bonne vidéo ?",
+      "open": "Ouvrir la page dans le navigateur Nezzel"
+    },
+    "read": {
+      "title": "Cette page demande une étape",
+      "hint": "Ouvrez-la et lancez la vidéo, Nezzel la récupérera"
+    },
+    "menuEntry": "Ouvrir une page pour récupérer sa vidéo",
+    "menuEntryHint": "Lancez-y une vidéo et Nezzel la récupère",
+    "entry": {
+      "button": "Navigateur",
+      "label": "Ouvrir le navigateur Nezzel"
+    },
+    "openFailed": "Impossible d’ouvrir le navigateur Nezzel",
+    "tabsFull": "Le navigateur Nezzel a 6 onglets ouverts. Fermez-en un pour ouvrir cette page.",
+    "proxyUnusable": "Le navigateur Nezzel ne peut pas utiliser le proxy défini dans les Paramètres : il ne charge aucune page. Corrigez l’adresse (http:// ou socks5://, sans identifiant ni mot de passe) ou désactivez le proxy",
+    "auto": {
+      "waiting": "En attente pour chercher la vidéo sur la page…",
+      "looking": "Recherche de la vidéo sur la page…",
+      "besideWaiting": "En attente pour chercher la vidéo complète sur la page…",
+      "besideLooking": "Recherche de la vidéo complète sur la page…",
+      "found": "Trouvée sur la page",
+      "foundFull": "Vidéo complète trouvée ({duration})",
+      "foundFullNoLength": "Vidéo complète trouvée",
+      "cancel": "Annuler"
+    },
+    "shell": {
+      "toggle": "Afficher ou masquer la liste des onglets",
+      "tabs": "Onglets",
+      "newTab": "Nouvel onglet",
+      "newPrivateTab": "Nouvel onglet privé",
+      "openTabs": "Onglets ouverts",
+      "closeTab": "Fermer l'onglet",
+      "private": "Privé",
+      "linked": "Ouvert par l'onglet au-dessus",
+      "asleep": "En veille. Se recharge à l'ouverture",
+      "found": "Vidéo trouvée ici",
+      "loading": "Chargement",
+      "singleHint": "Les pages de connexion qu'un site ouvre s'affichent ici en onglets",
+      "shared": "Les onglets partagent une seule connexion",
+      "limitTitle": "{n} onglets au maximum",
+      "limitBody": "Fermez-en un pour ouvrir le nouvel onglet :",
+      "limitClose": "Fermer cet onglet",
+      "limitCancel": "Tout garder",
+      "privateHint": "Sa propre connexion, oubliée à la fermeture",
+      "dismiss": "Fermer"
+    },
+    "tools": {
+      "thisSite": "Ce site",
+      "signin": "Utiliser la connexion de mon navigateur",
+      "signinBusy": "Lecture de la connexion de votre navigateur…",
+      "signinDone": "Connecté depuis {browser}",
+      "signinDoneAny": "Connecté depuis votre navigateur",
+      "signinNone": "Aucun navigateur de cet ordinateur n'est connecté à ce site. Connectez-vous sur la page.",
+      "signinDenied": "Nezzel n'a pas pu lire la connexion de votre navigateur. Autorisez-le quand l'ordinateur le demande, puis réessayez.",
+      "signinUnsupported": "Nezzel ne peut pas lire les connexions de votre navigateur sur cet ordinateur. Connectez-vous sur la page.",
+      "signinFailed": "Impossible d'utiliser la connexion de votre navigateur. Réessayez.",
+      "signinAlready": "Nezzel lit déjà la connexion de votre navigateur. Patientez un instant.",
+      "iphone": "Charger la version téléphone",
+      "iphoneHint": "Vidéo introuvable ? Certains sites envoient aux téléphones un lecteur plus simple. La page peut garder la même apparence",
+      "adblock": "Bloquer les pubs",
+      "adblockHint": "Bloque les pubs et les traqueurs sur ce site. Désactivez-le si la page ne fonctionne plus.",
+      "adblockCount": "Aucune pub ni traqueur bloqué | {n} pub ou traqueur bloqué | {n} pubs et traqueurs bloqués",
+      "popupsTool": "Fenêtres surgissantes bloquées"
+    },
+    "home": {
+      "title": "Trouver une vidéo à enregistrer",
+      "sub": "Ouvrez la page, lancez la vidéo, puis appuyez sur Enregistrer",
+      "field": "Recherche ou adresse de page",
+      "placeholder": "Rechercher avec {engine} ou coller un lien",
+      "paste": "Coller",
+      "go": "Aller",
+      "recentSites": "Sites récents",
+      "recentSaved": "Enregistrées récemment",
+      "noSites": "Les sites que vous ouvrez s'affichent ici.",
+      "noSaved": "Rien d'enregistré pour l'instant. Les vidéos enregistrées s'affichent ici.",
+      "show": "Afficher dans le dossier"
+    }
   }
 }

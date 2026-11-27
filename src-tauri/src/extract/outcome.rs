@@ -47,9 +47,12 @@ pub enum Outcome {
 
 /// A validated code prevents attempts from accidentally storing arbitrary engine text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DiagnosticCode(&'static str);
+pub struct DiagnosticCode(&'static str, bool);
 
 impl DiagnosticCode {
+  // Keep the evidence with its cause through retries and precedence, without changing the wire code.
+  pub(crate) const UNKNOWN_GENERIC_PAGE: Self = Self("unknown", true);
+
   /// Exposes only the fixed runner vocabulary for eventual event serialization.
   pub fn as_str(self) -> &'static str {
     self.0
@@ -73,7 +76,7 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
   {
     return Diagnostic {
       outcome: Outcome::AgeRestricted,
-      code: DiagnosticCode("ageRestricted"),
+      code: DiagnosticCode("ageRestricted", false),
     };
   }
   let (outcome, code) = match code {
@@ -177,7 +180,7 @@ pub fn classify(code: &str, message: &str, scope: NetworkScope) -> Diagnostic {
   };
   Diagnostic {
     outcome,
-    code: DiagnosticCode(code),
+    code: DiagnosticCode(code, false),
   }
 }
 

@@ -67,11 +67,17 @@
                 <bdi v-else :dir="part.ltr ? 'ltr' : undefined">{{ part.text }}</bdi>
               </template>
             </p>
+            <CaptureAutoCatch v-if="autoBeside && auto && offer.auto" :view="auto" :state="offer.auto" :site="offer.site" :busy="acting" @act="onAuto" />
+            <p v-else-if="embedded" class="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] text-muted-foreground" data-testid="capture-embed-hint">
+              <span>{{ t('catch.embed.question') }}</span>
+              <Button type="button" variant="link" class="h-auto px-0 text-[12px]" :disabled="acting" data-testid="capture-embed-open" @click="onFail('catch')">{{ t('catch.embed.open') }}</Button>
+            </p>
           </div>
         </div>
         <p v-else-if="offer.resolving" class="text-[12.5px] text-muted-foreground" role="status">{{ t('capture.readingBrowser') }}</p>
         <p v-else-if="error" class="text-[12.5px] text-destructive" role="alert">{{ t(error === 'action' ? 'capture.actionFailed' : 'capture.failed') }}</p>
-        <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" />
+        <CaptureAutoCatch v-else-if="autoOwns && auto && offer.auto" :view="auto" :state="offer.auto" :site="offer.site" :busy="acting" @act="onAuto" />
+        <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" :catchable="catchable" />
         <div v-else-if="quickText.automation && offer.automationDenied && !text" class="flex flex-wrap items-center gap-2" data-testid="capture-automation-denied">
           <p class="min-w-0 flex-1 text-[12.5px] text-foreground/80 text-pretty" role="alert">{{ t('capture.automationDenied') }}</p>
           <Button type="button" variant="outline" size="sm" @click="openAutomation">{{ t('capture.openAutomation') }}</Button>
@@ -85,7 +91,14 @@
         <span v-else class="inline-flex min-w-max flex-1 items-center gap-1 whitespace-nowrap text-[11.5px] text-muted-foreground">
           <Kbd>{{ escKey }}</Kbd>{{ t('capture.escCloses') }}
         </span>
-        <CaptureFailActions v-if="failed && !editing" :reason="failure" :busy="acting" @act="onFail" />
+        <!-- Automatic catch: Cancel while looking, Download what it found; a note has no button. -->
+        <div v-if="autoOwns && auto && !editing" class="flex items-center gap-2" data-testid="capture-auto-actions">
+          <Button v-if="auto.kind === 'looking'" type="button" variant="outline" size="sm" data-testid="capture-auto-cancel" @click="onAuto('cancel')">{{ t('catch.auto.cancel') }}</Button>
+          <Button v-else-if="auto.kind === 'found'" type="button" size="sm" :disabled="acting" :aria-busy="acting || undefined" data-testid="capture-auto-download" @click="onAuto('download')">
+            <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />{{ acting ? t('capture.starting') : t('downloads.row.download') }}
+          </Button>
+        </div>
+        <CaptureFailActions v-else-if="failed && !editing" :reason="failure" :catchable="catchable" :busy="acting" @act="onFail" />
         <template v-else>
           <Button type="button" variant="ghost" size="sm" :disabled="!ready" @click="act('options')">{{ t('capture.options') }}</Button>
           <CapturePicks :picks="picks" :loading="choicesLoading" :choose-items="isPlaylist" :disabled="!ready" :acting="acting" submit @pick="pick" />
@@ -104,7 +117,8 @@ import CaptureFailActions from './CaptureFailActions.vue';
 import CaptureFailure from './CaptureFailure.vue';
 import { capturePicks, pickChoice, type PickKey } from '../../helpers/captureChoices';
 import { computed, nextTick, ref, onMounted, onBeforeUnmount } from 'vue';
-import { Film, Image as ImageIcon, Link2, X } from '@lucide/vue';
+import { ArrowDownToLine, Film, Image as ImageIcon, Link2, LoaderCircle, X } from '@lucide/vue';
+import CaptureAutoCatch from './CaptureAutoCatch.vue';
 import { Button } from '@/components/ui/button';
 import Kbd from '@/components/ui/kbd/Kbd.vue';
 import { invoke } from '@tauri-apps/api/core';
@@ -127,7 +141,7 @@ const panel = ref<HTMLElement>();
 let editTimer: ReturnType<typeof setTimeout> | undefined;
 let sizer: ResizeObserver | undefined;
 
-const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, act, onFail, start } = useCaptureOffer({
+const { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, catchable, embedded, auto, autoOwns, autoBeside, onAuto, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, act, onFail, start } = useCaptureOffer({
   onNewOffer(value, wasEditing) {
     if (wasEditing) return;
     text.value = value.url;

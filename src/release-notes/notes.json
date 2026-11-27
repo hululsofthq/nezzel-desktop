@@ -1,4 +1,96 @@
 {
+  "0.1.6": {
+    "en": {
+      "summary": [
+        "When a link can't be read, Nezzel looks for the video on the page by itself",
+        "The Nezzel browser: tabs, search, and Save on any page that plays a video",
+        "Uses your browser's sign-in, so you don't sign in again"
+      ],
+      "groups": [
+        [
+          "Catch from the page",
+          [
+            "A link that yt-dlp can't read is opened in the background and the playing video is caught, with every quality",
+            "Before saying a video can't be saved, Nezzel tries the mobile version and other ways"
+          ]
+        ],
+        [
+          "Nezzel browser",
+          [
+            "Tabs in a side list, a home page with search (DuckDuckGo, Google, Bing or Brave), and pop-ups blocked",
+            "Your browser's sign-in is used for the site you open; \"Load the phone version\" in the ⋯ menu reloads a page as a phone sees it"
+          ]
+        ],
+        [
+          "More",
+          [
+            "Files a page downloads (PDF, ZIP) go into your download list",
+            "Several copied links are each added; with \"Ask how to save each link\" off, they start by themselves"
+          ]
+        ]
+      ]
+    },
+    "ar": {
+      "summary": [
+        "عندما يتعذّر قراءة الرابط، يبحث Nezzel عن الفيديو في الصفحة بنفسه",
+        "متصفح Nezzel: علامات تبويب وبحث وزر حفظ في أي صفحة تعرض فيديو",
+        "يستخدم تسجيل الدخول من متصفحك، فلا تحتاج إلى تسجيل الدخول مجددًا"
+      ],
+      "groups": [
+        [
+          "التقاط من الصفحة",
+          [
+            "الرابط الذي لا يقرؤه yt-dlp يُفتح في الخلفية ويُلتقط الفيديو المعروض بكل جوداته",
+            "قبل أن يقول إن الفيديو لا يمكن حفظه، يجرّب Nezzel نسخة الجوال وطرقًا أخرى"
+          ]
+        ],
+        [
+          "متصفح Nezzel",
+          [
+            "علامات تبويب في قائمة جانبية، وصفحة رئيسية للبحث (DuckDuckGo أو Google أو Bing أو Brave)، وحظر النوافذ المنبثقة",
+            "يُستخدم تسجيل الدخول من متصفحك للموقع الذي تفتحه، و«تحميل نسخة الهاتف» في قائمة ⋯ يعيد تحميل الصفحة كما يراها الهاتف"
+          ]
+        ],
+        [
+          "المزيد",
+          [
+            "الملفات التي تنزّلها الصفحة (PDF وZIP) تُحفظ في قائمة التنزيلات",
+            "الروابط المنسوخة معًا تُضاف كلٌّ على حدة، وتبدأ وحدها إذا أوقفت «اسألني كيف أنزّل كل رابط»"
+          ]
+        ]
+      ]
+    },
+    "fr": {
+      "summary": [
+        "Quand un lien ne peut pas être lu, Nezzel cherche lui-même la vidéo sur la page",
+        "Le navigateur Nezzel : onglets, recherche et Enregistrer sur toute page qui lit une vidéo",
+        "Utilise la connexion de votre navigateur, sans vous reconnecter"
+      ],
+      "groups": [
+        [
+          "Capture depuis la page",
+          [
+            "Un lien que yt-dlp ne lit pas est ouvert en arrière-plan et la vidéo lue est capturée, dans toutes les qualités",
+            "Avant de dire qu’une vidéo ne peut pas être enregistrée, Nezzel essaie la version mobile et d’autres moyens"
+          ]
+        ],
+        [
+          "Navigateur Nezzel",
+          [
+            "Onglets dans une liste latérale, page d’accueil avec recherche (DuckDuckGo, Google, Bing ou Brave) et fenêtres pop-up bloquées",
+            "La connexion de votre navigateur sert pour le site ouvert ; « Charger la version téléphone », dans le menu ⋯, recharge la page comme sur un téléphone"
+          ]
+        ],
+        [
+          "Et aussi",
+          [
+            "Les fichiers qu’une page télécharge (PDF, ZIP) vont dans votre liste de téléchargements",
+            "Plusieurs liens copiés sont ajoutés un par un ; sans « Demander pour chaque lien », ils démarrent seuls"
+          ]
+        ]
+      ]
+    }
+  },
   "0.1.5": {
     "en": {
       "summary": [

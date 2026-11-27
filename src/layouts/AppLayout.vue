@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { ConfigProvider, TooltipProvider } from 'reka-ui';
@@ -70,6 +70,10 @@ import { usePlatform } from '../composables/usePlatform';
 import { localeDirection } from '../i18n';
 import { builtInKeyOf, eventAccelerator, IN_APP_ACTIONS, sameShortcut } from '../helpers/shortcut';
 import { runShortcutAction } from '../tauri/listeners/shortcuts';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useOpenCatch } from '../composables/useOpenCatch';
+import { MENU_OPEN_BROWSER } from '../tauri/types/catch';
+import { PASTE_LINK } from '../composables/usePasteLink';
 import { paneScrollTop } from '../helpers/paneScroll';
 import { MAIN_PANE_ID } from '../helpers/domIds';
 
@@ -90,6 +94,10 @@ const { isMac } = usePlatform();
 const isDragging = computed(() => dragDropStore.isOver);
 const isMissingGroupRedirecting = ref(false);
 const toolbar = ref<{ pasteField: () => Promise<void> } | null>(null);
+const openCatch = useOpenCatch();
+provide(PASTE_LINK, async () => {
+  await toolbar.value?.pasteField();
+});
 
 const dir = computed(() => localeDirection(locale.value));
 const isSettings = computed(() => String(route.name ?? '').startsWith('settings'));
@@ -136,15 +144,19 @@ watchEffect(() => {
 
 /** App-wide keys: ⌘/Ctrl+V outside a text field drops the copied link into the field; ⌘/Ctrl+B (alias ⌘/Ctrl+\)
  *  toggles the sidebar;
- *  ⌘/Ctrl+, opens Settings; Esc closes the options panel. */
+ *  ⌘/Ctrl+⇧+B opens the Nezzel browser; ⌘/Ctrl+, opens Settings; Esc closes the options panel. */
 function onKey(event: KeyboardEvent) {
   const mod = event.metaKey || event.ctrlKey;
   const target = event.target as HTMLElement | null;
   const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
-  const builtIn = builtInKeyOf(event);
+  const builtIn = builtInKeyOf(event, isMac.value);
   if (builtIn === 'sidebar') {
     event.preventDefault();
     toggleSidebar();
+  } else if (builtIn === 'browser') {
+    // An app key like ⌘B, also from the link field. On macOS the File menu owns it (`MENU_OPEN_BROWSER`): one open per press.
+    event.preventDefault();
+    if (!isMac.value) openBrowser();
   } else if (builtIn === 'settings') {
     event.preventDefault();
     void router.push({ name: 'settings.general' });
@@ -181,8 +193,28 @@ function scrollPaneByKey(event: KeyboardEvent, target: HTMLElement | null) {
   event.preventDefault();
   pane.scrollTop = next;
 }
-onMounted(() => window.addEventListener('keydown', onKey));
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+/** The key and the macOS File menu item open the Nezzel browser here only: never over a modal screen (the welcome
+ *  sheet, a dialog, the narrow inspector), which the window's own key listener and the native menu both ignore. */
+function openBrowser() {
+  if (overlayOpen.value || document.querySelector('[aria-modal="true"], [role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return;
+  // A shortcut recorder is taking keys (Settings): the macOS menu sees ⌘⇧B before the page does, and it must not open a window.
+  if (document.querySelector('[data-shortcut-recording]')) return;
+  void openCatch();
+}
+let unlistenMenu: UnlistenFn | undefined;
+let unmounted = false;
+onMounted(() => {
+  window.addEventListener('keydown', onKey);
+  void listen(MENU_OPEN_BROWSER, openBrowser).then((unlisten) => {
+    if (unmounted) unlisten();
+    else unlistenMenu = unlisten;
+  }).catch(() => {});
+});
+onBeforeUnmount(() => {
+  unmounted = true;
+  window.removeEventListener('keydown', onKey);
+  unlistenMenu?.();
+});
 </script>
 
 <style scoped>

@@ -3,7 +3,7 @@ use crate::logging::LogStoreState;
 use crate::scheduling::dispatcher::DispatchRequest;
 use crate::scheduling::download_pipeline::DownloadSender;
 use crate::scheduling::fetch_pipeline::FetchSender;
-use crate::scheduling::group_state::cancel_group;
+use crate::scheduling::group_state::{cancel_group, finish_group_cancel};
 use tauri::State;
 
 #[tauri::command]
@@ -19,22 +19,19 @@ pub fn group_cancel(
   records: State<'_, DownloadRecords>,
   library: State<'_, crate::library::Library>,
 ) {
+  // Keep cancellation bookkeeping ordered with the synchronous media_download command.
   let generation = cancel_group(&group_id);
-  if discard_files != Some(true) {
-    crate::runners::ytdlp_download::pause_group(&group_id);
-  }
+  crate::catch::auto::forget(&app, &group_id);
   library.forget_group(&group_id);
   crate::files::runner::forget(&group_id);
-  if discard_files == Some(true) {
+  let discard_roots = if discard_files == Some(true) {
     // Removed from the list (not a pause): its job records go, so a reused ID counts its own end.
     crate::usage::forget_group(&app, &group_id);
     crate::files::runner::discard_group(&group_id);
-    crate::runners::ytdlp_download::discard_group(
-      &app,
-      &group_id,
-      &partial_roots.unwrap_or_default(),
-    );
-  }
+    Some(partial_roots.unwrap_or_default())
+  } else {
+    None
+  };
   records.forget(&group_id);
 
   // Send cleanup requests for items that were already dispatched.
@@ -47,6 +44,22 @@ pub fn group_cancel(
     generation: Some(generation),
   });
 
-  let mut store = log_state.write();
-  store.remove_group(&group_id);
+  log_state.write().remove_group(&group_id);
+
+  let cleanup_group = group_id.clone();
+  let disk = tauri::async_runtime::spawn_blocking(move || {
+    crate::runners::ytdlp_download::cancel_partials(
+      &app,
+      &cleanup_group,
+      generation,
+      discard_roots.as_deref(),
+    );
+  });
+  tauri::async_runtime::spawn(async move {
+    let result = disk.await;
+    finish_group_cancel(&group_id, generation);
+    if let Err(error) = result {
+      tracing::warn!(%error, "Download partial cleanup task failed");
+    }
+  });
 }

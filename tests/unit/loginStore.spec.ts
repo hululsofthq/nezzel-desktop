@@ -148,6 +148,21 @@ describe('login store', () => {
     expect(store.using.g1).toBeUndefined();
   });
 
+  it('drops the earlier profile when the row recovers anonymously', async () => {
+    await registerLoginListeners();
+    const store = useLoginStore();
+    const row = { id: 'item1', groupId: 'g1', host: 'instagram.com' };
+
+    await emit('media_login_using', { ...row, candidate: chrome });
+    expect(store.using.g1.candidate.id).toBe(chrome.id);
+    await emit('media_login_using', { id: row.id, groupId: row.groupId, candidate: null });
+    expect(store.using.g1).toBeUndefined();
+
+    await emit('media_login_using', { ...row, id: 'sibling', candidate: firefox });
+    await emit('media_login_using', { id: row.id, groupId: row.groupId, candidate: null });
+    expect(store.using.g1.candidate.id).toBe(firefox.id);
+  });
+
   it('keeps the previous refusal until the selected profile is actually attempted', async () => {
     const store = useLoginStore();
     store.receiveUsing({ id: 'item1', groupId: 'g1', host: 'instagram.com', candidate: chrome });
@@ -205,6 +220,23 @@ describe('login store', () => {
     expect(dismiss).toHaveBeenCalledWith('r1');
     expect(store.cardFor('g1')).toEqual({ kind: 'failed', failure: { groupId: 'g1', host: 'www.instagram.com', reason: 'dismissed' } });
     expect(useMediaStateStore().getGroupState('g1')).toBe(MediaState.error);
+  });
+
+  it('dismiss marks the row failed without sending an automatic failure report', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      const sent = vi.fn();
+      installTauriMock({ diagnostics_download_failed: sent });
+      addGroup();
+      const store = useLoginStore();
+      store.receive(request());
+      await store.dismiss('r1');
+      await Promise.resolve();
+      expect(sent).not.toHaveBeenCalled();
+      expect(useMediaStateStore().getGroupState('g1')).toBe(MediaState.error);
+    } finally {
+      online.mockRestore();
+    }
   });
 
   it('expires the card after 15 minutes', () => {

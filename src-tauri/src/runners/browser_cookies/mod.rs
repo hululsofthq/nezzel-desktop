@@ -11,16 +11,19 @@ mod jar;
 #[cfg(test)]
 mod tests;
 
+use crate::runners::browsers::CookieStore;
 use crate::sites::{self, SiteId};
-pub(super) use access::{read_error_code, CookieAccess, CookieContext, COOKIE_READ_ERROR};
+pub(super) use access::{read_error_code, COOKIE_READ_ERROR};
+pub(crate) use access::{CookieAccess, CookieContext};
 pub(super) use firefox::containers as firefox_containers;
 #[cfg(test)]
 pub(super) use hint::cookie_hint;
 pub(super) use hint::{cookie_hint_for_container, CookieHint};
 pub(crate) use jar::sweep_cookie_exports;
 use std::collections::{HashMap, HashSet};
+use time::OffsetDateTime;
 
-pub(super) fn registrable_domain(host: &str) -> Option<String> {
+pub(crate) fn registrable_domain(host: &str) -> Option<String> {
   let host = host.trim_matches('.').to_ascii_lowercase();
   if host.is_empty()
     || !host
@@ -45,7 +48,7 @@ const SHARED_SIGN_IN: &[SiteId] = &[
 ];
 
 /// Canonical consent identity; cookie_domains enumerates the permitted cookie aliases.
-pub(super) fn site_key(host: &str) -> Option<String> {
+pub(crate) fn site_key(host: &str) -> Option<String> {
   let domain = registrable_domain(host)?;
   Some(match sites::site_of(&domain) {
     Some(site) if SHARED_SIGN_IN.contains(&site) => site.domain().into(),
@@ -165,16 +168,33 @@ pub(crate) fn is_session_cookie(host: &str, name: &str) -> bool {
   }
 }
 
+/// yt-dlp may pass Chromium's microseconds since 1601 through as Netscape expiry.
+/// Keep representable Unix seconds and only try the Chromium clock for larger values.
+pub(crate) fn jar_expiry(expiry: i64, store: Option<CookieStore>) -> Option<OffsetDateTime> {
+  OffsetDateTime::from_unix_timestamp(expiry)
+    .or_else(|error| {
+      if store == Some(CookieStore::Chromium) && expiry > 0 {
+        OffsetDateTime::from_unix_timestamp(chromium::chromium_expiry_seconds(expiry))
+      } else {
+        Err(error)
+      }
+    })
+    .ok()
+}
+
 /// Only site-scoped, nonempty, live cookies may establish an automatic session.
 pub(crate) fn proof_cookies<'a>(
   host: &str,
   cookies: impl IntoIterator<Item = (&'a str, &'a str, &'a str, i64)>,
   now: i64,
+  store: Option<CookieStore>,
 ) -> bool {
   let names = cookies
     .into_iter()
     .filter(|(domain, _, value, expiry)| {
-      jar::allowed_cookie_host(domain, host) && !value.is_empty() && (*expiry == 0 || *expiry > now)
+      jar::allowed_cookie_host(domain, host)
+        && !value.is_empty()
+        && (*expiry == 0 || jar_expiry(*expiry, store).is_some_and(|at| at.unix_timestamp() > now))
     })
     .map(|(_, name, _, _)| name.to_owned())
     .collect();

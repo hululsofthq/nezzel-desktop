@@ -293,7 +293,10 @@ impl YtdlpProgressParser {
     let pct_num = parse_opt_pct(get_or_empty(&parts, 0)); // progress.percent
     let pct_str = parse_opt_pct(get_or_empty(&parts, 1)); // progress._percent_str
     let speed_bps = parse_opt_f64(get_or_empty(&parts, 2)); // progress.speed (bytes/sec)
-    let eta_secs = parse_opt_u64(get_or_empty(&parts, 3)); // progress.eta (seconds)
+                                                            // Fragment downloads (HLS/DASH) report a fractional ETA.
+    let eta_secs = parse_opt_f64(get_or_empty(&parts, 3)) // progress.eta (seconds)
+      .filter(|eta| eta.is_finite() && *eta >= 0.0)
+      .map(|eta| eta.round() as u64);
     let dl = parse_opt_u64(get_or_empty(&parts, 4)); // downloaded_bytes
     let total = parse_opt_u64(get_or_empty(&parts, 5)); // total_bytes
     let estimate = parse_opt_u64(get_or_empty(&parts, 6)); // total_bytes_estimate

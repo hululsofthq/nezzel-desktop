@@ -151,7 +151,7 @@ async function generateExternalToolsSection() {
       if (file.version) lines.push(`  ${platform}: ${file.version}`);
     }
   }
-  for (const path of ['licenses/tools-NOTICES.txt', 'scripts/ffmpeg-COPYING.GPLv3',
+  for (const path of ['licenses/tools-NOTICES.txt', 'licenses/filters-NOTICE.txt', 'scripts/ffmpeg-COPYING.GPLv3',
     'scripts/deno-LICENSE', 'scripts/yt-dlp-LICENSE', 'scripts/yt-dlp-bundled-NOTICES.txt']) {
     lines.push('');
     lines.push(readFileSync(path, 'utf8'));

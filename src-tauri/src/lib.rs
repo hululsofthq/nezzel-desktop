@@ -1,6 +1,7 @@
 mod background;
 mod binaries;
 mod capture;
+pub mod catch;
 mod commands;
 #[cfg(test)]
 mod contract;
@@ -74,15 +75,20 @@ pub struct FetchLimiter(pub Arc<DynamicSemaphore>);
 /// Will panic if an error occurs during tauri setup.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let app = tauri::Builder::default()
+  let app = catch::window::with_crash_hook(tauri::Builder::default())
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_store::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_keyring::init())
-    .plugin(tauri_plugin_shell::init())
-    .plugin(tauri_plugin_opener::init())
+    // Its click script would run in Catch browser tabs too and swallow their new-tab links
+    // (#111); the app's own windows install the same handler in src/externalLinks.ts.
+    .plugin(
+      tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build(),
+    )
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .plugin(tauri_plugin_autostart::init(
       MacosLauncher::LaunchAgent,
@@ -175,6 +181,8 @@ pub fn run() {
 
       handle.manage(stronghold_state::StrongholdState::new(stronghold_path));
       handle.manage(capture::CaptureState::default());
+      handle.manage(catch::window::CatchWindows::default());
+      catch::auto::setup(handle);
 
       create_main_window(handle, &path_handle)?;
 
@@ -230,6 +238,33 @@ pub fn run() {
         tray::capture_tray_progress,
         capture::capture_try_link,
         capture::capture_open_automation_settings,
+        catch::commands::catch_open,
+        catch::commands::catch_navigate,
+        catch::commands::catch_save,
+        catch::commands::catch_formats,
+        catch::commands::catch_allow_popup_once,
+        catch::commands::catch_forget_site,
+        catch::commands::catch_deep_retry,
+        catch::site_tools::catch_use_browser_signin,
+        catch::site_tools::catch_try_mobile,
+        catch::adblock::catch_adblock_set,
+        catch::commands::catch_close,
+        catch::commands::catch_bar_ready,
+        catch::commands::catch_bar_fit,
+        catch::commands::catch_show_download,
+        catch::commands::catch_report,
+        catch::commands::catch_search_engine_get,
+        catch::commands::catch_search_engine_set,
+        catch::hidden_signin::catch_signin_off_get,
+        catch::hidden_signin::catch_signin_off_set,
+        catch::commands::catch_tab_new,
+        catch::commands::catch_tab_select,
+        catch::commands::catch_tab_close,
+        catch::commands::catch_shell_fit,
+        catch::commands::catch_home,
+        catch::commands::catch_clear_recent,
+        catch::auto::catch_auto_cancel,
+        catch::auto::catch_auto_download,
         background::close_note_ready,
         background::close_note_done,
         background::window_motion_pref,
@@ -300,7 +335,9 @@ pub fn run() {
       capture::clipboard::stop_reads();
     }
     if matches!(_event, tauri::RunEvent::Exit) {
+      catch::auto::stop_all(_app_handle);
       runners::ytdlp_process::terminate_all_live(std::time::Duration::from_millis(1500));
+      catch::window::stop_all(_app_handle);
       diagnostics::on_clean_exit(_app_handle);
       usage::on_exit(_app_handle);
     }
@@ -344,6 +381,11 @@ fn create_main_window(app: &AppHandle, paths: &PathsManager) -> tauri::Result<()
 }
 
 pub fn init_tracing() {
+  // A tester can enable the URL-free tab trace in the same file as the popup decisions.
+  let link_trace = match std::env::var("NEZZEL_CATCH_LINK_TRACE").as_deref() {
+    Ok("1") => LevelFilter::DEBUG,
+    _ => LevelFilter::INFO,
+  };
   let fmt_layer = fmt::layer().with_filter(
     Targets::new()
       .with_target("tauri_plugin_updater", LevelFilter::OFF)
@@ -370,6 +412,7 @@ pub fn init_tracing() {
         )
         .with_target("h2", LevelFilter::OFF)
         .with_target("hyper_util", LevelFilter::OFF)
+        .with_target(catch::window::LINK_TRACE_TARGET, link_trace)
         .with_default(LevelFilter::INFO),
     );
 

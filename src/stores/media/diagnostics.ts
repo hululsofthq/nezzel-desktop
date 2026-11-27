@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { MediaState, useMediaStateStore } from './state.ts';
 import { useMediaGroupStore } from './group.ts';
 import { notifyGroup } from '../../tauri/notifications';
@@ -22,6 +22,29 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
   const attempts = ref<Record<string, MediaAttempts>>({});
   const fatals = ref<Record<string, MediaFatal>>({});
 
+  const diagnosticsByGroupId = computed(() => {
+    const byGroup = new Map<string, MediaDiagnostic[]>();
+    // Keep each item's history together and preserve the order of the item buckets.
+    for (const items of Object.values(diagnostics.value)) {
+      for (const groupId of new Set(items.map(item => item.groupId))) {
+        const entries = byGroup.get(groupId);
+        if (entries) entries.push(...items);
+        else byGroup.set(groupId, [...items]);
+      }
+    }
+    return byGroup;
+  });
+
+  const fatalsByGroupId = computed(() => {
+    const byGroup = new Map<string, MediaFatal[]>();
+    for (const fatal of Object.values(fatals.value)) {
+      const entries = byGroup.get(fatal.groupId);
+      if (entries) entries.push(fatal);
+      else byGroup.set(fatal.groupId, [fatal]);
+    }
+    return byGroup;
+  });
+
   const stateStore = useMediaStateStore();
   const groupStore = useMediaGroupStore();
   const mediaStore = useMediaStore();
@@ -41,7 +64,7 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
     diagnostics.value[payload.id].push(payload);
   }
 
-  function processMediaFatalPayload(payload: MediaFatal) {
+  function processMediaFatalPayload(payload: MediaFatal, options: { report?: boolean } = {}) {
     const { groupId } = payload;
     const group = groupStore.findGroupById(groupId);
     if (!group) return;
@@ -64,12 +87,14 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
       }
       return;
     }
-    // Automatic report (Rust checks the Settings switch and sends the link shape only).
-    reportFailedDownload({
-      context: downloadReportContext(findLastDiagnosticByGroupId(groupId)?.code, payload.exitCode, findAttemptsByGroupId(groupId)),
-      url: group.url ?? null,
-      extractor: group.extractor ?? null,
-    });
+    if (options.report !== false) {
+      // Automatic report (Rust checks the Settings switch and sends the link shape only).
+      reportFailedDownload({
+        context: downloadReportContext(findLastDiagnosticByGroupId(groupId)?.code, payload.exitCode, findAttemptsByGroupId(groupId)),
+        url: group.url ?? null,
+        extractor: group.extractor ?? null,
+      });
+    }
     if (currentState === MediaState.fetching || currentState === MediaState.fetchingList) {
       mediaStore.rejectPendingReadyGroup(groupId, payload.message);
     }
@@ -113,39 +138,23 @@ export const useMediaDiagnosticsStore = defineStore('media-diagnostics', () => {
   function findFatalsByGroupId(groupId: string): MediaFatal[] {
     const group = groupStore.findGroupById(groupId);
     if (!group) return [];
-    return Object.values(fatals.value).reduce(
-      (acc, fatal) => {
-        if (fatal.groupId === group.id) {
-          acc.push(fatal);
-        }
-        return acc;
-      },
-      [] as MediaFatal[],
-    );
+    return fatalsByGroupId.value.get(group.id)?.slice() ?? [];
   }
 
   function findDiagnosticsByGroupId(groupId: string): MediaDiagnostic[] {
     const group = groupStore.findGroupById(groupId);
     if (!group) return [];
-    return Object.values(diagnostics.value).reduce(
-      (acc, items) => {
-        if (items.some(i => i.groupId === group.id)) {
-          acc.push(...items);
-        }
-        return acc;
-      },
-      [] as MediaDiagnostic[],
-    );
+    return diagnosticsByGroupId.value.get(group.id)?.slice() ?? [];
   }
 
   function findLastFatalByGroupId(groupId: string): MediaFatal | undefined {
-    const fatals = findFatalsByGroupId(groupId);
-    return fatals[fatals.length - 1];
+    const group = groupStore.findGroupById(groupId);
+    return group ? fatalsByGroupId.value.get(group.id)?.at(-1) : undefined;
   }
 
   function findLastDiagnosticByGroupId(groupId: string): MediaDiagnostic | undefined {
-    const diagnostics = findDiagnosticsByGroupId(groupId);
-    return diagnostics[diagnostics.length - 1];
+    const group = groupStore.findGroupById(groupId);
+    return group ? diagnosticsByGroupId.value.get(group.id)?.at(-1) : undefined;
   }
 
   function removeDiagnostics(id: string) {

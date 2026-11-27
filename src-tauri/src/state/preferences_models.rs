@@ -83,6 +83,17 @@ impl OnboardingPreferences {
   }
 }
 
+/// Where words typed in the Nezzel browser are searched.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchEngine {
+  #[default]
+  DuckDuckGo,
+  Google,
+  Bing,
+  Brave,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
@@ -91,4 +102,7 @@ pub struct Preferences {
   pub formats: FormatPreferences,
   pub window: WindowPreferences,
   pub onboarding: OnboardingPreferences,
+  pub search_engine: SearchEngine,
+  /// "Searching with …" was shown after the first search.
+  pub search_hint_shown: bool,
 }

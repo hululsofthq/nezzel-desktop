@@ -402,6 +402,7 @@ async fn session(
         )
       }),
       now,
+      None,
     );
     let proof = proof && fresh_proof(interactive, &before, &proof_signature(domain, &cookies));
     match close_decision(

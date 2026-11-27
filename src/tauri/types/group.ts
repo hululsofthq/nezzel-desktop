@@ -2,7 +2,10 @@ import { Chapter, EntryItem, MediaAttachment, MediaCodec, MediaFormat, MediaItem
 
 export type Group = {
   id: string;
+  caught?: boolean;
   mediaKind?: SourceMediaKind;
+  /** The pasted page, when it only embeds this media from another site (copied from the leader item). */
+  embeddedIn?: string;
   attachments?: MediaAttachment[];
   savedAttachmentSummary?: { photos: number; videos: number };
   /** Whole seconds SponsorBlock cut out of the saved video. */

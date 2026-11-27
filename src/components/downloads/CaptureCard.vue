@@ -34,17 +34,31 @@
       <div class="flex min-w-0 items-start gap-2.5">
         <img v-if="offer.remoteImages && details.thumbnail && !thumbFailed" :src="details.thumbnail" alt="" class="h-12 w-16 shrink-0 rounded-md object-cover" referrerpolicy="no-referrer" @error="thumbFailed = true" />
         <div class="min-w-0 flex-1">
-          <p class="line-clamp-2 text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
+          <p class="text-start text-[13px] leading-[1.4] font-medium rtl:leading-[1.5]" :class="embedded ? 'line-clamp-1' : 'line-clamp-2'"><bdi dir="auto">{{ offer.title || offer.site }}</bdi></p>
           <p v-if="facts.length" class="tnum mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] whitespace-nowrap text-muted-foreground" data-testid="capture-best">
             <template v-for="(part, index) in facts" :key="index"><span v-if="index > 0" class="nz-sep" aria-hidden="true" /><bdi :dir="part.ltr ? 'ltr' : undefined" :class="part.strong && 'font-medium text-foreground'">{{ part.text }}</bdi></template>
           </p>
         </div>
       </div>
+      <!-- The page only embeds another site's video; the title gives up a line so the card keeps its height. -->
+      <CaptureAutoCatch v-if="autoBeside && auto && offer.auto" class="mt-1" :view="auto" :state="offer.auto" :site="offer.site" :busy="acting" @act="onAuto" />
+      <p v-else-if="embedded" class="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] leading-4 text-muted-foreground" data-testid="capture-embed-hint">
+        <span>{{ t('catch.embed.question') }}</span>
+        <Button variant="link" class="h-auto px-0 text-[12px]" :disabled="acting" data-testid="capture-embed-open" @click="onFail('catch')">{{ t('catch.embed.open') }}</Button>
+      </p>
     </template>
-    <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" />
+    <CaptureAutoCatch v-else-if="autoOwns && auto && offer.auto" :view="auto" :state="offer.auto" :site="offer.site" :busy="acting" @act="onAuto" />
+    <CaptureFailure v-else-if="failed" :reason="failure" :site="offer.site" :catchable="catchable" />
     <p v-else class="text-[12.5px] text-muted-foreground" role="status">{{ slow ? t('capture.stillReading') : t('capture.loading') }}</p>
     <div class="mt-auto flex items-center justify-end gap-1.5">
-      <CaptureFailActions v-if="failed" :reason="failure" :busy="acting" @act="onFail" />
+      <!-- Automatic catch: Cancel while looking, Download what it found; a note has no button. -->
+      <div v-if="autoOwns && auto" class="flex items-center gap-2" data-testid="capture-auto-actions">
+        <Button v-if="auto.kind === 'looking'" type="button" variant="outline" size="sm" data-testid="capture-auto-cancel" @click="onAuto('cancel')">{{ t('catch.auto.cancel') }}</Button>
+        <Button v-else-if="auto.kind === 'found'" type="button" size="sm" :disabled="acting" :aria-busy="acting || undefined" data-testid="capture-auto-download" @click="onAuto('download')">
+          <LoaderCircle v-if="acting" class="animate-spin" aria-hidden="true" /><ArrowDownToLine v-else aria-hidden="true" />{{ acting ? t('capture.starting') : t('downloads.row.download') }}
+        </Button>
+      </div>
+      <CaptureFailActions v-else-if="failed" :reason="failure" :catchable="catchable" :busy="acting" compact @act="onFail" />
       <template v-else>
         <Button variant="ghost" size="sm" class="-ms-2 me-auto px-2 text-muted-foreground" :disabled="!offer.url || acting" @click="act('options')">{{ t('capture.options') }}</Button>
         <!-- Download best | ▾: one tap stays the fastest path; ▾ opens every format the link offers. -->
@@ -102,6 +116,7 @@ import Tooltip from '../ui/tooltip/Tooltip.vue';
 import CaptureFormats from './CaptureFormats.vue';
 import CaptureFailActions from './CaptureFailActions.vue';
 import CaptureFailure from './CaptureFailure.vue';
+import CaptureAutoCatch from './CaptureAutoCatch.vue';
 import { cardRows, pickChoice, type PickKey } from '../../helpers/captureChoices';
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { ArrowDownToLine, ChevronDown, ClipboardCheck, LoaderCircle, X } from '@lucide/vue';
@@ -114,7 +129,7 @@ import { CAPTURE_CARD_SIZE, type CaptureChoice } from '@/generated/contract';
 
 const { t, locale } = useI18n();
 const panel = ref<HTMLElement>();
-const { offer, error, acting, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, isPlaylist, choicesLoading, logo, favicon, facts, act, onFail, start } = useCaptureOffer();
+const { offer, error, acting, slow, thumbFailed, faviconFailed, details, failure, failed, catchable, embedded, auto, autoOwns, autoBeside, onAuto, automaticLogin, isPlaylist, choicesLoading, logo, favicon, facts, act, onFail, start } = useCaptureOffer();
 
 const rtl = computed(() => localeDirection(locale.value) === 'rtl');
 /** The card's format menu only contains known formats. */

@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { remoteImagesAllowed } from '../../src/helpers/remoteImages';
+import { isCaughtThumbnail, remoteImagesAllowed } from '../../src/helpers/remoteImages';
+
+describe('caught thumbnails', () => {
+  it.each([
+    ['data:image/jpeg;base64,/9j/AA==', true],
+    ['data:image/svg+xml,<svg onload=alert(1)>', false],
+    ['data:image/png;base64,AA==', false],
+    ['https://example.com/poster.jpg', false],
+    ['asset://localhost/thumb.jpg', false],
+    ['', false],
+    [null, false],
+    [undefined, false],
+  ])('%s -> %s', (src, ok) => {
+    expect(isCaughtThumbnail(src)).toBe(ok);
+  });
+});
 
 describe('remote image privacy', () => {
   it.each([

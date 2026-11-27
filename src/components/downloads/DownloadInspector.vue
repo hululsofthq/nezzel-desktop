@@ -27,7 +27,14 @@
             </span>
           </p>
           <LoginProfile :group-id="group.id" :disabled="loginBusy" class="mt-1" />
-          <i18n-t v-if="sizeLabel && !isFile" keypath="sheet.size" tag="p" scope="global" class="mt-0.5 text-[12px] text-muted-foreground"><template #size><bdi dir="ltr">{{ sizeLabel }}</bdi></template></i18n-t>
+          <div v-if="sizeLabel" role="group" :aria-label="t('sheet.size', { size: sizeLabel })" class="mt-0.5 text-[12px] text-muted-foreground">
+            <i18n-t keypath="sheet.size" tag="span" scope="global" aria-hidden="true"><template #size><bdi dir="ltr">{{ sizeLabel }}</bdi></template></i18n-t>
+          </div>
+          <!-- The page only embeds another site's video: a quiet way to the page's own video, never instead of Download. -->
+          <p v-if="embedPage" class="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12px] text-muted-foreground" data-testid="sheet-embed-hint">
+            <span>{{ t('catch.embed.question') }}</span>
+            <Button variant="link" class="h-auto min-h-6 px-0 text-[12px]" data-testid="sheet-embed-open" @click="openCatch(embedPage)">{{ t('catch.embed.open') }}</Button>
+          </p>
         </div>
       </div>
 
@@ -150,7 +157,9 @@ import { shortFolderPath } from '../../helpers/folderPath';
 import { activeInputFilterKinds } from '../../helpers/inputFilters';
 import { useRouter } from 'vue-router';
 import { useLocaleNumber } from '../../composables/useLocaleNumber';
-import type { DownloadOptions } from '../../tauri/types/media';
+import { useOpenCatch } from '../../composables/useOpenCatch';
+import { embedCatchPage } from '../../helpers/catchOffer';
+import { AudioPostprocessPreset, type DownloadOptions } from '../../tauri/types/media';
 import { FILES_FOLDER, SMALL_MAX_HEIGHT } from '@/generated/contract';
 
 defineProps<{ modal?: boolean }>();
@@ -176,6 +185,9 @@ const panel = ref<HTMLElement | null>(null);
 const playlistPicker = ref<{ applySelection: () => Promise<boolean>; isApplying: boolean } | null>(null);
 
 const group = computed(() => (sheet.groupId ? groupStore.findGroupById(sheet.groupId) : undefined));
+const openCatch = useOpenCatch();
+/** The pasted page, when the media found is another site's video it only embeds. */
+const embedPage = computed(() => (group.value?.caught ? null : embedCatchPage(group.value?.embeddedIn)));
 const router = useRouter();
 const filtersOnLabel = computed(() => {
   const kinds = activeInputFilterKinds(sheet.groupId ? optionsStore.getOverrides(sheet.groupId)?.inputFilters : undefined);
@@ -315,14 +327,32 @@ const advancedOptions = computed<DownloadOptions | undefined>({
   },
 });
 
+const presetSizes = computed(() => {
+  const g = group.value;
+  if (!g || g.isCombined || g.entries || hasAttachments.value || !settingsStore.settings.performance.autoLoadSize) return;
+  const overrides = optionsStore.getOverrides(g.id);
+  const tracks = optionsStore.getTracks(g.id);
+  const encodings = optionsStore.getEncodings(g.id);
+  if (overrides?.output?.video || overrides?.output?.audio || overrides?.output?.partialDownload?.section
+    || (tracks?.audio && tracks.audio !== 'auto') || (tracks?.video && tracks.video !== 'auto')
+    || encodings?.audio || encodings?.video) return;
+  // Preset sizes describe the selected streams before any SponsorBlock cuts.
+  const sizes = groupStore.findGroupLeader(g.id)?.presetSizes;
+  const { video, audio } = settingsStore.settings.output;
+  const output = [video.container, video.policy, video.postprocessPreset, video.customPostprocessMode,
+    !!video.postprocessArgs.trim(), video.keepOriginalCodec, audio.format, audio.policy, audio.postprocessPreset,
+    (audio.postprocessPreset === AudioPostprocessPreset.custom && audio.postprocessArgs.trim()) || false];
+  if (sizes?.output && JSON.stringify(sizes.output) !== JSON.stringify(output)) return;
+  return sizes;
+});
+
 const tiles = computed(() => {
   const best = choiceHeight('best', formats.value);
   const small = choiceHeight('small', formats.value);
   const audioOnly = !isReading.value && !!group.value && hasAudio(group.value) && formats.value.length > 0 && best === undefined
     && group.value?.mediaKind !== 'video' && group.value?.mediaKind !== 'mixed';
   const hintWithSize = (pick: QuickChoice, hint: string) => {
-    const g = group.value;
-    const size = g && !g.isCombined ? sizeStore.getSizeForGroup(g.id, optionsForChoice(pick, formats.value, g.mediaKind))?.size : undefined;
+    const size = presetSizes.value?.[pick];
     return { hint, size: size ? formatSizeLocal(size) : undefined };
   };
   const smallDisabled = audioOnly || (small !== undefined && small === best);
@@ -339,20 +369,23 @@ const tiles = computed(() => {
 });
 
 const sizeLabel = computed(() => {
-  if (isFile.value) return group.value?.filesize ? formatSizeLocal(group.value.filesize) : undefined;
-  if (!group.value || isImageOnly.value || !currentOptions.value || group.value.isCombined) return undefined;
-  const size = sizeStore.getSizeForGroup(group.value.id, currentOptions.value)?.size;
+  const g = group.value;
+  const options = currentOptions.value;
+  if (!g || isFile.value || isImageOnly.value || !options || g.isCombined) return;
+  const size = choice.value
+    ? presetSizes.value?.[choice.value]
+    : sizeStore.getSizeForGroup(g.id, options)?.size;
   return size ? formatSizeLocal(size) : undefined;
 });
 
-watch(currentOptions, (options) => {
+watch([currentOptions, choice, () => sheet.open], ([options, preset, open]) => {
   const g = group.value;
-  if (!sheet.open || !g || g.entries || hasAttachments.value || isFile.value || !options || g.isCombined || !settingsStore.settings.performance.autoLoadSize) return;
-  const existing = sizeStore.getSizeForGroup(g.id, options);
-  if (existing) return;
+  if (!open || !g || preset || !options || g.entries || hasAttachments.value || isFile.value || g.isCombined
+    || !settingsStore.settings.performance.autoLoadSize) return;
+  if (sizeStore.getSizeForGroup(g.id, options)) return;
   const firstItem = g.items[Object.keys(g.items)[0]];
   if (firstItem) void sizeStore.requestSize(g.url ?? '', g.id, firstItem.id, options);
-});
+}, { immediate: true });
 
 const metaParts = computed(() => [
   site.value,

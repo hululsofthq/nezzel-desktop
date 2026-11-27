@@ -1,0 +1,18 @@
+{
+  "id": "size-fixture",
+  "title": "85-second video",
+  "extractor": "youtube",
+  "extractor_key": "Youtube",
+  "webpage_url": "https://www.youtube.com/watch?v=mPcoBfQ5j-k",
+  "duration": 85,
+  "filesize_approx": 4800000,
+  "formats": [
+    {"format_id":"sb0","ext":"mhtml","vcodec":"none","acodec":"none","height":90},
+    {"format_id":"140","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2","abr":128,"filesize_approx":1480099.75},
+    {"format_id":"18","ext":"mp4","vcodec":"avc1.42001e","acodec":"mp4a.40.2","height":360,"fps":30,"filesize":4800000},
+    {"format_id":"298","ext":"mp4","vcodec":"avc1.4d4020","acodec":"none","height":720,"fps":60,"tbr":1608},
+    {"format_id":"299","ext":"mp4","vcodec":"avc1.64002a","acodec":"none","height":1080,"fps":60,"filesize":29900000,"filesize_approx":42900000}
+  ],
+  "requested_downloads": [{"format_id":"18","filesize":4800000}],
+  "_nezzel_preset_formats": {"best":["299","140"],"small":["298","140"],"audio":["140"]}
+}

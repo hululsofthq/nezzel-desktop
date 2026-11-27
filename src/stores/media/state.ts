@@ -7,6 +7,7 @@ export const enum MediaState {
   fetchingList = 'fetchingList',
   playlistSelection = 'playlistSelection',
   configure = 'configure',
+  needsRefresh = 'needsRefresh',
   downloading = 'downloading',
   downloadingList = 'downloadingList',
   paused = 'paused',

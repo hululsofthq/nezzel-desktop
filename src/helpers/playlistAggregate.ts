@@ -58,7 +58,7 @@ export function playlistAggregate(children: PlaylistChildFacts[]): PlaylistAggre
   let partial = 0;
   let sizesKnown = true;
   for (const child of children) {
-    if (child.needsLogin) a.needsYou = true;
+    if (child.needsLogin || child.phase === 'needsRefresh') a.needsYou = true;
     const size = child.size && child.size > 0 ? child.size : 0;
     const key = COUNTER[child.phase === 'downloading' && child.queued ? 'queued' : child.phase];
     if (key) a[key]++;

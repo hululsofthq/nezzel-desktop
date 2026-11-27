@@ -83,6 +83,7 @@ pub struct YtdlpRunner<'a> {
   temporary_files: Option<Arc<super::ytdlp_download::DownloadPartial>>,
   /// Credential options for a private config file (`--config-locations <file>`), never argv.
   auth_config: Option<String>,
+  capture_route: Option<crate::catch::route::Route>,
 }
 
 impl<'a> YtdlpRunner<'a> {
@@ -106,7 +107,23 @@ impl<'a> YtdlpRunner<'a> {
       cookie_access: None,
       temporary_files: None,
       auth_config: None,
+      capture_route: None,
     }
+  }
+
+  pub(crate) fn app_handle(&self) -> &'a AppHandle {
+    self.app
+  }
+
+  pub(crate) fn with_capture_route(
+    mut self,
+    route: crate::catch::route::Route,
+    cookies: super::browser_cookies::CookieAccess,
+  ) -> Self {
+    self.args.extend(["--proxy".into(), route.proxy.clone()]);
+    self.cookie_access = Some(cookies);
+    self.capture_route = Some(route);
+    self
   }
 
   pub fn with_args<I, S>(mut self, args: I) -> Self
@@ -389,6 +406,7 @@ impl<'a> YtdlpRunner<'a> {
     let listing = self.args.iter().any(|arg| arg == "-j")
       && self.args.iter().any(|arg| arg == "--flat-playlist");
     let source = self.args.last().cloned().unwrap_or_default();
+    let private_output = self.capture_route.is_some();
     let mut cancel = crate::scheduling::group_state::subscribe_group(group_id);
     if !*cancel.borrow() {
       return Ok(None);
@@ -406,7 +424,7 @@ impl<'a> YtdlpRunner<'a> {
     if listing {
       collect_listing_output(rx, child, cancel, deadline, &source).await
     } else {
-      collect_output(rx, child, cancel, deadline).await
+      collect_output(rx, child, cancel, deadline, private_output).await
     }
   }
 
@@ -469,7 +487,9 @@ impl<'a> YtdlpRunner<'a> {
       None => None,
     };
     let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
-    log_run_summary(&self.args);
+    if self.capture_route.is_none() {
+      log_run_summary(&self.args);
+    }
     let mut command = self.build_command()?;
     command
       .stdin(Stdio::piped())
@@ -509,17 +529,20 @@ impl<'a> YtdlpRunner<'a> {
     let reap_token = platform.reap_token();
     let child_cookies = cookies.clone();
     let temporary_files = self.temporary_files.take();
+    let capture_route = self.capture_route.take();
     thread::spawn(move || {
       let _temporary_files = temporary_files;
       let _credential_file = credential_file;
       let _process_guard = process_guard;
       let cookie_guard = cookies;
       let status = raw_child.wait();
+      #[cfg_attr(not(unix), allow(clippy::drop_non_drop))]
       drop(reap_token);
       for reader in readers {
         let _ = reader.join();
       }
       drop(cookie_guard);
+      drop(capture_route);
       match status {
         Ok(status) => {
           let payload = TerminatedPayload {
@@ -608,6 +631,7 @@ fn prepare_credential_dir(dir: &std::path::Path) -> std::io::Result<()> {
   if let Some(parent) = dir.parent() {
     std::fs::create_dir_all(parent)?;
   }
+  #[cfg_attr(not(unix), allow(unused_mut))]
   let mut builder = std::fs::DirBuilder::new();
   #[cfg(unix)]
   {
@@ -865,6 +889,7 @@ async fn collect_output(
   child: YtdlpChild,
   mut cancel: watch::Receiver<bool>,
   deadline: Deadline,
+  _private_output: bool,
 ) -> Result<Option<YtdlpOutput>, String> {
   let has_session = child
     ._cookies
@@ -883,7 +908,9 @@ async fn collect_output(
           }
           Some(YtdlpCommandEvent::Stderr(line)) => {
             #[cfg(feature = "link-matrix")]
-            crate::link_matrix::observe_gallery_stderr(&line);
+            if !_private_output {
+              crate::link_matrix::observe_gallery_stderr(&line);
+            }
             stderr.extend(line);
             stderr.push(b'\n');
           }
@@ -1862,7 +1889,7 @@ mod tests {
         platform: PlatformProcess::detached(),
         _cookies: None,
       };
-      let result = collect_output(rx, child, cancel, deadline).await;
+      let result = collect_output(rx, child, cancel, deadline, false).await;
       sender.abort();
       assert_eq!(result.is_err(), timeout, "{args:?}");
       if timeout {
@@ -1892,7 +1919,13 @@ mod tests {
       };
       let (_event_tx, rx) = unbounded_channel();
       let (cancel_tx, cancel) = watch::channel(true);
-      let wait = collect_output(rx, child, cancel, Deadline::now() + Duration::from_secs(60));
+      let wait = collect_output(
+        rx,
+        child,
+        cancel,
+        Deadline::now() + Duration::from_secs(60),
+        false,
+      );
       match mode {
         "deadline" => assert_eq!(wait.await.unwrap_err(), FETCH_TIMEOUT),
         "cancel" => {
@@ -1962,9 +1995,15 @@ mod tests {
     };
     let (_event_tx, rx) = unbounded_channel();
     assert_eq!(
-      collect_output(rx, child, cancel, Deadline::now() + Duration::from_secs(60))
-        .await
-        .unwrap_err(),
+      collect_output(
+        rx,
+        child,
+        cancel,
+        Deadline::now() + Duration::from_secs(60),
+        false
+      )
+      .await
+      .unwrap_err(),
       FETCH_TIMEOUT
     );
     raw.wait().unwrap();

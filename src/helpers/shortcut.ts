@@ -175,6 +175,8 @@ export const BUILT_IN_KEYS = {
   sidebar: 'CommandOrControl+B',
   sidebarAlt: 'CommandOrControl+\\',
   settings: 'CommandOrControl+,',
+  /** Open the Nezzel browser (also the macOS File menu item). */
+  browser: 'CommandOrControl+Shift+B',
 } as const;
 export type BuiltInKey = keyof typeof BUILT_IN_KEYS;
 
@@ -189,19 +191,28 @@ export const IN_APP_ACTIONS: Record<keyof typeof IN_APP_SHORTCUT_DEFAULTS, Short
   addAndDownload: 'media_add_and_download',
 };
 
-/** Which built-in key a keydown is (⌘ or Ctrl on any platform, as before), or null. */
-export function builtInKeyOf(event: KeyLike): BuiltInKey | null {
+/**
+ * Which built-in key a keydown is (⌘ or Ctrl on any platform, as before), or null. The Nezzel browser key takes
+ * only the system's own modifier (⌃⇧B on a Mac stays free to bind) and, where the layout types no Latin letter
+ * (Arabic), the B key itself.
+ */
+export function builtInKeyOf(event: KeyLike, mac: boolean): BuiltInKey | null {
   if (!(event.metaKey || event.ctrlKey)) return null;
   const plain = !event.shiftKey && !event.altKey;
   const key = event.key.toLowerCase();
   if (plain && (key === '\\' || key === 'b')) return 'sidebar';
+  const primaryOnly = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  const keyB = /^[a-z]$/.test(key) ? key === 'b' : event.code === 'KeyB';
+  if (primaryOnly && event.shiftKey && !event.altKey && keyB) return 'browser';
   if (key === ',') return 'settings';
   if (key === 'v') return 'paste';
   return null;
 }
 
-/** `aria-keyshortcuts` value for a built-in key on either platform: "Meta+B Control+B". */
+/** `aria-keyshortcuts` value for a built-in key on either platform: "Meta+B Control+B", "Meta+Shift+B Control+Shift+B". */
 export function ariaKeyShortcuts(accelerator: string): string {
   const parsed = parseAccelerator(accelerator);
-  return parsed ? `Meta+${parsed.key} Control+${parsed.key}` : '';
+  if (!parsed) return '';
+  const rest = [...parsed.mods.filter(mod => mod !== 'CommandOrControl'), parsed.key].join('+');
+  return `Meta+${rest} Control+${rest}`;
 }

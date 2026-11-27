@@ -329,6 +329,52 @@ describe('media progress store', () => {
     expect(diagnosticsStore.findAttemptsByGroupId('g-attempts')).toEqual([]);
   });
 
+  it('returns a row’s diagnostics and fatals in order without rereading other rows', () => {
+    const diagnostics = useMediaDiagnosticsStore();
+    for (const id of ['target-row', 'other-row']) {
+      useMediaGroupStore().createGroup({ id, url: id, total: 2, processed: 0, errored: 0,
+        isCombined: true, audioCodecs: [], formats: [], filesize: 0, items: {} });
+    }
+    const first: MediaDiagnostic = { id: 'first', groupId: 'target-row', level: 'error', code: 'networkTimeout',
+      component: null, message: '', raw: '', timestamp: 1 };
+    const second = { ...first, id: 'second', timestamp: 2 };
+    const update = { ...first, timestamp: 3 };
+    const otherRowId = vi.fn(() => 'other-row');
+    diagnostics.processMediaDiagnosticPayload(first);
+    diagnostics.processMediaDiagnosticPayload(second);
+    diagnostics.processMediaDiagnosticPayload(update);
+    diagnostics.processMediaDiagnosticPayload({
+      ...first, id: 'other',
+      get groupId() {
+        return otherRowId();
+      },
+    });
+
+    const firstFatal: MediaFatal = { id: first.id, groupId: first.groupId, exitCode: 1, internal: false,
+      message: '', details: null, timestamp: 1 };
+    const secondFatal = { ...firstFatal, id: second.id, timestamp: 2 };
+    diagnostics.fatals[first.id] = firstFatal;
+    diagnostics.fatals[second.id] = secondFatal;
+    diagnostics.fatals.other = {
+      ...firstFatal, id: 'other',
+      get groupId() {
+        return otherRowId();
+      },
+    };
+
+    expect(diagnostics.findDiagnosticsByGroupId('target-row')).toEqual([first, update, second]);
+    expect(diagnostics.findFatalsByGroupId('target-row')).toEqual([firstFatal, secondFatal]);
+    otherRowId.mockClear();
+
+    expect(diagnostics.findLastDiagnosticByGroupId('target-row')).toEqual(second);
+    expect(diagnostics.findLastFatalByGroupId('target-row')).toEqual(secondFatal);
+    expect(otherRowId).not.toHaveBeenCalled();
+
+    diagnostics.removeDiagnostics(second.id);
+    expect(diagnostics.findLastDiagnosticByGroupId('target-row')).toEqual(update);
+    expect(diagnostics.findLastFatalByGroupId('target-row')).toEqual(firstFatal);
+  });
+
   describe('events for removed downloads', () => {
     const makeGroup = (id: string) => useMediaGroupStore().createGroup({
       id,

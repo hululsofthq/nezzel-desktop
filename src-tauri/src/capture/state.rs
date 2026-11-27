@@ -73,8 +73,13 @@ pub struct Offer {
   pub feed: bool,
   /// macOS refused the quick bar's browser read (Automation off); the bar links to the setting.
   pub automation_denied: bool,
+  /// The automatic catch of this link (`capture::auto`), when one runs or ran.
+  pub auto: Option<crate::catch::auto::CatchAutoState>,
   #[serde(skip)]
   pub(super) adopt_on_focus: bool,
+  /// Who brought the link (`policy::accepted_url`); the read re-applies the same rule.
+  #[serde(skip)]
+  pub(super) source: super::policy::Source,
 }
 
 impl Offer {
@@ -148,6 +153,7 @@ pub(super) enum ItemState {
 pub(super) struct Offers {
   card: Option<OfferSlot>,
   bar: Option<OfferSlot>,
+  pub(super) auto: Option<crate::catch::auto::AutoCatch>,
 }
 
 impl Offers {
@@ -183,6 +189,9 @@ impl Offers {
     let slot = self.slot_mut(window).take()?;
     if let Some(job) = slot.job {
       job.abort();
+    }
+    if let Some(auto) = &self.auto {
+      auto.cancel(&super::auto::group(slot.offer.id));
     }
     Some(slot.offer)
   }
@@ -306,11 +315,19 @@ impl Offers {
     if let Some(slot) = self.slot_mut(window) {
       slot.claim = match action {
         Action::Adopt => Claim::Adopted,
-        action => Claim::Done(action),
+        action => {
+          slot.offer.auto = None;
+          Claim::Done(action)
+        }
       };
     }
     if let Some(other) = retired {
       self.retire(other);
+    }
+    if action != Action::Adopt {
+      if let Some(auto) = &self.auto {
+        auto.cancel(&super::auto::group(id));
+      }
     }
     Ok(CaptureAction {
       id: row_id,
@@ -388,6 +405,8 @@ pub struct CaptureState {
   pub(super) sequence: AtomicU64,
   pub(super) quick_request: AtomicU64,
   pub(super) ready: AtomicBool,
+  /// Main-window preference mirrored here so automatic downloads need no preview card.
+  pub(super) skip_options_sheet: AtomicBool,
   /// Focus wakes the single watcher instead of starting a competing clipboard read.
   pub(super) clipboard_wake: tokio::sync::Notify,
   pub(super) started: Instant,
@@ -425,9 +444,12 @@ impl Default for CaptureState {
       cold_read_spent: AtomicBool::new(false),
       policy: Mutex::default(),
       offers: Mutex::default(),
-      sequence: AtomicU64::new(0),
+      // Queue snapshots keep capture IDs across restarts. Reserve a random range above
+      // legacy IDs, with room for increments inside JavaScript's exact integer range.
+      sequence: AtomicU64::new((1_u64 << 52) | (uuid::Uuid::new_v4().as_u128() >> 80) as u64),
       quick_request: AtomicU64::new(0),
       ready: AtomicBool::new(false),
+      skip_options_sheet: AtomicBool::new(false),
       clipboard_wake: tokio::sync::Notify::new(),
       started: Instant::now(),
       shortcut: Mutex::default(),
@@ -534,6 +556,22 @@ pub(super) fn dismiss_offer(state: &CaptureState, window: CaptureWindow, id: u64
 #[cfg(test)]
 pub(super) mod tests {
   use super::*;
+
+  #[test]
+  fn capture_ids_stay_distinct_across_restarts_and_fit_javascript_numbers() {
+    use std::sync::atomic::Ordering;
+
+    let first = CaptureState::default();
+    let next = CaptureState::default();
+    let issued = |state: &CaptureState| state.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+    let previous_id = issued(&first);
+    let current_id = issued(&next);
+    assert_ne!(previous_id, current_id);
+    assert_eq!(issued(&next), current_id + 1);
+    for id in [previous_id, current_id] {
+      assert!(((1_u64 << 52)..(1_u64 << 53)).contains(&id));
+    }
+  }
 
   #[test]
   fn read_completion_is_independent_of_title_and_success() {

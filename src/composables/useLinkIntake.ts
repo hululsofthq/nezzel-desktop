@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import { useMediaStore } from '../stores/media/media';
@@ -16,6 +16,7 @@ import {
   isSupportedImportFile,
   parseUrlFileText,
   parseUrlInputText,
+  type UrlSkipReason,
 } from '../helpers/urlImport';
 import { isInputFiltersActive } from '../helpers/inputFilters';
 import { useDownloadSheetStore } from '../stores/downloadSheet';
@@ -29,7 +30,7 @@ import { countUsage } from '../tauri/usage';
  * skip it); several links, or Shift, download straight away with the default choice.
  */
 export function useLinkIntake() {
-  const { t } = useI18n();
+  const { t, n } = useI18n();
   const router = useRouter();
   const mediaStore = useMediaStore();
   const toastStore = useToastStore();
@@ -43,6 +44,16 @@ export function useLinkIntake() {
   const { content: clipboardContent } = useClipboard({ doPolling });
 
   const url = ref('');
+  const inputFeedback = ref<UrlSkipReason | number | null>(null);
+  watch(url, () => {
+    inputFeedback.value = null;
+  }, { flush: 'sync' });
+  const feedback = computed(() => {
+    const value = inputFeedback.value;
+    if (value === null) return '';
+    if (typeof value === 'number') return t('downloads.field.skipped', { count: n(value) }, value);
+    return value === 'invalid' ? t('feedback.invalidLink') : t(`downloads.field.${value}`);
+  });
   const clipboardHasValidUrl = computed(() => isValidUrl(clipboardContent));
 
   const placeholder = computed(() => {
@@ -71,7 +82,7 @@ export function useLinkIntake() {
       }
     }
 
-    if (!fromInput || result.urls.length > 1) {
+    if (!fromInput || (result.urls.length > 1 && !result.skipped)) {
       const toast = getUrlImportToast(result);
       toastStore.showToast(toast.message, { style: toast.style });
     }
@@ -88,14 +99,15 @@ export function useLinkIntake() {
       clipboardContent.value = fresh || null;
       text = fresh;
       if (!fresh) {
-        toastStore.showToast(t('feedback.invalidLink'), { style: 'warning' });
+        inputFeedback.value = 'invalid';
         return;
       }
     }
     if (!text) return;
     const parsed = parseUrlInputText(text);
     if (parsed.urls.length === 0) {
-      toastStore.showToast(t('feedback.invalidLink'), { style: 'warning' });
+      const reason = parsed.skipReasons.find(item => item !== 'invalid');
+      inputFeedback.value = reason && parsed.skipReasons.every(item => item === reason || item === 'invalid') ? reason : 'invalid';
       return;
     }
     void processParsedUrls(parsed, immediateDownload || skipOptionsSheet.value, true).catch(() => {
@@ -103,6 +115,7 @@ export function useLinkIntake() {
     });
     void router.push({ name: 'home' });
     url.value = '';
+    inputFeedback.value = parsed.skipped || null;
   }
 
   async function importFile(file: File | undefined, immediateDownload = false) {
@@ -127,6 +140,7 @@ export function useLinkIntake() {
     placeholder,
     clipboardHasValidUrl,
     canSubmit,
+    feedback,
     submit,
     importFile,
     hasActiveInputFilters,

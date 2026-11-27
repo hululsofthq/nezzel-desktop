@@ -45,6 +45,29 @@ pub const SHORTCUT_USED: &str = "shortcut.used";
 pub const REPORT_OPENED: &str = "report.opened";
 pub const LOGIN_PROFILE: &str = "login.profile";
 pub const WANT_LIVE_DOWNLOAD: &str = "want.live_download";
+pub const CATCH_USED: &str = "catch_used";
+pub const CATCH_SAVED: &str = "catch_saved";
+pub const CATCH_DRM: &str = "catch_drm";
+/// Automatic catch: a hidden session started / found a video.
+pub const CATCH_AUTO_USED: &str = "catch_auto_used";
+pub const CATCH_AUTO_FOUND: &str = "catch_auto_found";
+/// A tab opened in the Nezzel browser (a count only, never the site).
+pub const CATCH_TAB_OPENED: &str = "catch_tab_opened";
+/// Nezzel browser site tools: a browser sign-in imported / a page reloaded as iPhone.
+pub const CATCH_SIGNIN_IMPORTED: &str = "catch_signin_imported";
+pub const CATCH_MOBILE_RETRY: &str = "catch_mobile_retry";
+/// The user switched ad blocking off for a site (which sites break with blocking).
+pub const CATCH_ADBLOCK_OFF: &str = "catch_adblock_off";
+const CATCH_SITE: [&str; 8] = [
+  "catch_used:",
+  "catch_saved:",
+  "catch_drm:",
+  "catch_auto_used:",
+  "catch_auto_found:",
+  "catch_signin_imported:",
+  "catch_mobile_retry:",
+  "catch_adblock_off:",
+];
 pub const USAGE_CAPPED: &str = "usage.capped";
 
 /// Keys the web UI may count through `usage_count`; everything else is counted in Rust where it happens.
@@ -154,7 +177,20 @@ pub const FAILURE_CODES: &[&str] = &[
 ];
 
 /// Prefixes whose rest is made up from a link (open keys); everything else is fixed.
-pub const OPEN_PREFIXES: [&str; 4] = [SITE, SITE_IN, SITE_FAIL, OPTIONS_SITE];
+pub const OPEN_PREFIXES: [&str; 12] = [
+  SITE,
+  SITE_IN,
+  SITE_FAIL,
+  OPTIONS_SITE,
+  CATCH_SITE[0],
+  CATCH_SITE[1],
+  CATCH_SITE[2],
+  CATCH_SITE[3],
+  CATCH_SITE[4],
+  CATCH_SITE[5],
+  CATCH_SITE[6],
+  CATCH_SITE[7],
+];
 
 pub const DOWNLOAD_EVENTS: [&str; 4] = ["started", "finished", "failed", "cancelled"];
 const VIDEO_TIERS: [&str; 7] = ["low", "sd", "hd", "fhd", "qhd", "uhd", "unknown"];
@@ -209,6 +245,15 @@ pub static FIXED: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
     REPORT_OPENED,
     LOGIN_PROFILE,
     WANT_LIVE_DOWNLOAD,
+    CATCH_USED,
+    CATCH_SAVED,
+    CATCH_DRM,
+    CATCH_AUTO_USED,
+    CATCH_AUTO_FOUND,
+    CATCH_TAB_OPENED,
+    CATCH_SIGNIN_IMPORTED,
+    CATCH_MOBILE_RETRY,
+    CATCH_ADBLOCK_OFF,
     USAGE_CAPPED,
   ]
   .into_iter()
@@ -283,6 +328,7 @@ pub fn allowed(key: &str) -> bool {
   }
   [SITE, SITE_IN, SITE_FAIL]
     .iter()
+    .chain(&CATCH_SITE)
     .any(|prefix| key.strip_prefix(prefix).is_some_and(domain_ok))
 }
 

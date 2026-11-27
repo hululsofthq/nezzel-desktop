@@ -1,6 +1,6 @@
 //! Reading a link for its card: the engine chain (file shares, gallery, yt-dlp) and the read's result.
 
-use super::preview::{self, FailReason};
+use super::preview::{self, FailReason, ReadFailure};
 use super::state::{CaptureState, Offer};
 use super::window::{wake_window, CaptureWindow};
 use crate::models::parsed::FetchEngine;
@@ -20,13 +20,15 @@ pub(super) async fn preview(app: AppHandle, window: CaptureWindow, value: Offer)
     reason = result
       .as_ref()
       .err()
-      .map(|reason| reason.as_str())
+      .map(|failure| failure.reason.as_str())
       .unwrap_or(""),
     "Capture preview read"
   );
+  let ended = super::auto::Ended::of(&result);
   let state = app.state::<CaptureState>();
   let recorded = record_preview(&mut state.offers.lock().unwrap(), window, value.id, result);
   if recorded {
+    ended.start(&app, value.id, &value.url);
     wake_window(&app, window);
   }
   state.changed.notify_waiters();
@@ -36,7 +38,7 @@ fn record_preview(
   offers: &mut super::state::Offers,
   window: CaptureWindow,
   id: u64,
-  result: Result<Option<PreviewItem>, FailReason>,
+  result: Result<Option<PreviewItem>, ReadFailure>,
 ) -> bool {
   match result {
     Ok(Some((item, details))) => offers.record_read(window, id, Some(item), details, None),
@@ -45,7 +47,7 @@ fn record_preview(
       offers.dismiss(window, id);
       held
     }
-    Err(reason) => offers.record_read(window, id, None, None, Some(reason)),
+    Err(failure) => offers.record_read(window, id, None, None, Some(failure.reason)),
   }
 }
 
@@ -82,9 +84,14 @@ enum Engine {
 
 /// Capture admission, then engines in registry order. Previews are anonymous and silent:
 /// no login session, group cancellation, attempt reports or terminal events.
+#[cfg(test)]
 fn preview_plan(url: &str, proxy: bool) -> Vec<Engine> {
-  // A resolved short link is still clipboard input: re-apply capture's site/path policy.
-  let Some((_, host)) = super::policy::supported_url(url) else {
+  plan_for(url, proxy, super::policy::Source::Watch)
+}
+
+fn plan_for(url: &str, proxy: bool, source: super::policy::Source) -> Vec<Engine> {
+  // A resolved short link is still the same input: re-apply capture's site/path policy.
+  let Some((_, host)) = super::policy::accepted_url(url, source) else {
     return Vec::new();
   };
   // A proxy (or a non-redirecting shortener) can leave the destination unknown. Only
@@ -119,12 +126,12 @@ fn preview_plan(url: &str, proxy: bool) -> Vec<Engine> {
   plan
 }
 
-async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewItem>, FailReason> {
+async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewItem>, ReadFailure> {
   let network = app.state::<SharedConfig>().load().network.clone();
   let proxy = network.enable_proxy == Some(true);
   // Check before any engine: a configured but empty proxy must never go direct.
   if proxy && network.proxy.as_deref().is_none_or(|p| p.trim().is_empty()) {
-    return Err(FailReason::Network);
+    return Err(FailReason::Network.into());
   }
   let mut normalized = value.clone();
   normalized.url = crate::links::normalize::resolve(&value.url, proxy)
@@ -132,7 +139,8 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
     .map_err(|_| FailReason::Network)?
     .into();
   let value = &normalized;
-  let plan = preview_plan(&value.url, proxy);
+  admit_named(value).await?;
+  let plan = plan_for(&value.url, proxy, value.source);
   if plan.is_empty() {
     return Ok(None);
   }
@@ -140,14 +148,14 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
   // What yt-dlp reads: the copied link, or the one a reader found for it.
   let mut target = crate::resolve::ResolvedInput::new(&value.url);
   // The first failure is the one the card explains; later engines are only fallbacks.
-  let mut failed: Option<FailReason> = None;
+  let mut failed = None;
   // The reader's post title; the media file name it hands yt-dlp is not one.
   let mut post_title: Option<String> = None;
   for engine in plan {
     match engine {
       Engine::Files => {
         if proxy {
-          return Err(FailReason::Unknown);
+          return Err(FailReason::Unknown.into());
         }
         return tokio::time::timeout(
           value.read_limit(),
@@ -155,7 +163,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
         )
         .await
         .map_err(|_| FailReason::Slow)?
-        .map_err(|_| FailReason::Unknown)
+        .map_err(|_| FailReason::Unknown.into())
         .map(|item| Some((with_engine(item, FetchEngine::Files), None)));
       }
       Engine::Gallery => {
@@ -172,7 +180,7 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
           // A login wall leaves the media type unknown. The foreground fetch must resolve it with
           // consented cookies instead of caching a yt-dlp preview.
           Err(crate::parsers::gallery::GalleryError::Login) if failed.is_none() => {
-            return Err(FailReason::Login)
+            return Err(FailReason::Login.into())
           }
           _ => {}
         }
@@ -188,17 +196,20 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
           crate::resolve::Resolution::Attachments { metadata } => {
             return reader_item(&metadata, &row)
               .map(|item| Some((item, None)))
-              .ok_or(FailReason::Unknown);
+              .ok_or_else(|| FailReason::Unknown.into());
           }
-          crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network),
+          crate::resolve::Resolution::Failed { .. } => return Err(FailReason::Network.into()),
           crate::resolve::Resolution::Unsupported {
             reason: crate::resolve::Reason::Login,
-          } => return Err(FailReason::Login),
+          } => return Err(FailReason::Login.into()),
           crate::resolve::Resolution::Unsupported {
             reason: crate::resolve::Reason::Unavailable,
-          } => return Err(FailReason::Unknown),
-          crate::resolve::Resolution::Unsupported { .. } => {
-            failed.get_or_insert(FailReason::Unsupported);
+          } => return Err(FailReason::Unknown.into()),
+          crate::resolve::Resolution::Unsupported { reason } => {
+            failed.get_or_insert(ReadFailure {
+              code: Some(reason.code()),
+              ..FailReason::Unsupported.into()
+            });
           }
         }
       }
@@ -215,7 +226,27 @@ async fn preview_item(app: &AppHandle, value: &Offer) -> Result<Option<PreviewIt
       },
     }
   }
-  Err(failed.unwrap_or(FailReason::Unknown))
+  Err(failed.unwrap_or_else(|| FailReason::Unknown.into()))
+}
+
+/// A page the user named in the quick bar that no site rule covers: every address its host
+/// resolves to must be public before any engine reads it (no local services behind a public name).
+async fn admit_named(value: &Offer) -> Result<(), FailReason> {
+  if value.source != super::policy::Source::Explicit
+    || super::policy::supported_url(&value.url).is_some()
+  {
+    return Ok(());
+  }
+  let url = reqwest::Url::parse(&value.url).map_err(|_| FailReason::Unknown)?;
+  let (Some(host), Some(port)) = (crate::net::host(&url), url.port_or_known_default()) else {
+    return Err(FailReason::Unknown);
+  };
+  match crate::net::admit(host, port, crate::net::public_address).await {
+    Ok(_) => Ok(()),
+    // Refuse private addresses before any engine has a chance to suggest automatic catch.
+    Err(crate::net::Refusal::Address) => Err(FailReason::Unknown),
+    Err(_) => Err(FailReason::Network),
+  }
 }
 
 /// A post's attachments read by its site reader: the app's item, recorded as a reader fetch.
@@ -262,7 +293,9 @@ async fn preview_ytdlp(
   value: &Offer,
   target: &crate::resolve::ResolvedInput,
   network: &crate::state::config_models::NetworkSettings,
-) -> Result<(serde_json::Value, Option<preview::PreviewDetails>), FailReason> {
+) -> Result<PreviewItem, ReadFailure> {
+  use crate::runners::preset_sizes::PresetProbe;
+
   let manager = crate::binaries::binaries_manager::BinariesManager::for_app(app);
   let path = manager
     .tool_environment()
@@ -271,9 +304,21 @@ async fn preview_ytdlp(
     .tool_path("yt-dlp")
     .map_err(|_| FailReason::Unknown)?;
   let ffmpeg_args = manager.ffmpeg_location_args();
+  let cfg = app.state::<SharedConfig>().load();
+  let preset_probe = cfg
+    .performance
+    .auto_load_size
+    .then(|| {
+      PresetProbe::new(
+        &value.url,
+        &cfg.output,
+        cfg.output.video.keep_original_codec,
+      )
+    })
+    .flatten();
   let mut input = target.clone();
   input.rewrite(target.url.clone());
-  let mut first_vimeo_reason = None;
+  let mut first_vimeo_failure = None;
   let started = std::time::Instant::now();
   let limit = value.read_limit();
   let deadline = tokio::time::Instant::now() + limit;
@@ -285,12 +330,35 @@ async fn preview_ytdlp(
         let executable = &executable;
         let path = &path;
         let ffmpeg_args = &ffmpeg_args;
+        let preset_probe = preset_probe.as_ref();
         async move {
-          let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
-          let mut command = preview_command(executable, network, input, fast, ffmpeg_args)
-            .ok_or((FailReason::Unknown, String::new()))?;
-          command.env("PATH", path);
-          preview::read_output_stderr_with_limit(&mut command, process_guard, limit).await
+          PresetProbe::run_with_fallback(
+            preset_probe,
+            |probe| {
+              let mut args = ffmpeg_args.clone();
+              if let Some(probe) = probe {
+                args.extend(probe.args().map(std::ffi::OsString::from));
+              }
+              async move {
+                let process_guard = crate::binaries::YTDLP_PROCESSES.clone().read_owned().await;
+                let mut command = preview_command(executable, network, input, fast, &args).ok_or(
+                  preview::ReadError {
+                    reason: FailReason::Unknown,
+                    stderr: String::new(),
+                    exited_nonzero: false,
+                  },
+                )?;
+                command.env("PATH", path);
+                preview::read_output_stderr_with_limit(&mut command, process_guard, limit).await
+              }
+            },
+            |result| {
+              matches!(result, Err(error) if error.exited_nonzero
+                && PresetProbe::startup_failed(&error.stderr))
+            },
+          )
+          .await
+          .map_err(|error| (error.reason, error.stderr))
         }
       };
       if reqwest::Url::parse(&input.url)
@@ -315,12 +383,15 @@ async fn preview_ytdlp(
           continue;
         }
         if input.impersonation_unavailable(&stderr) {
-          return Err(first_vimeo_reason.unwrap_or(reason));
+          return Err(
+            first_vimeo_failure
+              .unwrap_or_else(|| ReadFailure::from_ytdlp(&value.url, reason, &stderr)),
+          );
         }
         if input.retry_vimeo_401(&stderr) {
-          first_vimeo_reason = Some(reason);
+          first_vimeo_failure = Some(ReadFailure::from_ytdlp(&value.url, reason, &stderr));
         } else if !input.retry_original(&stderr) {
-          return Err(reason);
+          return Err(ReadFailure::from_ytdlp(&value.url, reason, &stderr));
         }
       }
     }
@@ -330,7 +401,7 @@ async fn preview_ytdlp(
     "Capture yt-dlp probe"
   );
   let json = String::from_utf8(bytes).map_err(|_| FailReason::Unknown)?;
-  ytdlp_preview(&value.url, &json, value.id)
+  ytdlp_preview(&value.url, &json, value.id).map_err(Into::into)
 }
 
 async fn probe_with_fallback<
@@ -420,6 +491,7 @@ fn ytdlp_preview(
           .or_else(|| Some(crate::parsers::ytdlp_info::caption_title(&raw)));
         details.media_kind = from_item.media_kind.clone();
         details.photos = from_item.photos;
+        details.embedded = from_item.embedded;
         details.thumbnail = details.thumbnail.or(from_item.thumbnail.clone());
         if details.uploader.is_empty() {
           details.uploader = from_item.uploader.clone();
@@ -811,6 +883,28 @@ mod tests {
     );
     assert!(!record_preview(&mut offers, window, 1, Ok(None)));
     assert_eq!(offers.current(window).unwrap().id, 2);
+  }
+
+  #[test]
+  fn a_page_named_in_the_bar_is_read_and_its_refusal_starts_the_automatic_catch() {
+    use super::super::policy::Source;
+    let page = "https://movies4us.net/watch/movie-the-intouchables-nw1ii";
+    assert!(plan_for(page, false, Source::Watch).is_empty());
+    assert!(plan_for(page, false, Source::Explicit).contains(&Engine::Ytdlp));
+    assert!(plan_for("http://192.168.1.10/v", false, Source::Explicit).is_empty());
+    // yt-dlp's "Unsupported URL" is the read that asks the automatic catch for the page.
+    let refused = Err(ReadFailure::from_ytdlp(
+      page,
+      FailReason::Unsupported,
+      "ERROR: [generic] Unsupported URL: https://example.com/page",
+    ));
+    assert!(matches!(
+      super::super::auto::Ended::of::<()>(&refused),
+      super::super::auto::Ended::Failed {
+        code: "urlNotSupported",
+        generic: false
+      }
+    ));
   }
 
   #[test]

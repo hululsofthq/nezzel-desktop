@@ -9,9 +9,10 @@ use std::path::PathBuf;
 
 /// Browser export material never enters logs, config, or IPC.
 #[derive(Clone)]
-pub(in crate::runners) struct CookieAccess {
+pub(crate) struct CookieAccess {
   pub args: Vec<String>,
   pub has_session: bool,
+  store: Option<CookieStore>,
   consent_app: Option<tauri::AppHandle>,
   // Reads the current policy, so revocation is observed without retaining a snapshot.
   live_consent: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
@@ -27,7 +28,7 @@ impl std::fmt::Debug for CookieAccess {
   }
 }
 
-pub(in crate::runners) struct CookieContext {
+pub(crate) struct CookieContext {
   pub exporter: PathBuf,
   pub directory: PathBuf,
 }
@@ -67,6 +68,7 @@ impl CookieAccess {
           return Ok(Self {
             args: vec![],
             has_session: false,
+            store: None,
             consent_app: None,
             live_consent: None,
             usage: None,
@@ -87,6 +89,7 @@ impl CookieAccess {
           return Ok(Self {
             has_session: rows > 0,
             args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
+            store: None,
             consent_app: None,
             live_consent: None,
             usage: None,
@@ -145,6 +148,7 @@ impl CookieAccess {
     Ok(Self {
       args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
       has_session: rows > 0,
+      store: Some(browser.kind.store()),
       consent_app: None,
       live_consent: None,
       usage: None,
@@ -208,6 +212,7 @@ impl CookieAccess {
         .iter()
         .filter_map(|f| Some((f[0], f[5], f[6], f[4].parse().ok()?))),
       unix_now(),
+      self.store,
     )
   }
   pub(crate) fn from_webview(
@@ -216,16 +221,59 @@ impl CookieAccess {
     cookies: &[tauri::webview::Cookie<'static>],
     ua: &str,
   ) -> Result<Self, &'static str> {
+    let mut access = Self::webview_jar(context, cookies, |domain| {
+      super::jar::allowed_cookie_host(domain, host).then_some(domain)
+    })?;
+    access.args.extend(["--user-agent".into(), ua.into()]);
+    access.has_session = true;
+    Ok(access)
+  }
+
+  pub(crate) fn from_catch(
+    context: &CookieContext,
+    host: &str,
+    cookies: &[tauri::webview::Cookie<'static>],
+  ) -> Result<Self, &'static str> {
+    if cookies.is_empty() {
+      return Ok(Self {
+        args: vec![],
+        has_session: false,
+        store: None,
+        consent_app: None,
+        live_consent: None,
+        usage: None,
+        _jar: None,
+      });
+    }
+    // The browser supplies cookies for this URL. Keep applicable parent cookies, but
+    // write them for the selected host only so they cannot follow a redirect to a sibling.
+    Self::webview_jar(context, cookies, |domain| {
+      let bare = domain.trim_start_matches('.').to_ascii_lowercase();
+      (bare == host
+        || (domain.starts_with('.')
+          && super::jar::allowed_cookie_host(domain, host)
+          && host
+            .strip_suffix(&bare)
+            .is_some_and(|prefix| prefix.ends_with('.'))))
+      .then_some(host)
+    })
+  }
+
+  fn webview_jar<'a, 'b>(
+    context: &CookieContext,
+    cookies: &'a [tauri::webview::Cookie<'static>],
+    select_domain: impl Fn(&'a str) -> Option<&'b str>,
+  ) -> Result<Self, &'static str> {
     use std::io::Write;
     let (jar, path, mut file) = new_jar(context)?;
     file
       .write_all(COOKIE_HEADER.as_bytes())
       .map_err(|_| COOKIE_READ_ERROR)?;
+    let mut has_session = false;
     for cookie in cookies {
-      let domain = cookie.domain_original().unwrap_or("");
-      if !super::jar::allowed_cookie_host(domain, host) {
+      let Some(domain) = cookie.domain_original().and_then(&select_domain) else {
         continue;
-      }
+      };
       super::jar::NetscapeRow {
         domain,
         path: cookie.path().unwrap_or("/"),
@@ -237,16 +285,13 @@ impl CookieAccess {
       }
       .write(&mut file)
       .map_err(|_| COOKIE_READ_ERROR)?;
+      has_session = true;
     }
     file.flush().map_err(|_| COOKIE_READ_ERROR)?;
     Ok(Self {
-      args: vec![
-        "--cookies".into(),
-        path.to_string_lossy().into_owned(),
-        "--user-agent".into(),
-        ua.into(),
-      ],
-      has_session: true,
+      args: vec!["--cookies".into(), path.to_string_lossy().into_owned()],
+      has_session,
+      store: None,
       consent_app: None,
       live_consent: None,
       usage: None,
@@ -546,6 +591,7 @@ mod threads_tests {
       let access = CookieAccess {
         args: vec![],
         has_session: true,
+        store: None,
         consent_app: None,
         live_consent: Some(std::sync::Arc::new(move || {
           crate::runners::login::global_consent(&auth) == Some(true)
@@ -570,6 +616,7 @@ mod threads_tests {
     let access = CookieAccess {
       args: vec!["--cookies".into(), jar.to_string_lossy().into_owned()],
       has_session: true,
+      store: None,
       consent_app: None,
       live_consent: None,
       usage: None,

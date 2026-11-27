@@ -1400,7 +1400,9 @@ ERROR: Unsupported URL: https://hackertube.org/";
     );
     for (line, expected) in [
       ("ERROR: [vimeo] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized (caused by <HTTPError 401: Unauthorized>)", "accessForbidden403"),
-      ("ERROR: [generic] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "unknown"),
+      ("ERROR: [generic] Unable to download webpage: HTTP Error 401: Unauthorized", "signInRequired"),
+      ("ERROR: [generic] 1084537: Unable to download webpage: HTTP Error 401: Unauthorized", "signInRequired"),
+      ("ERROR: [generic] Unable to download webpage: HTTP Error 4010: Bad Gateway", "unknown"),
       ("ERROR: [facebook] 123: Cannot parse data; please report this issue", "unableToExtractInitialData"),
       ("ERROR: [instagram:user] porsche: Unable to extract data; please report this issue", "unableToExtractInitialData"),
       ("ERROR: [likee] 123: Unable to extract video info; please report this issue", "likeeUnavailable"),

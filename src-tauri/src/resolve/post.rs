@@ -64,6 +64,7 @@ pub(super) async fn attachments<T: http::Transport>(
     fetch_engine: None,
     resolved_url: None,
     media_kind: Some(kind),
+    embedded_in: None,
     thumbnail: items.first().and_then(|a| a.thumbnail.clone()),
     attachments: items,
     url: Some(source.into()),
@@ -86,6 +87,7 @@ pub(super) async fn attachments<T: http::Transport>(
     subtitle_inventory: SubtitleInventory::default(),
     chapters: vec![],
     filesize: None,
+    preset_sizes: Default::default(),
   };
   serde_json::to_string(&media).map_or(Verdict::Unknown, |metadata| {
     Verdict::Verified(Resolution::Attachments { metadata })

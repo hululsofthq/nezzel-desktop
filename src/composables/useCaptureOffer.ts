@@ -4,6 +4,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { emptyDetails, type CaptureOffer } from '../captureTypes';
 import { canUseAutomaticLogin, failReason, type FailAction } from '../helpers/captureFailure';
+import { autoCatchView, embedCatchPage, readCanCatch, type AutoCatchAction } from '../helpers/catchOffer';
+import { catchAutoCancel, catchAutoDownload, catchOpen } from '../tauri/listeners/catch';
 import { isKnownAudioSite } from '../helpers/captureChoices';
 import { fileCategory } from '../helpers/fileCategory';
 import { siteForHost, siteLogo } from '../helpers/siteLogo';
@@ -46,6 +48,17 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   const failure = computed(() => failReason(offer.value.reason));
   const automaticLogin = computed(() => offer.value.failed && canUseAutomaticLogin(offer.value.reason, auth.value));
   const failed = computed(() => offer.value.failed && !automaticLogin.value);
+  /** An unsupported web page: offer the Nezzel browser instead of a dead end (#106). */
+  const catchable = computed(() => failed.value && (readCanCatch(offer.value.reason, offer.value.url) || offer.value.auto?.phase === 'needsStep'));
+  /** Read fine, but the media is another site's video the page only embeds: a quiet "open the page" link. */
+  const embedded = computed(() => offer.value.read && !failed.value && !!details.value.embedded && !!embedCatchPage(offer.value.url));
+  /** Automatic catch: Rust only sends it while the setting is on. */
+  const auto = computed(() => autoCatchView(offer.value.auto, true));
+  /** The hidden session works on a failed read: looking, found or a note replaces the failure. needsStep keeps the
+   * existing "needs one step" failure with Open the page. */
+  const autoOwns = computed(() => failed.value && !!auto.value && !auto.value.beside && auto.value.kind !== 'needsStep');
+  /** Beside a usable embedded result: a quiet line instead of "Not the video you wanted?". */
+  const autoBeside = computed(() => offer.value.read && !failed.value && !!auto.value?.beside);
   const fileKind = computed(() => details.value.mediaKind === 'file' ? fileCategory(offer.value.title || offer.value.url) : undefined);
   const isPhotos = computed(() => ['image', 'carousel', 'mixed'].includes(details.value.mediaKind ?? ''));
   const isPlaylist = computed(() => offer.value.feed || details.value.mediaKind === 'playlist');
@@ -146,12 +159,48 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   /** Failed read: Retry reads the same link again in place; Report opens Report a problem in the main window. */
   async function onFail(action: FailAction) {
     if (action === 'options' || action === 'report') return act(action);
+    if (action === 'catch') {
+      acting.value = true;
+      try {
+        await catchOpen(offer.value.url);
+        acting.value = false;
+        return act('dismiss');
+      } catch (failure) {
+        acting.value = false;
+        // Six tabs: the Nezzel browser is in front, asking which tab to close for this link.
+        if (String(failure).includes('catchTabLimit')) return act('dismiss');
+        error.value = 'action';
+        return;
+      }
+    }
     acting.value = true;
     try {
       await invoke('capture_retry');
     } catch {
       error.value = 'action';
     } finally {
+      acting.value = false;
+    }
+  }
+
+  /** Automatic catch actions. Cancel shows the pre-catch state at once; Download hands the found video to Rust's snapshot. */
+  async function onAuto(action: AutoCatchAction) {
+    const groupId = offer.value.auto?.groupId;
+    if (action === 'openPage') return onFail('catch');
+    if (!groupId || acting.value) return;
+    if (action === 'cancel') {
+      offer.value = { ...offer.value, auto: null };
+      await catchAutoCancel(groupId).catch(() => {});
+      return;
+    }
+    acting.value = true;
+    try {
+      await catchAutoDownload(groupId);
+      acting.value = false;
+      return act('dismiss');
+    } catch (reason) {
+      // Rust already sent the needsStep state: that view stays instead of a generic action error.
+      if (String((reason as { message?: string } | null)?.message ?? reason) !== 'catchAutoNeedsStep') error.value = 'action';
       acting.value = false;
     }
   }
@@ -167,7 +216,8 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
   /** Linux can hold capture_changed for this hidden, always-on-top window until the next input
    * (tauri#3654): while the card still reads, ask again without waiting on the event. Dismissed, reported
    * or expired, Rust has no offer (id 0): the panel takes the empty one and stops asking. */
-  const waitingForRead = computed(() => !!offer.value.url && !offer.value.read && !offer.value.failed && !offer.value.feed && !offer.value.resolving);
+  const waitingForRead = computed(() => !!offer.value.url && !offer.value.failed && !offer.value.feed && !offer.value.resolving
+    && (!offer.value.read || auto.value?.kind === 'looking'));
   watch(waitingForRead, (waiting) => {
     clearInterval(snapshotTimer);
     snapshotTimer = waiting ? setInterval(() => void refresh().catch(() => {}), SNAPSHOT_MS) : undefined;
@@ -189,5 +239,5 @@ export function useCaptureOffer(hooks: CaptureOfferHooks = {}) {
     clearInterval(snapshotTimer);
   });
 
-  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, facts, act, onFail, start };
+  return { offer, error, acting, editing, slow, thumbFailed, faviconFailed, details, failure, failed, catchable, embedded, auto, autoOwns, autoBeside, onAuto, automaticLogin, fileKind, isPhotos, isPlaylist, choicesLoading, logo, favicon, bestParts, facts, act, onFail, start };
 }

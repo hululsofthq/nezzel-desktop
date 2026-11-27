@@ -1,6 +1,6 @@
 {
   "name": "nezzel-desktop",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "repository": {
@@ -9,9 +9,10 @@
   },
   "scripts": {
     "dev": "cross-env DEV=true vite",
-    "build": "pnpm run build:app && pnpm run build:isolation",
+    "build": "pnpm run build:app && pnpm run build:isolation && pnpm run build:capture",
     "build:app": "vue-tsc --noEmit && vite build",
     "build:isolation": "vue-tsc --noEmit && vite build --config vite.config.isolation.ts",
+    "build:capture": "node scripts/build-capture.mjs",
     "tauri": "tauri",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
@@ -44,7 +45,6 @@
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-global-shortcut": "^2.4.1",
     "@tauri-apps/plugin-opener": "^2.7.2",
-    "@tauri-apps/plugin-shell": "^2.6.0",
     "@tauri-apps/plugin-store": "^2.5.0",
     "@tauri-apps/plugin-updater": "^2.14.1",
     "@vueuse/core": "14.4.0",

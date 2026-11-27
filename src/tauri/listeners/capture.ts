@@ -1,4 +1,4 @@
-import { getCurrentScope, onScopeDispose, shallowRef } from 'vue';
+import { getCurrentScope, onScopeDispose, shallowRef, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -6,20 +6,28 @@ import { useDownloadSheetStore } from '../../stores/downloadSheet';
 import { useMediaGroupStore } from '../../stores/media/group';
 import { MediaState, useMediaStateStore } from '../../stores/media/state';
 import { useMediaStore } from '../../stores/media/media';
+import { useUiPrefs } from '../../composables/useUiPrefs';
+import router from '../../router';
 import { useReportStore } from '../../stores/report';
 import type { MediaItem } from '../types/media';
 import { CAPTURE_CLAIMS, CAPTURE_PULL_MS, type CaptureChoice } from '@/generated/contract';
 
+type CaptureAction = { id: number; url: string; action: string; item: MediaItem | null; choice: CaptureChoice | null };
+
 /** What Rust queued for the main window (`capture::outbox`), numbered in order. */
 export type CaptureMessage = { seq: number } & (
   /** A claim on an offer; `id` is the row (an upgrade names the row focus adopted). */
-  | { kind: 'action'; id: number; url: string; action: string; item: MediaItem | null; choice: CaptureChoice | null }
+  | ({ kind: 'action' } & CaptureAction)
+  /** Clipboard links share the outbox with the preview card and reuse its row when present. */
+  | { kind: 'watched'; urls: string[]; card?: CaptureAction }
   /** The read item of a row whose claim went out first; Rust sends one per row. */
   | { kind: 'item'; id: number; item: MediaItem | null }
   /** The clipboard's supported link for the link field ('' = none). */
   | { kind: 'prefill'; url: string }
   /** A failed read → Report: the reason word only; the link goes along only if the user ticks "Include the link". */
   | { kind: 'report'; url: string; reason: string }
+  | { kind: 'catchReport'; shape: string | null }
+  | { kind: 'catchShowDownload'; id: string }
 );
 
 /** The newest clipboard link for the link field (useClipboard); null until the first prefill message. */
@@ -40,6 +48,7 @@ export async function startCaptureDelivery() {
   const sheet = useDownloadSheetStore();
   const groups = useMediaGroupStore();
   const states = useMediaStateStore();
+  const { skipOptionsSheet } = useUiPrefs();
   const optionChoices = new Map<string, CaptureChoice>();
   let lastSeq = 0;
 
@@ -76,31 +85,45 @@ export async function startCaptureDelivery() {
     void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
   }
 
+  function handleAction(message: CaptureAction) {
+    if (!(CAPTURE_CLAIMS as readonly string[]).includes(message.action)) return;
+    const groupId = captureGroupId(message.id);
+    // An existing capture row can be upgraded once by the card or bar.
+    if (media.createCaptureGroup(groupId, message.url, message.choice ?? undefined) !== groupId) {
+      void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
+      return;
+    }
+    if (message.action === 'download') {
+      void media.downloadPreparedGroup(groupId, message.choice ?? undefined).then((result) => {
+        if (result === 'playlist') openPicker(groupId);
+      }).catch(() => {});
+    } else if (message.action === 'options') {
+      // Keep the choice until the read establishes whether this is a playlist, video or audio source.
+      if (message.choice) optionChoices.set(groupId, message.choice);
+      openPicker(groupId);
+    }
+    if (message.item) void fillRow(message.id, message.item);
+  }
+
   function handle(message: CaptureMessage) {
     switch (message.kind) {
-      case 'action': {
-        if (!(CAPTURE_CLAIMS as readonly string[]).includes(message.action)) return;
-        const groupId = captureGroupId(message.id);
-        // An existing row is one focus adopted; Rust sends the click that upgrades it once.
-        if (media.createCaptureGroup(groupId, message.url, message.choice ?? undefined) !== groupId) {
-          void getCurrentWindow().unminimize().then(() => getCurrentWindow().show()).then(() => getCurrentWindow().setFocus()).catch(() => {});
-          return;
-        }
-        if (message.action === 'download') {
-          void media.downloadPreparedGroup(groupId, message.choice ?? undefined).then((result) => {
-            if (result === 'playlist') openPicker(groupId);
-          }).catch(() => {});
-        } else if (message.action === 'options') {
-          // Keep the choice until the read establishes whether this is a playlist, video or audio source.
-          if (message.choice) optionChoices.set(groupId, message.choice);
-          openPicker(groupId);
-        }
-        if (message.item) void fillRow(message.id, message.item);
+      case 'action':
+        handleAction(message);
         return;
-      }
       case 'item':
         void fillRow(message.id, message.item);
         return;
+      case 'watched': {
+        if (message.card) {
+          handleAction(message.card);
+        } else {
+          const submission = skipOptionsSheet.value
+            ? media.addUrlBatchAndDownload(message.urls, false, true)
+            : media.addUrlBatch(message.urls);
+          void submission.catch(() => {});
+        }
+        return;
+      }
       case 'prefill':
         capturePrefill.value = message.url;
         return;
@@ -110,6 +133,13 @@ export async function startCaptureDelivery() {
           url: message.url || null,
           extractor: null,
         });
+        return;
+      case 'catchReport':
+        useReportStore().openCatchReport(message.shape);
+        return;
+      case 'catchShowDownload':
+        media.focusDownload(message.id);
+        void router.push({ name: 'home' });
     }
   }
 
@@ -142,5 +172,9 @@ export async function startCaptureDelivery() {
     window.removeEventListener('focus', onFocus);
   }));
   await pull();
-  await invoke('capture_ready');
+  if (scope && !scope.active) return;
+  const publishPreference = () => invoke('capture_ready', { skipOptionsSheet: skipOptionsSheet.value });
+  const stopPublishing = watch(skipOptionsSheet, () => void publishPreference().catch(() => {}));
+  scope?.run(() => onScopeDispose(stopPublishing));
+  await publishPreference();
 }

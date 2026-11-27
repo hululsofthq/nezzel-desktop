@@ -1,8 +1,10 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 use crate::sites::{site_by_domain, site_of, SiteId};
+
+const MAX_CLIPBOARD_BYTES: usize = 8192;
 
 // Deliberately conservative: the generic extractor must never turn arbitrary copied text
 // into a network request. A site's hosts and their subdomains (dot boundary) only.
@@ -47,23 +49,69 @@ const SITES: &[SiteId] = {
   ]
 };
 
-pub fn supported_url(text: &str) -> Option<(String, String)> {
-  // Copying links out of Arabic text can wrap them in directional formatting marks.
-  // Strip boundaries only: never rewrite a path, share key, or query value.
+/// Who brought the link: the clipboard watcher on its own, or the user in the quick bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Source {
+  /// Passive clipboard watching: the conservative site list only.
+  #[default]
+  Watch,
+  /// The user opened the quick bar (shortcut, tray, browser tab, typing or pasting).
+  Explicit,
+}
+
+/// `supported_url`, plus, when the user named the link, any public http(s) page. A known site's
+/// own rules (private Telegram links, Drive folders, shorteners) still decide its links.
+pub fn accepted_url(text: &str, source: Source) -> Option<(String, String)> {
+  supported_url(text).or_else(|| {
+    if source == Source::Explicit {
+      explicit_url(text)
+    } else {
+      None
+    }
+  })
+}
+
+/// Copying links out of Arabic text can wrap them in directional formatting marks.
+/// Strip boundaries only: never rewrite a path, share key, or query value.
+fn link_text(text: &str) -> Option<&str> {
   let text = text.trim_matches(|c: char| {
     c.is_whitespace()
       || matches!(c,
     '\u{061c}' | '\u{200b}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}'
       | '\u{2060}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
   });
-
-  if text.len() > 8192
+  let invalid = text.len() > MAX_CLIPBOARD_BYTES
     || text
       .chars()
-      .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+      .any(|c| c.is_whitespace() || c.is_control() || c == '\\');
+  (!invalid).then_some(text)
+}
+
+/// An http(s) link written out in full to a public host: no credentials, no other port, no local name
+/// or private address. Hosts with a capture rule of their own are left to `supported_url`.
+fn explicit_url(text: &str) -> Option<(String, String)> {
+  let text = link_text(text)?;
+  let scheme = text.split_once("://")?.0.to_ascii_lowercase();
+  if scheme != "https" && scheme != "http" {
+    return None;
+  }
+  let url = reqwest::Url::parse(text).ok()?;
+  if !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+    return None;
+  }
+  let host = crate::net::host(&url)?.to_ascii_lowercase();
+  if site_of(&host).is_some_and(|site| SITES.contains(&site))
+    || crate::files::hosts::is_share(url.as_str())
+    || crate::links::normalize::needs_redirect(&url)
+    || !crate::catch::auto::may_be_public(&url)
   {
     return None;
   }
+  Some((url.to_string(), host))
+}
+
+pub fn supported_url(text: &str) -> Option<(String, String)> {
+  let text = link_text(text)?;
   let has_scheme = text.split_once(':').is_some_and(|(scheme, _)| {
     scheme
       .as_bytes()
@@ -203,33 +251,48 @@ fn fingerprint(text: &str) -> u64 {
   hash.finish()
 }
 
+fn link_fingerprint(url: &str) -> u64 {
+  fingerprint(
+    crate::links::normalize::canonical_key(url)
+      .as_deref()
+      .unwrap_or(url),
+  )
+}
+
+fn watched_urls(text: &str) -> Option<Vec<String>> {
+  // Keep the single-link path, including its handling of directional marks around the URL.
+  if let Some((url, _)) = supported_url(text) {
+    return Some(vec![url]);
+  }
+  text
+    .split_whitespace()
+    .map(|part| supported_url(part).map(|(url, _)| url))
+    .collect::<Option<Vec<_>>>()
+    .filter(|urls| !urls.is_empty())
+}
+
 impl CapturePolicy {
   pub fn own_write(&mut self, text: &str, now: Duration) {
-    if let Some((url, _)) = supported_url(text) {
-      self.own.insert(
-        fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone())),
-        now,
-      );
+    if text.len() > MAX_CLIPBOARD_BYTES {
+      return;
+    }
+    for url in watched_urls(text).into_iter().flatten() {
+      self.own.insert(link_fingerprint(&url), now);
     }
   }
 
   #[cfg(test)]
-  pub fn observe(&mut self, text: &str, now: Duration) -> Option<(String, String)> {
-    let offer = self.decide(text, now).offer();
-    if offer.is_some() {
-      self.acknowledge(text, now);
-    }
-    offer
+  pub fn observe(&mut self, text: &str, now: Duration) -> Option<Vec<String>> {
+    let urls = self.decide(text, now).offer()?;
+    self.acknowledge(text, &urls, now);
+    Some(urls)
   }
 
-  /// Only a card actually shown to the user consumes a link. Skipped/failed displays may retry.
-  pub fn acknowledge(&mut self, text: &str, now: Duration) {
-    if let Some((url, _)) = supported_url(text) {
-      self.last = Some(fingerprint(text));
-      self.seen.insert(
-        fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone())),
-        now,
-      );
+  /// Consume just the links delivered for this clipboard read.
+  pub fn acknowledge(&mut self, text: &str, urls: &[String], now: Duration) {
+    self.last = Some(fingerprint(text));
+    for url in urls {
+      self.seen.insert(link_fingerprint(url), now);
     }
   }
 
@@ -239,7 +302,7 @@ impl CapturePolicy {
   }
 
   pub fn decide(&mut self, text: &str, now: Duration) -> Decision {
-    if text.len() > 8192 {
+    if text.len() > MAX_CLIPBOARD_BYTES {
       self.last = None;
       return Decision::TooLong;
     }
@@ -251,21 +314,25 @@ impl CapturePolicy {
     let ttl = Duration::from_secs(600);
     self.seen.retain(|_, at| now.saturating_sub(*at) < ttl);
     self.own.retain(|_, at| now.saturating_sub(*at) < ttl);
-    let Some((url, site)) = supported_url(text) else {
+    let Some(mut urls) = watched_urls(text) else {
       return Decision::Unsupported;
     };
-    let key =
-      fingerprint(&crate::links::normalize::canonical_key(&url).unwrap_or_else(|_| url.clone()));
-    if self.own.contains_key(&key) {
-      return Decision::Own;
+    let mut unique = HashSet::new();
+    let mut suppressed = Decision::Seen;
+    urls.retain(|url| {
+      let key = link_fingerprint(url);
+      if self.own.contains_key(&key) {
+        suppressed = Decision::Own;
+        return false;
+      }
+      !self.seen.contains_key(&key) && unique.insert(key)
+    });
+    if urls.is_empty() {
+      return suppressed;
     }
-    if self.seen.contains_key(&key) {
-      return Decision::Seen;
-    }
-    // The watcher may skip this link while the quick bar is open, or fail to show the card.
-    // Keep it eligible until the native window confirms delivery.
+    // Keep the copy eligible until the watcher confirms delivery.
     self.last = None;
-    Decision::Offer(url, site)
+    Decision::Offer(urls)
   }
 }
 
@@ -277,7 +344,7 @@ pub enum Decision {
   Unsupported,
   Own,
   Seen,
-  Offer(String, String),
+  Offer(Vec<String>),
 }
 
 impl Decision {
@@ -292,9 +359,9 @@ impl Decision {
     }
   }
 
-  pub fn offer(self) -> Option<(String, String)> {
+  pub fn offer(self) -> Option<Vec<String>> {
     match self {
-      Self::Offer(url, site) => Some((url, site)),
+      Self::Offer(urls) => Some(urls),
       _ => None,
     }
   }
@@ -306,6 +373,46 @@ mod tests {
   const URL: &str = "https://www.youtube.com/watch?v=abc";
 
   #[test]
+  fn watches_only_lists_of_supported_links() {
+    const SECOND: &str = "https://vimeo.com/42";
+    for (separator, middle, expected) in [
+      ("\n", "", Some(vec![URL, SECOND])),
+      ("\r\n", "", Some(vec![URL, SECOND])),
+      (" \t", "", Some(vec![URL, SECOND])),
+      ("\n", "http://192.168.1.1/\n", None),
+      ("\n", "ftp://vimeo.com/42\n", None),
+      ("\n", "look at this\n", None),
+    ] {
+      let mut policy = CapturePolicy::default();
+      let text = format!("{URL}{separator}{middle}{SECOND}");
+      assert_eq!(
+        policy.observe(&text, Duration::ZERO),
+        expected.map(|urls| urls.into_iter().map(str::to_owned).collect()),
+        "clipboard separator {separator:?}, middle {middle:?}"
+      );
+      assert!(policy.observe(&text, Duration::ZERO).is_none());
+      if middle.is_empty() {
+        assert_eq!(policy.decide(SECOND, Duration::ZERO), Decision::Seen);
+      }
+    }
+  }
+
+  #[test]
+  fn watches_each_canonical_link_once_without_consuming_other_copies() {
+    let mut policy = CapturePolicy::default();
+    let own = "https://vimeo.com/42";
+    let other_own = "https://vimeo.com/43";
+    policy.own_write(&format!("{own}\n{other_own}"), Duration::ZERO);
+    let text = format!("{own}\n{URL}\nhttps://youtu.be/abc?si=other\n{other_own}");
+    assert_eq!(
+      policy.observe(&text, Duration::ZERO),
+      Some(vec![URL.into()])
+    );
+    assert_eq!(policy.decide(own, Duration::ZERO), Decision::Own);
+    assert_eq!(policy.decide(URL, Duration::ZERO), Decision::Seen);
+  }
+
+  #[test]
   fn wrappers_and_shorteners_are_captured_with_original_urls_and_canonical_identity() {
     let wrapped =
       "https://l.facebook.com/l.php?u=https%3A%2F%2Fyoutube.com%2Fwatch%3Fv%3Dabc%26si%3Dx";
@@ -314,7 +421,7 @@ mod tests {
       Some((wrapped.into(), "youtube.com".into()))
     );
     let mut policy = CapturePolicy::default();
-    policy.acknowledge(wrapped, Duration::ZERO);
+    assert!(policy.observe(wrapped, Duration::ZERO).is_some());
     assert_eq!(
       policy.decide("https://youtu.be/abc?si=other", Duration::ZERO),
       Decision::Seen
@@ -337,6 +444,54 @@ mod tests {
     assert!(is_feed_page(
       "https://google.com/url?q=https%3A%2F%2Fyoutube.com"
     ));
+  }
+
+  #[test]
+  fn only_a_link_the_user_named_may_be_any_public_page() {
+    let page = "https://movies4us.net/watch/movie-the-intouchables-nw1ii";
+    // Passive watching keeps the site list; the quick bar takes the page as it is.
+    assert!(accepted_url(page, Source::Watch).is_none());
+    assert_eq!(
+      accepted_url(page, Source::Explicit),
+      Some((page.into(), "movies4us.net".into()))
+    );
+    assert!(accepted_url("http://Example.com/a?b=1", Source::Explicit).is_some());
+    // Listed sites read the same either way.
+    assert_eq!(
+      accepted_url("https://youtu.be/abc", Source::Explicit),
+      supported_url("https://youtu.be/abc")
+    );
+    for refused in [
+      "http://localhost/x",
+      "http://localhost:3000/x",
+      "http://127.0.0.1/x",
+      "http://192.168.1.10/video",
+      "http://10.0.0.2/",
+      "http://[::1]/x",
+      "http://[fd00::1]/x",
+      "https://router.local/x",
+      "https://nas.home.arpa/x",
+      "https://intranet/x",
+      "https://user:pw@example.com/x",
+      "https://example.com:8443/x",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "ftp://example.com/a",
+      "data:text/html,hi",
+      // Typed text without a scheme stays a known-site shortcut only.
+      "example.com/watch",
+      "hello",
+      // A known site's own refusals stand.
+      "https://t.me/+secret",
+      "https://t.me/c/123/4",
+      "https://drive.google.com/drive/folders/abc",
+      "https://lnkd.in/abc",
+    ] {
+      assert!(
+        accepted_url(refused, Source::Explicit).is_none(),
+        "{refused}"
+      );
+    }
   }
 
   #[test]
@@ -531,11 +686,7 @@ mod tests {
   #[test]
   fn a_shown_card_stays_acknowledged_after_dismiss_or_action_and_refocus() {
     let mut policy = CapturePolicy::default();
-    assert!(matches!(
-      policy.decide(URL, Duration::ZERO),
-      Decision::Offer(..)
-    ));
-    policy.acknowledge(URL, Duration::ZERO);
+    assert!(policy.observe(URL, Duration::ZERO).is_some());
     // Dismiss/download does not reset the clipboard policy; refocus must not resurrect the card.
     assert_eq!(
       policy.decide(URL, Duration::from_secs(1)),
@@ -571,8 +722,8 @@ mod tests {
       .iter()
       .map(|text| {
         let decision = fresh.decide(text, Duration::ZERO);
-        if matches!(decision, Decision::Offer(..)) {
-          fresh.acknowledge(text, Duration::ZERO);
+        if let Decision::Offer(urls) = &decision {
+          fresh.acknowledge(text, urls, Duration::ZERO);
         }
         decision.kind()
       })

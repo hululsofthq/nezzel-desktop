@@ -506,7 +506,7 @@ pub(super) async fn download_attempt(
   if let Some(records) = app.try_state::<crate::download_records::DownloadRecords>() {
     records.seal(&entry.group_id);
   }
-  login.succeeded(app, &entry.group_id);
+  login.succeeded(app, &entry.id, &entry.group_id);
   Ok(())
 }
 
@@ -864,7 +864,9 @@ mod tests {
 
   use super::*;
   use crate::models::ParsedMedia;
+  #[cfg(unix)]
   use crate::runners::gallery::images::verified_image;
+  #[cfg(unix)]
   use crate::runners::gallery_files::Staging;
   use serde_json::json;
 

@@ -211,6 +211,7 @@ impl Post {
       fetch_engine: None,
       resolved_url: None,
       media_kind: Some(kind),
+      embedded_in: None,
       thumbnail: self.attachments.first().and_then(|a| a.thumbnail.clone()),
       attachments: self.attachments,
       url: Some(source.into()),
@@ -233,6 +234,7 @@ impl Post {
       subtitle_inventory: SubtitleInventory::default(),
       chapters: vec![],
       filesize: None,
+      preset_sizes: Default::default(),
     }
   }
 }

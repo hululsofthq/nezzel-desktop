@@ -91,6 +91,8 @@ pub struct InputSettings {
   pub capture_shortcut: String,
   pub prefer_video_in_mixed_links: bool,
   pub global_shortcuts: bool,
+  /// Look for the video on web pages automatically (hidden catch session).
+  pub auto_catch: bool,
 }
 
 /// Quick download default: ⌥⌘N on macOS, Ctrl+Alt+N on Windows/Linux (owner decision 2026-11-04).
@@ -121,6 +123,7 @@ impl Default for InputSettings {
       capture_shortcut: DEFAULT_CAPTURE_SHORTCUT.into(),
       prefer_video_in_mixed_links: false,
       global_shortcuts: true,
+      auto_catch: true,
     }
   }
 }

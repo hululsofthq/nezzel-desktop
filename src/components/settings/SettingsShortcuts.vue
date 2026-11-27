@@ -26,6 +26,9 @@
     <settings-row search-id="pasteShortcut" :label="t('prefs.adv.keys.paste')" :help="t('prefs.adv.keys.pasteHint')">
       <shortcut-recorder :model-value="BUILT_IN_KEYS.paste" :mac="isMac" :label="t('prefs.adv.keys.paste')" readonly />
     </settings-row>
+    <settings-row search-id="browserShortcut" :label="t('prefs.adv.keys.browser')" :help="t('prefs.adv.keys.browserHint')">
+      <shortcut-recorder :model-value="BUILT_IN_KEYS.browser" :mac="isMac" :label="t('prefs.adv.keys.browser')" readonly />
+    </settings-row>
     <settings-row search-id="downloadAllShortcut" :label="t('prefs.adv.keys.downloadAll')" :help="t('prefs.adv.keys.defaultIs', { keys: shortcutLabel(IN_APP_SHORTCUT_DEFAULTS.downloadAll, isMac) })">
       <shortcut-recorder
         v-model="inAppShortcuts.downloadAll.value"

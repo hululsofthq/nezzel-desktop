@@ -16,7 +16,9 @@ import { cn } from 'cn';
 defineOptions({ inheritAttrs: false });
 const props = withDefaults(
   defineProps<SelectContentProps & { class?: HTMLAttributes['class'] }>(),
-  { position: 'popper', sideOffset: 4, align: 'start' },
+  // `avoidCollisions` needs its default here: Vue reads an absent boolean prop as false, which kept the list below
+  // the trigger even past the window's bottom edge. On, it opens above when there is no room below.
+  { position: 'popper', sideOffset: 4, align: 'start', avoidCollisions: true },
 );
 </script>
 
@@ -29,7 +31,7 @@ const props = withDefaults(
       :side="props.side"
       :side-offset="props.sideOffset"
       :align="props.align"
-      :avoid-collisions="props.avoidCollisions ?? true"
+      :avoid-collisions="props.avoidCollisions"
       :collision-padding="props.collisionPadding ?? 8"
       :body-lock="props.bodyLock"
       :class="cn(

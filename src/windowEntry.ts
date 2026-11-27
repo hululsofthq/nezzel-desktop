@@ -15,5 +15,9 @@ export async function mountWindow(label: string) {
     const capture = await import('./capturePanel');
     return capture.mountCapturePanel();
   }
+  if (label.startsWith('catch-bar-')) {
+    const bar = await import('./catchBar');
+    return bar.mountCatchBar(label);
+  }
   return undefined;
 }

@@ -884,6 +884,7 @@ fn short_links_use_the_parent_site_session_and_consent() {
         host,
         names.iter().map(|name| (canonical, *name, "session", 0)),
         1,
+        None,
       ),
       supported,
       "{host}: only supported sites may prove a session on retry"
@@ -895,6 +896,7 @@ fn short_links_use_the_parent_site_session_and_consent() {
           .iter()
           .map(|name| ("other.example", *name, "session", 0)),
         1,
+        None,
       ),
       "{host}: unrelated cookies must stay excluded"
     );
@@ -1299,6 +1301,71 @@ fn cookie_failure_retries_anonymously_without_forgetting_the_remembered_browser(
       RetryAction::Stop
     );
   }
+}
+
+#[test]
+fn anonymous_recovery_clears_the_earlier_row_profile_without_remembering_it() {
+  use tauri::Listener;
+  let app = tauri::test::mock_app();
+  let group = uuid::Uuid::new_v4().to_string();
+  let id = "item";
+  let url = "https://www.instagram.com/p/fixture/";
+  let candidate = candidates(None).remove(0);
+  let mut auth = AuthSettings::default();
+  record_host_browser(&mut auth, "instagram.com", Some("firefox:/saved".into()));
+  let mut session = LoginSession::from_auth(auth, url, Some(candidate.id.clone()));
+  remember_row_browser(&group, id, &session.host, &candidate.id);
+  announce_using(
+    app.handle(),
+    LoginUsing {
+      id: id.into(),
+      group_id: group.clone(),
+      host: session.host.clone(),
+      candidate: candidate.clone(),
+      selected_only: false,
+    },
+  );
+  assert!(used_candidate(&group, Some(&candidate.id)).is_some());
+  let updates = std::sync::Arc::new(Mutex::new(Vec::new()));
+  let received = updates.clone();
+  app.listen(crate::events::MEDIA_LOGIN_USING, move |event| {
+    received
+      .lock()
+      .unwrap()
+      .push(serde_json::from_str::<serde_json::Value>(event.payload()).unwrap());
+  });
+
+  assert_eq!(
+    session.decide(None, false, false, candidates).0,
+    RetryAction::Anonymous
+  );
+  session.carry_fetch_browser(id, &group);
+  assert!(session.report_anonymous_success(app.handle(), id, &group));
+  assert!(used_candidate(&group, Some(&candidate.id)).is_none());
+  assert_eq!(
+    *updates.lock().unwrap(),
+    vec![serde_json::json!({"id": id, "groupId": group, "candidate": null})]
+  );
+  assert_eq!(row_browser(&group, id, url).as_deref(), Some("none"));
+  assert!(session.success_patch().is_none());
+  assert_eq!(
+    session.auth.site_browsers["instagram.com"],
+    "firefox:/saved"
+  );
+  // A profile picked with "Change" during the retry keeps its badge.
+  announce_using(
+    app.handle(),
+    LoginUsing {
+      id: id.into(),
+      group_id: group.clone(),
+      host: session.host.clone(),
+      candidate: candidate.clone(),
+      selected_only: true,
+    },
+  );
+  assert!(session.report_anonymous_success(app.handle(), id, &group));
+  assert!(used_candidate(&group, Some(&candidate.id)).is_some());
+  forget_group(&group);
 }
 
 #[test]

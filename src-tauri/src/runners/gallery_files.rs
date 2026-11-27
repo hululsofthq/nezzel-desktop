@@ -499,6 +499,7 @@ mod tests {
     let orphan = root
       .path
       .join(format!(".nezzel-images-{}", uuid::Uuid::new_v4()));
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {

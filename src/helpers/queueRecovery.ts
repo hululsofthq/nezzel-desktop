@@ -3,7 +3,7 @@ import type { DownloadOptions, DownloadOverrides, EncodingOptions, TrackOptions 
 
 export type SavedDownload = {
   group: Group;
-  options: DownloadOptions;
+  options?: DownloadOptions;
   overrides?: DownloadOverrides;
   encodings?: EncodingOptions;
   tracks?: TrackOptions;
@@ -12,6 +12,10 @@ export type SavedDownload = {
   parent?: PlaylistParent;
   /** Cancelled by the user: shown again in the Cancelled state after a restart, never resumed. */
   cancelled?: true;
+  /** This row needed a probe or a user choice. Re-read the source on request. */
+  needsRefresh?: true;
+  /** Link an in-flight item or an offer to its library record without comparing URLs. */
+  historyIds?: Record<string, string>;
 };
 const KEY = 'nezzel.pending-downloads.v1';
 
@@ -47,7 +51,10 @@ export function encodeQueue(rows: SavedDownload[]): string {
         overrides: safeOverrides(item.overrides),
       }])),
     },
-    options: row.options, overrides: safeOverrides(row.overrides), cancelled: row.cancelled ? true : undefined,
+    options: row.options, overrides: safeOverrides(row.overrides), cancelled: row.cancelled === true ? true : undefined,
+    needsRefresh: row.needsRefresh === true ? true : undefined,
+    historyIds: row.historyIds && Object.fromEntries(Object.values(row.group.items).flatMap(({ id }) =>
+      typeof row.historyIds?.[id] === 'string' ? [[id, row.historyIds[id]]] : [])),
     encodings: row.encodings, tracks: row.tracks, attachmentIds: row.attachmentIds,
     parent: row.parent && typeof row.parent.id === 'string' && row.parent.id === row.group.parentId
       ? { id: row.parent.id, url: safeLink(row.parent.url), title: row.parent.title, count: Number(row.parent.count) || 0, skipped: 0 }
@@ -63,7 +70,7 @@ export function decodeQueue(raw: string | null): SavedDownload[] {
       && typeof row.group.url === 'string' && /^https?:\/\//i.test(row.group.url)
       && row.group.items && typeof row.group.items === 'object' && !Array.isArray(row.group.items)
       && Object.values(row.group.items).every(item => item && typeof item.id === 'string' && typeof item.url === 'string')
-      && row.options && ['both', 'audio', 'video'].includes(row.options.trackType));
+      && (row.options ? ['both', 'audio', 'video'].includes(row.options.trackType) : row.needsRefresh === true));
     // Also strip auth fields from older/tampered snapshots before they reach IPC.
     const safe: SavedDownload[] = JSON.parse(encodeQueue(rows)).rows;
     for (const row of safe) {

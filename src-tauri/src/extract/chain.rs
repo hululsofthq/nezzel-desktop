@@ -4,7 +4,7 @@ use super::{
   outcome::*,
   page_scan::page_scan,
   policy::{self, Claim, Decision, Phase, PolicyContext},
-  precedence::final_code,
+  precedence::{final_cause, final_code},
   registry,
   terminal::{emit_attempts, emit_terminal, publish_terminal},
 };
@@ -129,6 +129,22 @@ impl<T> StageResult<T> {
       .iter()
       .filter(|d| matches!(d.level, DiagnosticLevel::Error))
       .map(|d| {
+        let scope = if matches!(
+          d.code.as_str(),
+          "networkNameResolutionFailed" | "sslVerifyFailed" | "unableToConnectToProxy"
+        ) {
+          NetworkScope::PageHost
+        } else {
+          NetworkScope::StageLocal
+        };
+        let diagnostic = if self.stage == StageId::Ytdlp && generic_page_failure(d) {
+          Diagnostic {
+            outcome: Outcome::Unknown,
+            code: DiagnosticCode::UNKNOWN_GENERIC_PAGE,
+          }
+        } else {
+          classify_stage(self.stage, &d.code, &d.message, scope)
+        };
         Attempt::failed(
           self.stage,
           if login {
@@ -137,19 +153,7 @@ impl<T> StageResult<T> {
             AuthUsed::Anonymous
           },
           self.confidence,
-          classify_stage(
-            self.stage,
-            &d.code,
-            &d.message,
-            if matches!(
-              d.code.as_str(),
-              "networkNameResolutionFailed" | "sslVerifyFailed" | "unableToConnectToProxy"
-            ) {
-              NetworkScope::PageHost
-            } else {
-              NetworkScope::StageLocal
-            },
-          ),
+          diagnostic,
           elapsed(start),
         )
       })
@@ -180,6 +184,34 @@ impl<T> StageResult<T> {
     self
   }
 }
+
+fn generic_page_failure(event: &DiagnosticEvent) -> bool {
+  if event.code != "unknown" || event.component.as_deref() != Some("generic") {
+    return false;
+  }
+  // A generic extractor ID can be a filename, which the parser leaves intact.
+  let message = event.message.to_ascii_lowercase();
+  let detail = message
+    .split_once(": ")
+    .filter(|(id, _)| !id.is_empty() && !id.contains(char::is_whitespace))
+    .map_or(message.as_str(), |(_, detail)| detail);
+  [
+    "unable to extract",
+    "unsupported url",
+    "no video formats found",
+  ]
+  .iter()
+  .any(|prefix| detail.starts_with(prefix))
+    || detail
+      .strip_prefix("unable to download webpage: http error ")
+      .is_some_and(|status| {
+        matches!(
+          status.as_bytes(),
+          [b'4', b'0'..=b'9', b'0'..=b'9', b':', ..]
+        )
+      })
+}
+
 fn elapsed(start: Instant) -> u32 {
   start.elapsed().as_millis().min(u128::from(u32::MAX)) as u32
 }
@@ -189,6 +221,14 @@ struct ChainResult<T> {
   attempts: Vec<Attempt>,
   error: Option<YtdlpInfoFetchError>,
   login: Option<LoginSession>,
+}
+
+impl<T> ChainResult<T> {
+  fn generic_extractor_failure(&self, url: &str) -> bool {
+    matches!(final_cause(&self.attempts), Some(("unknown", Some(attempt)))
+      if attempt.code == Some(DiagnosticCode::UNKNOWN_GENERIC_PAGE))
+      && reqwest::Url::parse(url).is_ok_and(|url| !crate::files::probe::file_extension(&url))
+  }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChainStep {
@@ -918,6 +958,16 @@ pub async fn run(
     },
     |mut diagnostic, mut fatal| {
       crate::scheduling::fetch_pipeline::child_terminal(entry, &mut diagnostic, &mut fatal);
+      let code = diagnostic.code.clone();
+      if entry.format.is_none() && !entry.is_playlist_child() {
+        use crate::catch::auto::{consider, Read};
+        let read = if report.generic_extractor_failure(&entry.url) {
+          Read::GenericExtractorFailed(&code)
+        } else {
+          Read::Failed(&code)
+        };
+        consider(app, &entry.group_id, &entry.url, read);
+      }
       emit_terminal(app, diagnostic, fatal);
     },
   ) {
@@ -942,6 +992,132 @@ mod tests {
   };
   use super::*;
   use std::collections::VecDeque;
+
+  #[tokio::test]
+  async fn keeps_generic_extractor_evidence_for_unknown_link_failures() {
+    let url = "https://example.com/news/report";
+    let matcher = crate::parsers::ytdlp_error::DiagnosticMatcher::shared().unwrap();
+    for (url, stderr, files_code, code, generic) in [
+      (
+        url,
+        "ERROR: [generic] page: Unable to extract",
+        "noMatch",
+        "unknown",
+        true,
+      ),
+      (
+        url,
+        "ERROR: [generic] No video formats found!",
+        "noMatch",
+        "unknown",
+        true,
+      ),
+      (
+        "https://www.euronews.com/video/2026/11/16/more-live-news-more-conversations-more-europe-euronews-reinvents-itself-for-its-new-season",
+        "ERROR: [generic] more-live-news-more-conversations-more-europe-euronews-reinvents-itself-for-its-new-season: Unable to download webpage: HTTP Error 406: Not Acceptable (caused by <HTTPError 406: Not Acceptable>)",
+        "noMatch",
+        "unknown",
+        true,
+      ),
+      (
+        url,
+        "ERROR: [generic] page: Unable to download webpage: HTTP Error 403: Forbidden",
+        "noMatch",
+        "accessForbidden403",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [generic] page: Unable to download webpage: HTTP Error 429: Too Many Requests",
+        "noMatch",
+        "rateLimited429",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [youtube] page: Unable to download webpage: HTTP Error 406: Not Acceptable",
+        "noMatch",
+        "unknown",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [generic] Unsupported URL: https://example.com/news/report",
+        "noMatch",
+        "urlNotSupported",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [generic] page: The player returned an unexpected response",
+        "noMatch",
+        "unknown",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [youtube] page: Unable to extract",
+        "noMatch",
+        "unknown",
+        false,
+      ),
+      (
+        "https://example.com/file.pdf",
+        "ERROR: [generic] file.pdf: Unable to extract",
+        "noMatch",
+        "unknown",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [generic] page: Unable to extract",
+        "fileRateLimited",
+        "fileRateLimited",
+        false,
+      ),
+      (
+        url,
+        "ERROR: [generic] page: Unable to extract",
+        "unknown",
+        "unknown",
+        false,
+      ),
+    ] {
+      let parser =
+        crate::parsers::ytdlp_error::YtdlpErrorParser::new("row", "group", matcher.clone())
+          .with_source_url(url);
+      let report = coordinate(url, |step, _, _| {
+        let ChainStep::Stage(stage) = step else {
+          panic!("unclassified errors should not attempt a login");
+        };
+        let mut result = StageResult::<()>::new(stage, Confidence::Medium);
+        if stage == StageId::Ytdlp {
+          result.record_diagnostics(
+            &parser.parse_lines(vec![stderr], false),
+            false,
+            Instant::now(),
+          );
+        } else if stage == StageId::Files {
+          if files_code == "noMatch" {
+            return std::future::ready(result.finish(Outcome::NoMatch, false, Instant::now()));
+          }
+          result.record_code(files_code, "", false, Instant::now());
+        }
+        std::future::ready(result)
+      })
+      .await;
+      assert_eq!(
+        final_code(&report.attempts),
+        Some(code),
+        "{url}: {stderr}; {files_code}"
+      );
+      assert_eq!(
+        report.generic_extractor_failure(url),
+        generic,
+        "{url}: {stderr}; {files_code}"
+      );
+    }
+  }
 
   #[tokio::test]
   async fn facebook_share_anonymous_refusal_retries_with_login_then_saves_all_photos() {

@@ -1,0 +1,9 @@
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:30
+#EXT-X-KEY:METHOD=AES-128,URI="https://example.org/hls/key?label=a,b",KEYFORMAT="identity"
+#EXTINF:20.25,
+https://example.org/hls/one.ts
+#EXTINF:30,
+https://example.org/hls/two.ts
+#EXT-X-ENDLIST

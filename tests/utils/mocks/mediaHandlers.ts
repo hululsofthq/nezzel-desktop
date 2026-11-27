@@ -56,7 +56,18 @@ export const mediaHandlers: Record<string, IPCHandler> = {
     void emit<MediaAddPayload>('media_add', {
       groupId,
       total: 1,
-      item: { id, url, title: 'Test Video', audioCodecs: ['aac'], formats: sampleFormats, filesize: 123, isLeader: true },
+      item: {
+        id, url, title: 'Test Video', audioCodecs: ['aac'], formats: sampleFormats, filesize: 123, isLeader: true,
+        ...(url === 'https://example.com/video'
+          ? {
+              filesize: 4800000,
+              presetSizes: {
+                best: 31380100, small: 18565100, audio: 1480100,
+                output: ['mp4', 'allowReencode', 'none', 'remux', false, false, 'mp3', 'allowReencode', 'none', false],
+              },
+            }
+          : {}),
+      },
     });
     return 'test-group';
   },

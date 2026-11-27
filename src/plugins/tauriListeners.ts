@@ -7,6 +7,7 @@ import { registerDiagnosticsListeners } from '../tauri/listeners/diagnostics.ts'
 import { registerAppListeners } from '../tauri/listeners/app.ts';
 import { registerShortcutListeners } from '../tauri/listeners/shortcuts.ts';
 import { registerLoginListeners } from '../tauri/listeners/login.ts';
+import { useCatchAutoStore } from '../stores/catchAuto';
 
 export default {
   install() {
@@ -19,5 +20,6 @@ export default {
     registerDiagnosticsListeners();
     registerShortcutListeners();
     void registerLoginListeners();
+    void useCatchAutoStore().start();
   },
 };

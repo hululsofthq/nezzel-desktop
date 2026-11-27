@@ -1,8 +1,9 @@
 //! The two capture windows: identity and size, building them, placing the card, and showing an offer.
 
-use super::policy::{self, supported_url};
+use super::policy;
 use super::read::preview;
 use super::state::{CaptureState, Offer};
+use crate::catch::auto::AutoPhase;
 use crate::{state::config_models::CardPosition, SharedConfig};
 use std::{
   sync::atomic::Ordering,
@@ -180,7 +181,11 @@ pub(super) fn offer_with(
   resolving: bool,
   automation_denied: bool,
 ) -> Result<Offer, String> {
-  let parsed = supported_url(text);
+  let source = match window {
+    CaptureWindow::Bar => policy::Source::Explicit,
+    CaptureWindow::Card => policy::Source::Watch,
+  };
+  let parsed = policy::accepted_url(text, source);
   let (url, site) = parsed.unwrap_or_default();
   let state = app.state::<CaptureState>();
   let label = window.label();
@@ -200,6 +205,7 @@ pub(super) fn offer_with(
     resolving,
     feed,
     automation_denied,
+    source,
     adopt_on_focus: window.adopts_on_focus() && !state.main_is_focused.load(Ordering::Relaxed),
     ..Offer::with_network(&config.network)
   };
@@ -267,9 +273,11 @@ pub(super) fn offer_with(
           else {
             return;
           };
-          if slot.card_timer.read_after.is_none() && slot.metadata.is_some() {
-            slot.card_timer.read_after = Some(slot.card_timer.shown.elapsed());
-          }
+          slot.card_timer.observe_read_at(
+            &slot.offer,
+            slot.metadata.is_some(),
+            slot.card_timer.shown.elapsed(),
+          );
           slot
             .card_timer
             .set_keep_open(state.card_keep_open.load(Ordering::Relaxed));
@@ -298,6 +306,11 @@ pub(super) fn offer_with(
                   .as_mut()
                   .filter(|slot| slot.offer.id == id)
                   .is_some_and(|slot| {
+                    slot.card_timer.observe_read_at(
+                      &slot.offer,
+                      slot.metadata.is_some(),
+                      slot.card_timer.shown.elapsed(),
+                    );
                     if hovered {
                       slot.card_timer.engage(id, true);
                     }
@@ -352,6 +365,7 @@ pub(super) struct CardTimer {
   offer_id: u64,
   shown: Instant,
   read_after: Option<Duration>,
+  auto_held: bool,
   spans: Vec<CardHold>,
   last_ping: Option<Duration>,
   keep_open: bool,
@@ -364,9 +378,27 @@ impl CardTimer {
       offer_id: offer.id,
       shown: Instant::now(),
       read_after: (offer.url.is_empty() || offer.feed).then_some(Duration::ZERO),
+      auto_held: false,
       spans: Vec::new(),
       last_ping: None,
       keep_open: false,
+    }
+  }
+
+  fn observe_read_at(&mut self, offer: &Offer, read: bool, now: Duration) {
+    if offer
+      .auto
+      .as_ref()
+      .is_some_and(|auto| matches!(auto.phase, AutoPhase::Waiting | AutoPhase::Looking))
+    {
+      self.auto_held = true;
+      self.read_after = None;
+    } else if self.read_after.is_none() && read {
+      self.read_after = Some(now);
+      if self.auto_held {
+        self.auto_held = false;
+        self.card_limit = self.card_limit.max(now + Duration::from_secs(5));
+      }
     }
   }
 
@@ -655,6 +687,35 @@ mod tests {
     // If enter and the heartbeat are both late, the UI-thread hide recheck still renews the lease.
     timer.engage_at(1, true, s(69));
     assert!(timer.due().unwrap() > timer.shown + s(72));
+  }
+
+  #[test]
+  fn card_does_not_start_its_dismissal_timer_while_automatic_catch_looks() {
+    use crate::catch::auto::{AutoPhase, CatchAutoState};
+    let mut offer = Offer {
+      id: 1,
+      url: "https://example.org/video".into(),
+      ..Offer::default()
+    };
+    let mut timer = CardTimer::new(&offer);
+    let now = Duration::from_secs(10);
+    for phase in [AutoPhase::Waiting, AutoPhase::Looking, AutoPhase::Found] {
+      offer.auto = Some(CatchAutoState {
+        group_id: "capture-offer-1".into(),
+        phase,
+        beside: false,
+        title: None,
+        duration_sec: None,
+        thumbnail: None,
+        kind: None,
+        formats: None,
+      });
+      timer.observe_read_at(&offer, true, now);
+      assert_eq!(
+        timer.due(),
+        (phase == AutoPhase::Found).then_some(timer.shown + now + Duration::from_secs(5))
+      );
+    }
   }
 
   #[test]

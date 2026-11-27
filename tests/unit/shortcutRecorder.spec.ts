@@ -5,6 +5,7 @@ import { nextTick } from 'vue';
 import ShortcutRecorder from '../../src/components/settings/ShortcutRecorder.vue';
 import { i18n } from '../../src/i18n';
 import {
+  builtInKeyOf,
   DEFAULT_CAPTURE_SHORTCUT,
   FALLBACK_CAPTURE_SHORTCUT,
   heldKeys,
@@ -90,6 +91,26 @@ describe('shortcut accelerators', () => {
     expect(sameShortcut('Shift+CmdOrCtrl+d', 'CommandOrControl+Shift+D')).toBe(true);
     expect(sameShortcut('CommandOrControl+D', 'CommandOrControl+Shift+D')).toBe(false);
   });
+
+  it.each([
+    [{ metaKey: true }, 'b', true, 'sidebar'],
+    [{ ctrlKey: true }, 'b', false, 'sidebar'],
+    // ⇧ turns ⌘B (sidebar) into the Nezzel browser; ⌥ keeps neither.
+    [{ metaKey: true, shiftKey: true }, 'B', true, 'browser'],
+    [{ ctrlKey: true, shiftKey: true }, 'B', false, 'browser'],
+    [{ metaKey: true, shiftKey: true, altKey: true }, 'B', true, null],
+    [{ shiftKey: true }, 'B', false, null],
+    // Only the system's own modifier: ⌃⇧B on a Mac (and Win+Shift+B) stay free to bind.
+    [{ ctrlKey: true, shiftKey: true }, 'B', true, null],
+    [{ metaKey: true, ctrlKey: true, shiftKey: true }, 'B', true, null],
+    [{ metaKey: true, shiftKey: true }, 'B', false, null],
+    // An Arabic layout types another letter on the B key; a Latin layout that moved B is read by its letter.
+    [{ ctrlKey: true, shiftKey: true }, 'لآ', false, 'browser'],
+    [{ metaKey: true, shiftKey: true }, 'لآ', true, 'browser'],
+    [{ ctrlKey: true, shiftKey: true }, 'X', false, null],
+  ] as const)('built-in key %o %s (mac=%s) → %s', (mods, keyName, mac, expected) => {
+    expect(builtInKeyOf(key('KeyB', mods, keyName), mac)).toBe(expected);
+  });
 });
 
 function mountRecorder(props: Record<string, unknown> = {}) {
@@ -114,8 +135,11 @@ describe('ShortcutRecorder', () => {
     expect(control.findAll('kbd').map(cap => cap.text())).toEqual(['⌥', '⌘', 'N']);
     expect(wrapper.text()).not.toContain('CommandOrControl');
 
+    expect(control.attributes('data-shortcut-recording')).toBeUndefined();
     await control.trigger('click');
     expect(wrapper.text()).toContain(i18n.global.t('shortcut.press'));
+    // App keys (the browser key in the macOS menu) stay quiet while this is set.
+    expect(control.attributes('data-shortcut-recording')).toBe('');
     await control.trigger('keydown', key('KeyK', { metaKey: true, altKey: true }));
 
     expect(lastValue(wrapper)).toBe('CommandOrControl+Alt+K');

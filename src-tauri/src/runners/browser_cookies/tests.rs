@@ -791,14 +791,20 @@ async fn exporter_timeout_removes_every_cookie_file() {
 
 #[test]
 fn automatic_proof_requires_scoped_nonempty_unexpired_values() {
-  for (xs_domain, xs_value, xs_expiry, expected) in [
-    (".facebook.com", "session", 200, true),
-    ("web.facebook.com", "session", 0, true),
-    ("facebook.com.evil.example", "session", 200, false),
-    ("instagram.com", "session", 200, false),
-    (".facebook.com", "", 200, false),
-    (".facebook.com", "session", 99, false),
-    (".facebook.com", "session", -1, false),
+  let chromium = |seconds: i64| (seconds + 11_644_473_600) * 1_000_000;
+  let chrome = Some(CookieStore::Chromium);
+  for (xs_domain, xs_value, xs_expiry, store, expected) in [
+    (".facebook.com", "session", 200, None, true),
+    ("web.facebook.com", "session", 0, None, true),
+    ("facebook.com.evil.example", "session", 200, None, false),
+    ("instagram.com", "session", 200, None, false),
+    (".facebook.com", "", 200, None, false),
+    (".facebook.com", "session", 99, None, false),
+    (".facebook.com", "session", -1, None, false),
+    (".facebook.com", "session", chromium(101), chrome, true),
+    (".facebook.com", "session", chromium(99), chrome, false),
+    (".facebook.com", "session", i64::MAX, chrome, false),
+    (".facebook.com", "session", chromium(101), None, false),
   ] {
     assert_eq!(
       proof_cookies(
@@ -807,7 +813,8 @@ fn automatic_proof_requires_scoped_nonempty_unexpired_values() {
           (".facebook.com", "c_user", "user", 200),
           (xs_domain, "xs", xs_value, xs_expiry)
         ],
-        100
+        100,
+        store
       ),
       expected
     );
@@ -815,17 +822,20 @@ fn automatic_proof_requires_scoped_nonempty_unexpired_values() {
   assert!(!proof_cookies(
     "facebook.com",
     [("facebook.com", "c_user", "user", 200)],
-    100
+    100,
+    None
   ));
   assert!(proof_cookies(
     "instagram.com",
     [("instagram.com", "sessionid", "session", 200)],
-    100
+    100,
+    None
   ));
   assert!(proof_cookies(
     "youtube.com",
     [("google.com", "SID", "session", 200)],
-    100
+    100,
+    None
   ));
 }
 #[test]

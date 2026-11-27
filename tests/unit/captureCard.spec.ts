@@ -5,16 +5,24 @@ import CaptureCard from '../../src/components/downloads/CaptureCard.vue';
 import { emptyDetails, type CaptureOffer } from '../../src/captureTypes';
 import { i18n } from '../../src/i18n';
 import { CAPTURE_CARD_SIZE } from '../../src/generated/contract';
+import { autoCatchView } from '../../src/helpers/catchOffer';
 
 const invoke = vi.hoisted(() => vi.fn((_cmd: string, _args?: unknown): Promise<boolean> => Promise.resolve(true)));
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
+const onFail = vi.hoisted(() => vi.fn());
+const onAuto = vi.hoisted(() => vi.fn());
 const offer = ref<CaptureOffer>({ id: 1, remoteImages: false, url: 'https://example.com/video', site: 'example.com', title: '', read: false, details: emptyDetails(), failed: false, reason: null, resolving: false, feed: false });
 vi.mock('../../src/composables/useCaptureOffer', () => ({
   useCaptureOffer: () => ({
     offer, details: computed(() => offer.value.details), error: ref(false), acting: ref(false), slow: ref(false),
     isPlaylist: computed(() => offer.value.feed || offer.value.details.mediaKind === 'playlist'), choicesLoading: computed(() => !offer.value.read),
     thumbFailed: ref(false), faviconFailed: ref(false), failure: ref(null), favicon: ref(null), facts: ref([]),
-    act: vi.fn(), onFail: vi.fn(), start: vi.fn(),
+    embedded: computed(() => offer.value.read && !!offer.value.details.embedded),
+    failed: computed(() => offer.value.failed),
+    auto: computed(() => autoCatchView(offer.value.auto, true)),
+    autoOwns: computed(() => offer.value.failed && !!offer.value.auto && !offer.value.auto.beside && offer.value.auto.phase !== 'needsStep'),
+    autoBeside: computed(() => offer.value.read && !offer.value.failed && !!offer.value.auto?.beside),
+    act: vi.fn(), onFail, onAuto, start: vi.fn(),
   }),
 }));
 
@@ -182,5 +190,53 @@ describe('copied-link card dismiss tooltip (#83)', () => {
     card.unmount();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+});
+
+describe('copied-link card for a page that only embeds another site\'s video', () => {
+  it('keeps Download and adds one quiet link that opens the page in the Nezzel browser', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    offer.value = { ...offer.value, id: 3, title: 'Official trailer', read: true, details: { ...emptyDetails(), mediaKind: 'video', bestHeight: 1080, embedded: true } };
+    const card = mount(CaptureCard, { attachTo: document.body, global: { plugins: [i18n], stubs: { Tooltip: { props: ['content'], template: '<slot />' } } } });
+    expect(card.get('[data-testid="capture-embed-hint"]').text()).toContain(i18n.global.t('catch.embed.question'));
+    expect(card.find('[data-pick="best"]').exists()).toBe(true);
+    await card.get('[data-testid="capture-embed-open"]').trigger('click');
+    expect(onFail).toHaveBeenCalledWith('catch');
+    offer.value = { ...offer.value, id: 4, details: { ...offer.value.details, embedded: false } };
+    await nextTick();
+    expect(card.find('[data-testid="capture-embed-hint"]').exists()).toBe(false);
+    card.unmount();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('copied-link card: automatic catch', () => {
+  afterEach(() => {
+    offer.value = { ...offer.value, failed: false, auto: null };
+    onAuto.mockClear();
+  });
+  const mountCard = () => mount(CaptureCard, { global: { plugins: [i18n], stubs: { Tooltip: { props: ['content'], template: '<slot />' } } } });
+
+  it.each([
+    ['looking', 'capture-auto-looking', 'cancel'],
+    ['found', 'capture-auto-found', 'download'],
+  ] as const)('a failed read with the catch %s shows it instead of the failure, and its button acts on it', async (phase, testid, action) => {
+    offer.value = { ...offer.value, read: true, failed: true, reason: 'unsupported', auto: { groupId: 'g1', phase, beside: false, title: 'The Long Night', durationSec: 6738 } };
+    const card = mountCard();
+    try {
+      expect(card.find(`[data-testid="${testid}"]`).exists()).toBe(true);
+      expect(card.find('[data-testid="capture-catch"]').exists()).toBe(false);
+      await card.get(`[data-testid="capture-auto-${action}"]`).trigger('click');
+      expect(onAuto).toHaveBeenCalledWith(action);
+    } finally { card.unmount(); }
+  });
+
+  it('beside an embedded result the found full video replaces "Not the video you wanted?"', () => {
+    offer.value = { ...offer.value, read: true, failed: false, details: { ...emptyDetails(), embedded: true }, auto: { groupId: 'g1', phase: 'found', beside: true, durationSec: 6738 } };
+    const card = mountCard();
+    try {
+      expect(card.get('[data-testid="capture-auto-beside"]').text()).toContain('Found the full video (1:52:18)');
+      expect(card.find('[data-testid="capture-embed-hint"]').exists()).toBe(false);
+    } finally { card.unmount(); }
   });
 });

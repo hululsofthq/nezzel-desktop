@@ -63,6 +63,8 @@ export interface InputSettings {
   captureShortcut: string;
   preferVideoInMixedLinks: boolean;
   globalShortcuts: boolean;
+  /** Look for the video on web pages automatically (automatic catch). Missing in older configs = on. */
+  autoCatch?: boolean;
 }
 
 export type InputFilterSizeUnit = 'B' | 'KB' | 'MB' | 'GB' | 'TB';
@@ -222,6 +224,7 @@ export const defaultInputSettings: InputSettings = {
   captureShortcut: DEFAULT_CAPTURE_SHORTCUT,
   preferVideoInMixedLinks: false,
   globalShortcuts: true,
+  autoCatch: true,
 };
 
 export const defaultInputFilterSizeFilter: InputFilterSizeFilter = {

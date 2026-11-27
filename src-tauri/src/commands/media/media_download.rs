@@ -1,8 +1,6 @@
 use crate::library::{CompletionMetadata, Library};
 use crate::models::DownloadItem;
-use crate::scheduling::dispatcher::DispatchRequest;
-use crate::scheduling::download_pipeline::{DownloadRequest, DownloadSender};
-use crate::scheduling::group_state::start_group_run;
+use crate::scheduling::download_pipeline::DownloadSender;
 use std::collections::HashMap;
 use tauri::State;
 
@@ -16,7 +14,10 @@ pub fn media_download(
   library: State<'_, Library>,
   pipeline: State<'_, DownloadSender>,
 ) -> String {
-  let generation = start_group_run(&group_id);
+  let generation =
+    crate::scheduling::download_pipeline::start_counted_batch(&group_id, items.len());
+  // Downloading the embedded result ends a search for a longer video beside it.
+  crate::catch::auto::acted(&app, &group_id);
   let ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
   crate::usage::queued(
     &app,
@@ -28,16 +29,7 @@ pub fn media_download(
     library.remember(&group_id, metadata);
   }
 
-  if let Err(error) = pipeline
-    .0
-    .send(DispatchRequest::Pipeline(DownloadRequest::Batch {
-      group_id: group_id.clone(),
-      generation,
-      items,
-    }))
-  {
-    tracing::error!(group_id = %group_id, error = %error, "Download dispatcher is gone");
-  }
+  pipeline.send_counted_batch(&group_id, generation, items);
 
   group_id
 }

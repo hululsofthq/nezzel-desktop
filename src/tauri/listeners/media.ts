@@ -2,11 +2,16 @@ import { listen } from '@tauri-apps/api/event';
 import { useMediaStore } from '../../stores/media/media';
 import { useMediaSizeStore } from '../../stores/media/size';
 import { ROW_EVENTS } from '../../generated/contract';
+import type { CatchQueuedDownload } from '../types/catch';
 import { MediaAddPayload, MediaAddWithFormatPayload, MediaGroupTotalPayload } from '../types/media';
 
 export function registerMediaListeners() {
   const mediaStore = useMediaStore();
   const sizeStore = useMediaSizeStore();
+
+  void listen<CatchQueuedDownload>('catch://queued', (event) => {
+    mediaStore.addCaughtDownload(event.payload);
+  }, { target: { kind: 'Webview', label: 'main' } });
 
   void listen<MediaAddPayload>('media_add', (event) => {
     mediaStore.processMediaAddPayload(event.payload);

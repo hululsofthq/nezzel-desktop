@@ -7,6 +7,7 @@ import { updateHandlers } from './updateHandlers';
 import { strongholdHandlers } from './strongholdHandlers';
 import { onboardingHandlers } from './onboardingHandlers';
 import { diagnosticsHandlers } from './diagnosticsHandlers';
+import { catchHandlers } from './catchHandlers';
 
 /** The main window's e2e backend. Loaded only by `mainWindow.ts` behind `__E2E__`, so no build ships it. */
 export function installMainWindowMocks(): void {
@@ -19,5 +20,6 @@ export function installMainWindowMocks(): void {
     ...strongholdHandlers,
     ...onboardingHandlers,
     ...diagnosticsHandlers,
+    ...catchHandlers,
   });
 }

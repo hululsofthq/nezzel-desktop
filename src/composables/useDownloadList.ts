@@ -9,6 +9,8 @@ import { needsAttention, countView, filterRows, statusOf, type ListRow, type Lis
 import type { Group } from '../tauri/types/group';
 import { buildListTree, type TreeNode } from '../helpers/listTree';
 import { usePlaylistStore } from '../stores/media/playlist';
+import { useCatchAutoStore } from '../stores/catchAuto';
+import type { MediaState } from '../stores/media/state';
 
 export type GroupRow = ListRow & { id: string; group: Group; needsAttention: boolean; parentId?: string; parentIndex?: number };
 export type GroupNode = TreeNode<GroupRow>;
@@ -31,14 +33,17 @@ export function useDownloadList() {
   const destinationStore = useMediaDestinationStore();
 
   const pathsOf = (id: string) => destinationStore.getDestinations(id).map(d => d.path);
+  const catchAuto = useCatchAutoStore();
+  /** A failed read the automatic catch works on: looking, found and one step left count as active; the last two also as "needs you". */
+  const autoKind = (id: string, state: MediaState) => (statusOf(state) === 'failed' ? catchAuto.takenOver(id) : null);
   const rows = computed<GroupRow[]>(() => withState.value.map(({ group, state }) => ({
     id: group.id,
     group,
-    status: statusOf(state),
-    needsAttention: needsAttention(state, loginStore.cardFor(group.id)?.kind === 'needed'),
+    status: autoKind(group.id, state) ? 'active' : statusOf(state),
+    needsAttention: needsAttention(state, loginStore.cardFor(group.id)?.kind === 'needed') || ['found', 'needsStep'].includes(autoKind(group.id, state) ?? ''),
     cleared: statusOf(state) === 'done' && cleared.isCleared(pathsOf(group.id)),
     kind: kindFilterOf(kindOf(group)),
-    title: group.title ?? group.url ?? '',
+    title: [group.title ?? group.url ?? '', autoKind(group.id, state) === 'found' ? catchAuto.states[group.id]?.title : ''].filter(Boolean).join(' '),
     site: groupSite(group) ?? '',
     parentId: group.parentId,
     parentIndex: group.parentIndex,

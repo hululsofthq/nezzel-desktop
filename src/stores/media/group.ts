@@ -59,8 +59,8 @@ export const useMediaGroupStore = defineStore('media-group', () => {
     if (index !== -1) groupOrder.value.splice(index, 1);
   };
 
-  const cancelGroup = (id: string, discardFiles = false) => {
-    return invoke<void>('group_cancel', { groupId: id, discardFiles });
+  const cancelGroup = (id: string, discardFiles = false, partialRoots?: string[]) => {
+    return invoke<void>('group_cancel', { groupId: id, discardFiles, ...(partialRoots ? { partialRoots } : {}) });
   };
 
   /**

@@ -16,6 +16,7 @@
         :aria-label="ariaLabel"
         :aria-describedby="hintId"
         data-testid="shortcut-control"
+        :data-shortcut-recording="recording ? '' : undefined"
         @click="start"
         @keydown="onKey"
         @keyup="onKeyUp"

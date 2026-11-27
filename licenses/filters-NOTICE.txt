@@ -1,0 +1,22 @@
+NEZZEL BROWSER AD AND TRACKER LISTS
+
+The Nezzel browser blocks ads and trackers with network rules taken from these
+lists (page-hiding rules removed). Snapshot: src-tauri/src/catch/filters/network.txt,
+made by scripts/fetch-filters.mjs; its header names each list's version.
+
+EasyList (https://easylist.to/easylist/easylist.txt)
+EasyPrivacy (https://easylist.to/easylist/easyprivacy.txt)
+Copyright The EasyList authors (https://easylist.to/).
+Dual licensed under the GNU General Public License version 3 or later
+(https://www.gnu.org/licenses/gpl-3.0.html) and the Creative Commons
+Attribution-ShareAlike 3.0 Unported licence
+(https://creativecommons.org/licenses/by-sa/3.0/). Nezzel uses them under GPLv3.
+
+The generated snapshot (network.txt) is a modified version of these lists and is
+distributed under the GNU General Public License version 3 or later, with the
+attribution above. Changes: page-hiding rules and request-rewriting rules removed.
+
+The lists are matched by the adblock crate (https://github.com/brave/adblock-rust),
+Mozilla Public License 2.0, used unmodified; its licence text is in the Rust crate
+licences above and its source is at https://crates.io/crates/adblock and
+https://github.com/brave/adblock-rust.

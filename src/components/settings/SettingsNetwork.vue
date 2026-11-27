@@ -20,7 +20,12 @@
       <p id="proxyUrlHint" class="mt-1.5 text-[12px]" :class="proxyInvalid ? 'text-destructive' : 'text-muted-foreground'">
         {{ proxyInvalid ? t('prefs.adv.net.proxyInvalid') : t('prefs.adv.net.proxyExample') }}
       </p>
+      <p class="mt-1 text-[12px] text-muted-foreground" data-testid="proxy-browser-note">{{ t('prefs.adv.net.proxyBrowser') }}</p>
     </div>
+
+    <settings-row search-id="autoCatch" for-id="autoCatch" :label="t('prefs.adv.net.autoCatch')" :help="t('prefs.adv.net.autoCatchHint')">
+      <Switch id="autoCatch" v-model="autoCatch" />
+    </settings-row>
 
     <template #more>
       <settings-row search-id="impersonate" for-id="impersonate" :label="t('prefs.adv.net.impersonate')" :help="t('prefs.adv.net.impersonateHint')">
@@ -58,6 +63,11 @@ const proxyEnabled = computed<boolean>({
 const proxy = computed<string>({
   get: () => network.value.proxy ?? '',
   set: (value) => { settings.value.network.proxy = value; },
+});
+/** Missing in older configs means on. */
+const autoCatch = computed<boolean>({
+  get: () => settings.value.input.autoCatch !== false,
+  set: (value) => { settings.value.input.autoCatch = value; },
 });
 const proxyInvalid = computed(() => proxy.value.length > 0 && !isValidProxyUrl(proxy.value));
 </script>

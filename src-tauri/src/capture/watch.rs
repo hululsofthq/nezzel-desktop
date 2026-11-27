@@ -1,8 +1,8 @@
 //! Where links come from: the clipboard watcher (the copied-link card) and the Quick download bar.
 
-use super::outbox::{send_to_main, ForMain};
+use super::outbox::{emit_watched, send_to_main, ForMain};
 use super::policy::{self, supported_url};
-use super::state::CaptureState;
+use super::state::{claim_action, Action, CaptureState};
 use super::window::{offer, offer_with, CaptureWindow};
 use super::{browser, clipboard};
 use crate::SharedConfig;
@@ -97,7 +97,7 @@ pub(super) async fn watch_clipboard(app: AppHandle) {
     if !background && !state.main_is_focused.load(Ordering::Relaxed) {
       continue;
     }
-    let ready = state.ready.load(Ordering::Relaxed);
+    let ready = state.ready.load(Ordering::Acquire);
     diag.note("ready", if ready { "true" } else { "false" });
     if !ready {
       continue;
@@ -167,46 +167,53 @@ pub(super) async fn watch_clipboard(app: AppHandle) {
       }
       last_prefill = prefill;
     }
-    if let Some(((url, _), text)) = candidate {
-      if !cfg.input.watch_clipboard {
-        // The card is off: consume the link so turning the card on later doesn't offer an old copy.
-        state
-          .policy
-          .lock()
-          .unwrap()
-          .acknowledge(&text, state.started.elapsed());
-      } else if !failures.may_retry(&text) {
+    let Some((urls, text)) = candidate else {
+      continue;
+    };
+    let watching = cfg.input.watch_clipboard;
+    // Do not replace a quick-bar interaction with background capture.
+    if watching
+      && app
+        .get_webview_window(CaptureWindow::Bar.label())
+        .is_some_and(|w| w.is_visible().unwrap_or(false))
+    {
+      diag.note("card", "skipped-bar-open");
+      continue;
+    }
+    let preview = urls
+      .first()
+      .filter(|_| watching && urls.len() == 1 && !state.skip_options_sheet.load(Ordering::Relaxed));
+    let card = if let Some(url) = preview {
+      if !failures.may_retry(&text) {
         diag.note("card", "show-failed-backoff");
-      } else {
-        // Do not replace a quick-bar interaction with a background offer.
-        if app
-          .get_webview_window(CaptureWindow::Bar.label())
-          .is_some_and(|w| w.is_visible().unwrap_or(false))
-        {
-          diag.note("card", "skipped-bar-open");
-        } else {
-          let shown = offer(&app, CaptureWindow::Card, &url, false);
-          failures.record(&text, shown.is_ok());
-          if shown.is_ok() {
-            state
-              .policy
-              .lock()
-              .unwrap()
-              .acknowledge(&text, state.started.elapsed());
-            crate::usage::count(&app, crate::usage::keys::CLIP_SHOWN);
-            // This is an event, not a state: Diagnostics suppresses repeated "shown" values.
-            tracing::info!("Copied-link card shown");
-          }
-          diag.note(
-            "card",
-            if shown.is_ok() {
-              "shown"
-            } else {
-              "show-failed"
-            },
-          );
-        }
+        continue;
       }
+      let shown = offer(&app, CaptureWindow::Card, url, false);
+      failures.record(&text, shown.is_ok());
+      let Ok(shown) = shown else {
+        diag.note("card", "show-failed");
+        continue;
+      };
+      crate::usage::count(&app, crate::usage::keys::CLIP_SHOWN);
+      tracing::info!("Copied-link card shown");
+      diag.note("card", "shown");
+      let claim = claim_action(&state, CaptureWindow::Card, shown.id, Action::Adopt);
+      claim.map(Some)
+    } else {
+      Ok(None)
+    };
+    // A disabled watch still consumes the copy so turning it on doesn't offer old links.
+    state
+      .policy
+      .lock()
+      .unwrap()
+      .acknowledge(&text, &urls, state.started.elapsed());
+    if !watching {
+      continue;
+    }
+    // A click or focus event that claimed the card first delivers its own action.
+    if let Ok(card) = card {
+      emit_watched(&app, urls, card);
     }
   }
 }
@@ -369,7 +376,7 @@ pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
       choose(browser_read.as_deref().ok(), &clipboard)
     };
     let browser = match &browser_read {
-      Ok(url) if supported_url(url).is_some() => "ok",
+      Ok(url) if named(url).is_some() => "ok",
       Ok(_) => "unsupported",
       Err(reason) => reason,
     };
@@ -390,13 +397,11 @@ pub fn open_quick_bar(app: &AppHandle, browser_first: bool) {
 /// The quick bar's text and where it came from ("browser", "clipboard", or "none" when neither holds a
 /// supported link): the browser tab first; on a feed page, a clipboard post URL from the same site.
 fn choose(browser_url: Option<&str>, clipboard: &str) -> (String, &'static str) {
-  let (mut text, mut source) = match browser_url.filter(|s| supported_url(s).is_some()) {
+  let (mut text, mut source) = match browser_url.filter(|s| named(s).is_some()) {
     Some(url) => (url.to_owned(), "browser"),
     None => (clipboard.to_owned(), "clipboard"),
   };
-  if let (Some((url, site)), Some((clip_url, clip_site))) =
-    (supported_url(&text), supported_url(clipboard))
-  {
+  if let (Some((url, site)), Some((clip_url, clip_site))) = (named(&text), named(clipboard)) {
     if policy::is_feed_page(&url)
       && same_site(&site, &clip_site)
       && !policy::is_feed_page(&clip_url)
@@ -404,10 +409,15 @@ fn choose(browser_url: Option<&str>, clipboard: &str) -> (String, &'static str) 
       (text, source) = (clipboard.to_owned(), "clipboard");
     }
   }
-  if supported_url(&text).is_none() {
+  if named(&text).is_none() {
     source = "none";
   }
   (text, source)
+}
+
+/// The user opened the bar: any public page is theirs to read (`policy::Source::Explicit`).
+fn named(text: &str) -> Option<(String, String)> {
+  policy::accepted_url(text, policy::Source::Explicit)
 }
 
 /// Runs a browser read. On macOS the output also names the frontmost app, which replaces `frontmost`.
@@ -503,7 +513,15 @@ mod tests {
       (Some(photo), youtube, photo, "browser"),
       // No browser read (not a browser, Automation denied): the clipboard link.
       (None, youtube, youtube, "clipboard"),
-      (Some("https://example.com/x"), youtube, youtube, "clipboard"),
+      // The user opened the bar: any public page in the tab is theirs to read.
+      (
+        Some("https://example.com/x"),
+        youtube,
+        "https://example.com/x",
+        "browser",
+      ),
+      // A local service in the tab is never read; the copied link instead.
+      (Some("http://192.168.1.1/x"), youtube, youtube, "clipboard"),
       // A feed tab yields to a copied post from the same site.
       (
         Some("https://www.tiktok.com/foryou"),

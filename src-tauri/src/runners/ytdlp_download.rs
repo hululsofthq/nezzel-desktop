@@ -1,3 +1,4 @@
+use crate::catch::handoff::{self, HandoffError};
 use crate::download_records::DownloadRecords;
 use crate::logging::LogStoreState;
 use crate::models::download::DownloadSection;
@@ -15,7 +16,7 @@ use crate::runners::{
   transport::{aria_denied, resolve_aria2, single_direct_http, transfer_args},
 };
 use crate::scheduling::download_pipeline::DownloadEntry;
-use crate::scheduling::group_state::subscribe_group;
+use crate::scheduling::group_state::{group_generation, subscribe_group};
 use crate::SharedConfig;
 use std::fmt;
 use tauri::{AppHandle, Manager, State};
@@ -64,6 +65,7 @@ impl DownloadPartial {
     let create = || -> std::io::Result<Self> {
       fs::create_dir_all(root)?;
       let path = root.canonicalize()?.join(partial_name(group, item));
+      #[cfg_attr(not(unix), allow(unused_mut))]
       let mut builder = fs::DirBuilder::new();
       #[cfg(unix)]
       {
@@ -222,19 +224,60 @@ impl PartialDownloads {
     entries.insert(key, partial.clone());
     Ok(Some(partial))
   }
-  fn discard(&self, group: &str) {
-    self.0.lock().unwrap().retain(|(id, _), partial| {
-      if id != group {
-        return true;
+  fn cancel(&self, group: &str, generation: u64, discard_roots: Option<&[&str]>) {
+    let mut entries = self.0.lock().unwrap();
+    // Check under the registry lock so a resumed worker cannot acquire a partial between
+    // the generation check and the ownership writes below.
+    if group_generation(group) != Some(generation) {
+      return;
+    }
+    if let Some(roots) = discard_roots {
+      entries.retain(|(id, _), partial| {
+        if id != group {
+          return true;
+        }
+        partial.discard();
+        false
+      });
+      drop(entries);
+      self.discard_unregistered(group, generation, roots);
+    } else {
+      for ((id, _), partial) in entries.iter() {
+        if id == group && partial.set_state(PartialState::Paused).is_err() {
+          tracing::warn!("Unable to record resumable download ownership");
+        }
       }
-      partial.discard();
-      false
-    });
+    }
   }
-  fn state(&self, group: &str, state: PartialState) {
-    for ((id, _), partial) in self.0.lock().unwrap().iter() {
-      if id == group && partial.set_state(state).is_err() {
-        tracing::warn!("Unable to record resumable download ownership");
+  fn discard_unregistered(&self, group: &str, generation: u64, roots: &[&str]) {
+    for &root in roots {
+      let Ok(entries) = std::fs::read_dir(root) else {
+        continue;
+      };
+      for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+          continue;
+        }
+        let Some(owner) = read_partial_owner(&entry.path()) else {
+          continue;
+        };
+        if owner.group != group
+          || entry.file_name() != std::ffi::OsStr::new(&partial_name(group, &owner.item))
+        {
+          continue;
+        }
+        // Active writers retain their Arc lease and remove the discarded directory on exit.
+        if owner.state == PartialState::Discarded {
+          continue;
+        }
+        // Directory scans can run without the registry lock. Recheck before touching a candidate.
+        let _entries = self.0.lock().unwrap();
+        if group_generation(group) != Some(generation) {
+          return;
+        }
+        if let Ok(partial) = DownloadPartial::open(std::path::Path::new(root), group, &owner.item) {
+          partial.discard();
+        }
       }
     }
   }
@@ -380,8 +423,16 @@ pub(crate) fn sweep_download_partials(
   });
 }
 
-pub(crate) fn discard_group(app: &AppHandle, group: &str, additional_roots: &[String]) {
-  PARTIAL_DOWNLOADS.discard(group);
+pub(crate) fn cancel_partials(
+  app: &AppHandle,
+  group: &str,
+  generation: u64,
+  discard_roots: Option<&[String]>,
+) {
+  let Some(additional_roots) = discard_roots else {
+    PARTIAL_DOWNLOADS.cancel(group, generation, None);
+    return;
+  };
   let cfg = app.state::<crate::SharedConfig>().load();
   let prefs = app.state::<crate::SharedPreferences>().load();
   let roots = [
@@ -389,39 +440,14 @@ pub(crate) fn discard_group(app: &AppHandle, group: &str, additional_roots: &[St
     prefs.paths.video_download_dir.as_deref(),
     prefs.paths.audio_download_dir.as_deref(),
   ];
-  for root in roots
+  let roots: Vec<_> = roots
     .into_iter()
     .flatten()
     .chain(additional_roots.iter().map(String::as_str))
-  {
-    let Ok(entries) = std::fs::read_dir(root) else {
-      continue;
-    };
-    for entry in entries.flatten() {
-      if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-        continue;
-      }
-      let Some(owner) = read_partial_owner(&entry.path()) else {
-        continue;
-      };
-      if owner.group != group
-        || entry.file_name() != std::ffi::OsStr::new(&partial_name(group, &owner.item))
-      {
-        continue;
-      }
-      // Active writers retain their Arc lease and remove the discarded directory on exit.
-      if owner.state == PartialState::Discarded {
-        continue;
-      }
-      if let Ok(partial) = DownloadPartial::open(std::path::Path::new(root), group, &owner.item) {
-        partial.discard();
-      }
-    }
-  }
+    .collect();
+  PARTIAL_DOWNLOADS.cancel(group, generation, Some(&roots));
 }
-pub(crate) fn pause_group(group: &str) {
-  PARTIAL_DOWNLOADS.state(group, PartialState::Paused);
-}
+
 pub(crate) fn download_finished(
   group: &str,
   item: &str,
@@ -1090,7 +1116,13 @@ async fn run_download_attempts(
   let mut refetch = super::retry_policy::RetryState::default();
   let recovery_started = tokio::time::Instant::now();
   let mut recovery = super::reliability::Recovery::default();
-  let mut input = match entry.take_fetch_input() {
+  let mut capture = entry.catch.as_deref().cloned();
+  let is_capture = capture.is_some();
+  let mut input = match if is_capture {
+    Some(ResolvedInput::new(&entry.url))
+  } else {
+    entry.take_fetch_input()
+  } {
     Some(input) => input,
     None => {
       let resolution = loop {
@@ -1203,15 +1235,19 @@ async fn run_download_attempts(
         stage: crate::models::ProgressStage::Initializing,
       },
     );
-    login.announce(&app, &entry.id, &entry.group_id);
+    if !is_capture {
+      login.announce(&app, &entry.id, &entry.group_id);
+    }
     // Browser-consent resumes retain both the resolved target and its original page/referer.
     entry.resolved = Some(Box::new(input.clone()));
     login.has_session = false;
-    let cookies = if let Some(cookies) = inherited_cookies
+    let cookies = if is_capture {
+      None
+    } else if let Some(cookies) = inherited_cookies
       .as_ref()
       .filter(|_| login.browser == inherited_browser)
     {
-      cookies.clone()
+      Some(cookies.clone())
     } else {
       match YtdlpRunner::new(&app)
         .with_auth_args(
@@ -1222,7 +1258,7 @@ async fn run_download_attempts(
         .prepare_cookie_access(&entry.group_id)
         .await
       {
-        Ok(cookies) => cookies,
+        Ok(cookies) => Some(cookies),
         Err(error) => {
           if is_cancelled_now(&cancel_rx) {
             return Ok(());
@@ -1266,9 +1302,9 @@ async fn run_download_attempts(
         }
       }
     };
-    login.has_session = cookies.has_session;
+    login.has_session = cookies.as_ref().is_some_and(|cookies| cookies.has_session);
     let performance = app.state::<SharedConfig>().load().performance.clone();
-    let mut aria = if performance.aria2_enabled && !login.state.native_fallback {
+    let mut aria = if !is_capture && performance.aria2_enabled && !login.state.native_fallback {
       resolve_aria2(&app)
     } else {
       None
@@ -1284,7 +1320,7 @@ async fn run_download_attempts(
           login.browser.as_deref(),
           &entry.url,
         )
-        .with_cookie_access(Some(&cookies))
+        .with_cookie_access(cookies.as_ref())
         .with_network_args(entry.overrides.as_ref())
         .with_args(["-J", "--flat-playlist", "--skip-download"])
         .with_resolved_input(&input)
@@ -1448,35 +1484,44 @@ async fn run_download_attempts(
         Err(_) => aria = None,
       }
     }
-    let runner = YtdlpRunner::new(&app)
-      .with_progress_args()
-      .with_args([
-        "--continue",
-        "--retry-sleep",
-        "http:exp=1:20",
-        "--retry-sleep",
-        "fragment:exp=1:20",
-        "--extractor-retries",
-        "2",
+    let runner = YtdlpRunner::new(&app).with_progress_args();
+    let runner = if is_capture {
+      runner.with_args([
+        "--no-plugin-dirs",
+        "--force-overwrites",
+        "--match-filter",
+        "!is_live",
       ])
-      .with_network_args(entry.overrides.as_ref())
-      .with_auth_args(
-        entry.overrides.as_ref(),
-        login.browser.as_deref(),
-        &entry.url,
-      )
-      .with_cookie_access(Some(&cookies))
-      .with_args(super::reliability::playlist_args(playlist_child))
-      .with_subtitle_args(entry.overrides.as_ref(), entry.subtitle_inventory.as_ref())
-      .with_sponsorblock_args(entry.overrides.as_ref())
-      .with_format_args(&entry.url, &entry.format, entry.overrides.as_ref())
-      .with_input_filter_args(entry.overrides.as_ref())
-      .with_input_args(entry.overrides.as_ref())
-      .with_args(transfer_args(
-        performance.concurrent_fragments,
-        aria.as_deref(),
-        login.state.native_fallback,
-      ));
+    } else {
+      runner
+        .with_args([
+          "--continue",
+          "--retry-sleep",
+          "http:exp=1:20",
+          "--retry-sleep",
+          "fragment:exp=1:20",
+          "--extractor-retries",
+          "2",
+        ])
+        .with_network_args(entry.overrides.as_ref())
+        .with_auth_args(
+          entry.overrides.as_ref(),
+          login.browser.as_deref(),
+          &entry.url,
+        )
+        .with_cookie_access(cookies.as_ref())
+        .with_args(super::reliability::playlist_args(playlist_child))
+        .with_subtitle_args(entry.overrides.as_ref(), entry.subtitle_inventory.as_ref())
+        .with_sponsorblock_args(entry.overrides.as_ref())
+        .with_format_args(&entry.url, &entry.format, entry.overrides.as_ref())
+        .with_input_filter_args(entry.overrides.as_ref())
+        .with_input_args(entry.overrides.as_ref())
+        .with_args(transfer_args(
+          performance.concurrent_fragments,
+          aria.as_deref(),
+          login.state.native_fallback,
+        ))
+    };
     #[cfg(target_os = "macos")]
     let keep_original_codec = app
       .state::<SharedConfig>()
@@ -1556,14 +1601,14 @@ async fn run_download_attempts(
     let mut carousel = CarouselItems::default();
     // Refresh the source immediately before transfer. Snapchat's opaque CDN suffix is
     // not a file format; normalize only that provider's video/thumbnail metadata.
-    let snapchat_info = if snapchat_media_page(&entry.url) {
+    let snapchat_info = if !is_capture && snapchat_media_page(&entry.url) {
       let Some(output) = YtdlpRunner::new(&app)
         .with_auth_args(
           entry.overrides.as_ref(),
           login.browser.as_deref(),
           &entry.url,
         )
-        .with_cookie_access(Some(&cookies))
+        .with_cookie_access(cookies.as_ref())
         .with_network_args(entry.overrides.as_ref())
         .with_args(["-J", "--no-playlist"])
         .with_resolved_input(&input)
@@ -1605,7 +1650,17 @@ async fn run_download_attempts(
     } else {
       None
     };
-    let runner = if let Some((_, path)) = &snapchat_info {
+    let runner = if let Some(capture) = &capture {
+      let runner = tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => return Ok(()),
+        result = handoff::download_runner(runner, capture) => result,
+      };
+      match runner {
+        Ok(runner) => runner,
+        Err(error) => return capture_failed(&app, &entry, error.code(), None, &[]),
+      }
+    } else if let Some((_, path)) = &snapchat_info {
       runner.with_args([
         "--load-info-json".into(),
         path.to_string_lossy().into_owned(),
@@ -1613,6 +1668,9 @@ async fn run_download_attempts(
     } else {
       runner.with_resolved_input(&input)
     };
+    let mut capture_failure = HandoffError::Runner;
+    // The last yt-dlp error lines of a catch run, for the local log only (scrubbed there).
+    let mut capture_tail = std::collections::VecDeque::with_capacity(6);
     let mut login_reason = None;
     let mut cookie_failure = CookieFetchFailure::Other;
     let mut session_expired_seen = false;
@@ -1644,8 +1702,18 @@ async fn run_download_attempts(
     if let Some(bytes) = super::reliability::partial_bytes(&temporary.path) {
       watchdog.observe_file_bytes(bytes, recovery_started.elapsed());
     }
-    let (mut rx, child) = match runner.spawn(&entry.group_id).await {
+    let spawned = if is_capture {
+      tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => return Ok(()),
+        result = runner.spawn(&entry.group_id) => result,
+      }
+    } else {
+      runner.spawn(&entry.group_id).await
+    };
+    let (mut rx, child) = match spawned {
       Ok(result) => result,
+      Err(_) if is_capture => return capture_failed(&app, &entry, "unknown", None, &[]),
       Err(err) => {
         let message = format!("Failed to spawn yt-dlp: {err}");
         crate::events::emit(
@@ -1677,6 +1745,9 @@ async fn run_download_attempts(
               false
             }).await.unwrap_or(false);
             if is_cancelled_now(&cancel_rx) { return Ok(()); }
+            if is_capture {
+              tracing::warn!(download_id = %entry.id, extracting = watchdog.extraction_expired(recovery_started.elapsed()), detail = %handoff::failure_detail(capture_tail.make_contiguous()), "catch download stopped moving");
+            }
             if watchdog.extraction_expired(recovery_started.elapsed()) {
               super::reliability::fatal(&app, &entry, "networkTimeout");
               return Err(YtdlpDownloadError::RunnerError("networkTimeout".into()));
@@ -1697,21 +1768,25 @@ async fn run_download_attempts(
             return Ok(());
           }
 
-          let log_state = app.state::<LogStoreState>();
-
           match event {
             YtdlpCommandEvent::Stdout(line) => {
               let line_str = String::from_utf8_lossy(&line);
               pending_files.record(&line_str);
+              if is_capture {
+                if line_str.starts_with("[download] Got error") || line_str.starts_with("ERROR") { keep_tail(&mut capture_tail, &line_str); }
+                if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); }
+                if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app, false) { watchdog.stage(&stage); }
+                continue;
+              }
               carousel.record(&line_str);
               sponsor_removed.record(&line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               session_expired_seen |= error_parser.session_expired(&line_str, login.has_session);
-              store_log_line(&line_str, &entry, log_state, &app);
+              store_log_line(&line_str, &entry, app.state::<LogStoreState>(), &app);
               if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
               network_failure |= super::reliability::transient(&line_str);
               busy_failure |= super::reliability::rate_limited(&line_str);
-              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app) { watchdog.stage(&stage); }
+              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app, true) { watchdog.stage(&stage); }
               if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
                   last_error = Some(event.raw.clone());
@@ -1720,6 +1795,15 @@ async fn run_download_attempts(
               }
             }
             YtdlpCommandEvent::Stderr(line) => {
+              if is_capture {
+                let line = String::from_utf8_lossy(&line);
+                keep_tail(&mut capture_tail, &line);
+                let failure = handoff::classify_failure(&line);
+                if failure == HandoffError::Protected || (failure == HandoffError::Forbidden && capture_failure == HandoffError::Runner) {
+                  capture_failure = failure;
+                }
+                continue;
+              }
               #[cfg(feature = "link-matrix")]
               crate::link_matrix::observe_gallery_stderr(&line);
               let line_str = String::from_utf8_lossy(&line);
@@ -1733,11 +1817,11 @@ async fn run_download_attempts(
               media_expired |= selected_media_expired(&entry, &input, &line_str);
               cookie_failure = cookie_failure.combine(error_parser.cookie_fetch_failure(&line_str, login.has_session));
               session_expired_seen |= error_parser.session_expired(&line_str, login.has_session);
-              store_log_line(&line_str, &entry, log_state, &app);
+              store_log_line(&line_str, &entry, app.state::<LogStoreState>(), &app);
               if watchdog.observe(&line_str, recovery_started.elapsed()) { recovery.progressed(); network_failure = false; busy_failure = false; }
               network_failure |= super::reliability::transient(&line_str);
               busy_failure |= super::reliability::rate_limited(&line_str);
-              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app) { watchdog.stage(&stage); }
+              if let Some(stage) = parse_progress_line(&line_str, &mut progress_parser, &app, true) { watchdog.stage(&stage); }
               if let Some(event) = error_parser.parse_fetch_line(&line_str, login.has_session) {
                 tracing::warn!(diagnostic_code = %event.code, error = %redact_diagnostic(&line_str).lines().next().unwrap_or_default(), "yt-dlp download diagnostic");
                 if matches!(event.level, crate::models::error::DiagnosticLevel::Error) {
@@ -1813,7 +1897,7 @@ async fn run_download_attempts(
                   records.seal(&entry.group_id);
                 }
                 PARTIAL_DOWNLOADS.complete(&entry.group_id, &entry.id);
-                login.succeeded(&app, &entry.group_id);
+                if !is_capture { login.succeeded(&app, &entry.id, &entry.group_id); }
                 let path = if aria.is_some() { "aria2" } else { "native" };
                 tracing::info!(transport = path, "Download transport completed");
                 crate::events::emit(&app, crate::events::MEDIA_TRANSPORT, serde_json::json!({"id":entry.id,"groupId":entry.group_id,"path":path}));
@@ -1822,6 +1906,15 @@ async fn run_download_attempts(
               }
 
               if is_cancelled_now(&cancel_rx) { return Ok(()); }
+              if let Some(capture) = &mut capture {
+                if capture_failure == HandoffError::Forbidden {
+                  if handoff::retry_refused(capture) {
+                    continue 'attempt;
+                  }
+                  return stream_refused(&app, &entry, term.code, capture_tail.make_contiguous());
+                }
+                return capture_failed(&app, &entry, capture_failure.code(), term.code, capture_tail.make_contiguous());
+              }
               if diagnostics.iter().any(|event| event.raw.contains("diskFull")) || last_error.as_ref().is_some_and(|e| e.contains("diskFull")) {
                 super::reliability::fatal(&app, &entry, "diskFull");
                 return Err(YtdlpDownloadError::RunnerError("diskFull".into()));
@@ -1926,6 +2019,7 @@ async fn run_download_attempts(
             }
             YtdlpCommandEvent::Error(err) => {
               let _ = child.kill_tree();
+              if is_capture { return capture_failed(&app, &entry, "unknown", None, capture_tail.make_contiguous()); }
               let msg = format!("Download failed for group {}: {}", entry.group_id, err);
               emit_internal_fatal(&app, &entry, msg.clone(), Some(err.clone()));
 
@@ -2014,6 +2108,44 @@ async fn make_quicktime_compatible(
   Ok(!is_cancelled_now(cancel))
 }
 
+fn keep_tail(tail: &mut std::collections::VecDeque<String>, line: &str) {
+  if tail.len() == 6 {
+    tail.pop_front();
+  }
+  tail.push_back(line.trim_end().to_owned());
+}
+
+fn capture_failed(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  code: &'static str,
+  exit: Option<i32>,
+  tail: &[String],
+) -> Result<(), YtdlpDownloadError> {
+  tracing::warn!(
+    download_id = %entry.id,
+    code,
+    exit = ?exit,
+    detail = %handoff::failure_detail(tail),
+    "catch download failed",
+  );
+  super::reliability::fatal(app, entry, code);
+  PARTIAL_DOWNLOADS.complete(&entry.group_id, &entry.id);
+  crate::catch::auto::download_failed(app, &entry.id, code);
+  Err(YtdlpDownloadError::RunnerError(code.into()))
+}
+
+/// The end of the caught-stream ladder: the server still refused (401/403) with the player's
+/// headers, cookies and one fresh catch of the stream.
+fn stream_refused(
+  app: &AppHandle,
+  entry: &DownloadEntry,
+  exit: Option<i32>,
+  tail: &[String],
+) -> Result<(), YtdlpDownloadError> {
+  capture_failed(app, entry, HandoffError::Forbidden.code(), exit, tail)
+}
+
 fn emit_internal_fatal(
   app: &AppHandle,
   entry: &DownloadEntry,
@@ -2073,6 +2205,7 @@ fn parse_progress_line(
   line: &str,
   progress_parser: &mut YtdlpProgressParser,
   app: &AppHandle,
+  usage: bool,
 ) -> Option<crate::models::ProgressStage> {
   let mut stage = None;
   let progress_events = progress_parser.parse_line(line);
@@ -2082,7 +2215,9 @@ fn parse_progress_line(
       // Only publication can grant a final path; engine destinations are private staging files.
       ProgressEvent::Destination(_) => {}
       ProgressEvent::Progress(progress) => {
-        crate::usage::speed_sample(app, &progress.group_id, &progress.id, progress.speed_bps);
+        if usage {
+          crate::usage::speed_sample(app, &progress.group_id, &progress.id, progress.speed_bps);
+        }
         crate::events::emit(app, crate::events::MEDIA_PROGRESS, progress);
       }
       ProgressEvent::StageChange(progress) => {
@@ -2276,11 +2411,17 @@ mod tests {
 
   #[test]
   fn partials_survive_pause_and_discard_only_the_cancelled_item_after_exit() {
+    use crate::scheduling::group_state::{
+      cancel_group, finish_group_cancel, remove_group_if, start_group_run,
+    };
+
+    let group = "partials-pause-resume";
     let partials = PartialDownloads::default();
-    let (running, cancel) = watch::channel(true);
+    start_group_run(group);
+    let cancel = subscribe_group(group);
     let output = super::super::gallery_files::Staging::new().unwrap();
     let stage = partials
-      .get("group", "item", &cancel, &output.path)
+      .get(group, "item", &cancel, &output.path)
       .unwrap()
       .unwrap();
     let path = stage.path.clone();
@@ -2299,21 +2440,54 @@ mod tests {
     std::fs::write(unrelated.path.join("keep.part"), b"other download").unwrap();
     std::fs::write(output.path.join("completed.mp4"), b"saved").unwrap();
     // Pause releases the worker, but keeps the receipt and the same resume directory.
-    partials.state("group", PartialState::Paused);
+    let paused = cancel_group(group);
+    remove_group_if(group, Some(paused));
+    partials.cancel(group, paused, None);
+    assert!(matches!(
+      read_partial_owner(&path).unwrap().state,
+      PartialState::Paused
+    ));
     drop(stage);
+    start_group_run(group);
+    assert!(
+      !*cancel.borrow(),
+      "resume must not revive the stopped worker"
+    );
+    let cancel = subscribe_group(group);
     let resumed = partials
-      .get("group", "item", &cancel, &output.path)
+      .get(group, "item", &cancel, &output.path)
       .unwrap()
       .unwrap();
     assert_eq!(resumed.path, path);
     assert!(path.join("video.f137.mp4.part").exists());
-    running.send(false).unwrap();
-    partials.discard("group");
+    let roots = [output.path.to_str().unwrap()];
+    let on_disk = DownloadPartial::open(&output.path, group, "saved")
+      .unwrap()
+      .path
+      .clone();
+    // A delayed pause or removal must leave the resumed owner and its bytes alone.
+    partials.cancel(group, paused, None);
+    partials.cancel(group, paused, Some(&roots));
+    assert!(matches!(
+      read_partial_owner(&path).unwrap().state,
+      PartialState::Running
+    ));
+    assert!(path.join("video.f137.mp4.part").exists());
+    assert!(on_disk.exists());
+    let resumed_generation = group_generation(group);
+    finish_group_cancel(group, paused);
+    assert_eq!(group_generation(group), resumed_generation);
+
+    let removed = cancel_group(group);
+    partials.cancel(group, removed, Some(&roots));
+    assert!(!on_disk.exists());
     assert!(path.exists(), "the active process still owns its directory");
     assert!(partials
-      .get("group", "late", &cancel, &output.path)
+      .get(group, "late", &cancel, &output.path)
       .unwrap()
       .is_none());
+    finish_group_cancel(group, removed);
+    assert_eq!(group_generation(group), None);
     drop(resumed); // Last worker/process owner has exited.
     assert!(!path.exists());
     assert!(unrelated.path.join("keep.part").exists());
@@ -2361,7 +2535,7 @@ mod tests {
         .get("unsafe", "row", &cancel, &output.path)
         .is_err());
     }
-    restored.discard("saved");
+    restored.complete("saved", "row");
     drop(partial);
   }
 
@@ -2531,7 +2705,8 @@ mod tests {
     partials.terminal_codes("group", "http", ["notFound404"].into_iter());
     drop(partial);
     assert!(!path.exists());
-    partials.discard("group");
+    partials.complete("group", "network");
+    partials.complete("group", "paused");
   }
 
   #[test]
@@ -3043,5 +3218,40 @@ mod tests {
     ] {
       assert_eq!(snapchat_media_page(source), want, "{source}");
     }
+  }
+
+  /// Lines recorded from a real caught HLS film (native downloader, fragment progress only).
+  #[test]
+  fn caught_hls_progress_reports_percent_speed_and_eta_from_fragments() {
+    let lines = [
+      "[hlsnative] Total fragments: 674",
+      "[download] Destination: /tmp/parts/index-v1-a1.mp4",
+      "RAW||  0.0%|2214.3606007566764||1024||142176256.0|0|674",
+      "RAW||  0.1%|616406.3093919815||734208||620446656.0|1|674",
+      "RAW||  4.1%|8616571.027088588|265.6420466462808|91475008||2252390916.571429|27|674",
+      "RAW||  4.4%|8836422.529785769|256.4873595649952|94261824||2139495274.6666667|29|674",
+    ];
+    let mut parser = YtdlpProgressParser::new(
+      "item",
+      "group",
+      crate::models::ProgressCategory::Video,
+      None,
+    );
+    let mut watchdog = super::super::reliability::StallWatch::new(std::time::Duration::ZERO);
+    let mut last = None;
+    for (second, line) in lines.iter().enumerate() {
+      watchdog.observe(line, std::time::Duration::from_secs(second as u64));
+      for event in parser.parse_line(line) {
+        if let ProgressEvent::Progress(progress) = event {
+          last = Some(progress);
+        }
+      }
+    }
+    let last = last.expect("fragment progress is reported");
+    assert_eq!(last.id, "item");
+    assert_eq!(last.percentage, Some(4.4));
+    assert!(last.speed_bps.is_some_and(|bps| bps > 8_000_000.0));
+    assert_eq!(last.eta_secs, Some(256));
+    assert!(!watchdog.stalled(std::time::Duration::from_secs(30)));
   }
 }

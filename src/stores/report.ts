@@ -75,12 +75,14 @@ export const useReportStore = defineStore('report', () => {
   const batchLocked = computed(() => batchConsent.value !== null);
   const isBatch = computed(() => !!batchId.value);
   const batchCount = computed(() => batch.value.length);
-  const hasLinks = computed(() => batch.value.length ? batch.value.some(row => !!row.download.url) : !!download.value?.url);
+  const shapeOnly = ref(false);
+  const hasLinks = computed(() => !shapeOnly.value && (batch.value.length ? batch.value.some(row => !!row.download.url) : !!download.value?.url));
   const sending = ref(false);
   const toast = useToastStore();
 
-  function openReport(failed?: ReportedDownload) {
-    countUsage('report.opened');
+  function openReport(failed?: ReportedDownload, reduced = false) {
+    if (!reduced) countUsage('report.opened');
+    shapeOnly.value = reduced;
     batch.value = [];
     batchId.value = '';
     sentEventIds.value.clear();
@@ -88,6 +90,14 @@ export const useReportStore = defineStore('report', () => {
     download.value = failed ?? null;
     sending.value = false;
     open.value = true;
+  }
+
+  function openCatchReport(shape: string | null) {
+    openReport({
+      context: { errorCode: 'catch', exitCode: null, attempts: [] },
+      url: shape,
+      extractor: null,
+    }, true);
   }
 
   function openBatchReport(rows: ReportCandidate[]) {
@@ -114,7 +124,7 @@ export const useReportStore = defineStore('report', () => {
       download: download.value?.context ?? null,
       url: download.value?.url ?? null,
       extractor: download.value?.extractor ?? null,
-      includeLink,
+      includeLink: includeLink && !shapeOnly.value,
     }];
   }
 
@@ -215,5 +225,5 @@ export const useReportStore = defineStore('report', () => {
     });
   }
 
-  return { open, download, isBatch, batchCount, hasLinks, batchLocked, sending, openReport, openBatchReport, close, send, checkCrash, startupChecks };
+  return { open, download, isBatch, batchCount, hasLinks, batchLocked, sending, openReport, openCatchReport, openBatchReport, close, send, checkCrash, startupChecks };
 });

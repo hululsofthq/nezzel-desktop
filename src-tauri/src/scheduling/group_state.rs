@@ -14,6 +14,8 @@ struct GroupRun {
   /// Downloads of this generation are queued or running (`start_group_run` until
   /// `finish_group_run`).
   downloading: bool,
+  // Keep the stopped generation available until the blocking partial-file task checks it.
+  cancelling: bool,
 }
 
 static RUNNING_GROUPS: LazyLock<StdMutex<HashMap<String, GroupRun>>> =
@@ -34,7 +36,13 @@ fn run_group(group_id: &str, join: impl Fn(&GroupRun) -> bool, downloading: bool
     Some(run) => {
       run.generation = next_generation();
       run.downloading = downloading;
-      run.running.send_replace(true);
+      if run.cancelling {
+        // A resume can beat disk cleanup. Workers of the stopped run must still see false.
+        run.running = watch::channel(true).0;
+        run.cancelling = false;
+      } else {
+        run.running.send_replace(true);
+      }
       run.generation
     }
     None => {
@@ -45,6 +53,7 @@ fn run_group(group_id: &str, join: impl Fn(&GroupRun) -> bool, downloading: bool
           running: watch::channel(true).0,
           generation,
           downloading,
+          cancelling: false,
         },
       );
       generation
@@ -95,6 +104,7 @@ pub fn cancel_group(group_id: &str) -> u64 {
       run.running.send_replace(false);
       run.generation = generation;
       run.downloading = false;
+      run.cancelling = true;
     } else {
       map.insert(
         group_id.to_string(),
@@ -102,12 +112,23 @@ pub fn cancel_group(group_id: &str) -> u64 {
           running: watch::channel(false).0,
           generation,
           downloading: false,
+          cancelling: true,
         },
       );
     }
   }
   crate::runners::login::forget_group(group_id);
   generation
+}
+
+pub fn finish_group_cancel(group_id: &str, generation: u64) {
+  let mut map = RUNNING_GROUPS.lock().unwrap();
+  if map
+    .get(group_id)
+    .is_some_and(|run| run.generation == generation && run.cancelling)
+  {
+    map.remove(group_id);
+  }
 }
 
 pub fn remove_group(group_id: &str) {
@@ -126,8 +147,8 @@ pub fn group_generation(group_id: &str) -> Option<u64> {
 pub fn remove_group_if(group_id: &str, generation: Option<u64>) -> bool {
   let mut map = RUNNING_GROUPS.lock().unwrap();
   let stale = match (map.get(group_id), generation) {
-    (Some(run), Some(generation)) => run.generation == generation,
-    (Some(run), None) => !*run.running.borrow(),
+    (Some(run), Some(generation)) => run.generation == generation && !run.cancelling,
+    (Some(run), None) => !*run.running.borrow() && !run.cancelling,
     (None, _) => false,
   };
   if stale {
@@ -153,6 +174,7 @@ pub fn subscribe_group(group_id: &str) -> watch::Receiver<bool> {
         running,
         generation: next_generation(),
         downloading: false,
+        cancelling: false,
       },
     );
     rx
@@ -189,7 +211,11 @@ mod tests {
         },
         true,
       ),
-      ("current pause", |g| Some(cancel_group(g)), false),
+      (
+        "current pause with partial cleanup pending",
+        |g| Some(cancel_group(g)),
+        true,
+      ),
       (
         "stale: fetch finished, then download started",
         |g| {
@@ -208,12 +234,12 @@ mod tests {
         true,
       ),
       (
-        "no generation, stopped",
+        "no generation, partial cleanup pending",
         |g| {
           cancel_group(g);
           None
         },
-        false,
+        true,
       ),
     ];
     for (name, setup, kept) in cases {

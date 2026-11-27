@@ -138,6 +138,23 @@ pub struct Probe {
   pub(crate) body: Response,
 }
 impl Probe {
+  /// The browser already classified this request as a download. Accept raw audio/video and
+  /// untyped files as well, while still rejecting manifests and unexpected HTML pages.
+  pub(crate) fn confirm_page_download(&mut self) -> Result<()> {
+    let extension = self
+      .body
+      .response
+      .url()
+      .path()
+      .rsplit('.')
+      .next()
+      .unwrap_or_default();
+    if self.kind == Kind::Page || is_manifest_mime(&self.mime) || ext_in(MANIFEST_EXTS, extension) {
+      return Err(Error::NotFile);
+    }
+    self.confirm_unknown()
+  }
+
   pub(crate) fn confirm_unknown(&mut self) -> Result<()> {
     if self
       .body

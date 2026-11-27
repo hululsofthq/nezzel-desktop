@@ -48,6 +48,7 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
   ]),
   ...general('prefs.sections.appearance', [
     { id: 'language', label: 'prefs.general.language' },
+    { id: 'searchEngine', label: 'prefs.general.searchEngine', hint: 'prefs.general.searchEngineHint' },
     { id: 'theme', label: 'prefs.general.theme' },
   ]),
 
@@ -77,12 +78,14 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
     { id: 'globalShortcuts', label: 'prefs.adv.keys.globalOn', hint: 'prefs.adv.keys.globalOnHint' },
     { id: 'quickShortcut', label: 'prefs.adv.keys.quick', hint: 'prefs.adv.keys.defaultIs' },
     { id: 'pasteShortcut', label: 'prefs.adv.keys.paste', hint: 'prefs.adv.keys.pasteHint' },
+    { id: 'browserShortcut', label: 'prefs.adv.keys.browser', hint: 'prefs.adv.keys.browserHint' },
     { id: 'downloadAllShortcut', label: 'prefs.adv.keys.downloadAll', hint: 'prefs.adv.keys.defaultIs' },
     { id: 'addAndDownloadShortcut', label: 'prefs.adv.keys.addAndDownload', hint: 'prefs.adv.keys.addAndDownloadHint' },
   ]),
   ...advanced('settings.network.legend', [
     { id: 'loginsLink', label: 'prefs.adv.net.logins', hint: 'prefs.adv.net.loginsHint' },
     { id: 'proxy', label: 'prefs.adv.net.proxy', hint: 'prefs.adv.net.proxyHint' },
+    { id: 'autoCatch', label: 'prefs.adv.net.autoCatch', hint: 'prefs.adv.net.autoCatchHint' },
     { id: 'impersonate', label: 'prefs.adv.net.impersonate', hint: 'prefs.adv.net.impersonateHint' },
   ]),
   ...advanced('settings.performance.legend', [

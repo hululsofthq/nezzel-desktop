@@ -4,7 +4,7 @@ use super::consent::{
   may_reuse_remembered, remember_row_browser, remember_success, row_browser, CONSENT_WRITES,
   EXPLICIT_SITES,
 };
-use super::registry::{announce_using, park, used_candidate, LoginRequest};
+use super::registry::{announce_using, clear_used_browser, park, used_candidate, LoginRequest};
 use super::{
   discovered_candidates, LoginCandidate, LoginNeeded, LoginStatus, LoginUsing, ANONYMOUS_BROWSER,
   APP_BOUND_REASON, LOGIN_FAILED_REASON,
@@ -272,7 +272,7 @@ impl LoginSession {
   pub(crate) fn fetch_succeeded(&mut self, app: &AppHandle, id: &str, group: &str) {
     self.carry_fetch_browser(id, group);
     self.fetch_managed = false;
-    self.succeeded(app, group);
+    self.succeeded(app, id, group);
   }
   pub(crate) fn fetch_exhausted(&self, app: &AppHandle, entry: &FetchEntry) {
     self.emit_failure(app);
@@ -693,7 +693,20 @@ impl LoginSession {
       .filter(|browser| !self.host.is_empty() && browser.as_str() != ANONYMOUS_BROWSER)
       .map(|browser| serde_json::json!({"auth":{"siteBrowsers":{&self.host:browser}}}))
   }
-  pub fn log_anonymous_success(&self, app: &AppHandle, group_id: &str) {
+  pub(super) fn report_anonymous_success<R: tauri::Runtime>(
+    &self,
+    app: &AppHandle<R>,
+    id: &str,
+    group_id: &str,
+  ) -> bool {
+    if self.browser.as_deref() != Some(ANONYMOUS_BROWSER) {
+      return false;
+    }
+    clear_used_browser(app, id, group_id);
+    true
+  }
+
+  fn log_anonymous_success(&self, app: &AppHandle, group_id: &str) {
     if self.state.anonymous_attempted && !self.uses_cookies() {
       tracing::debug!("anonymous retry succeeded");
       if let Some(logs) = app.try_state::<crate::logging::LogStoreState>() {
@@ -704,11 +717,14 @@ impl LoginSession {
     }
   }
 
-  pub fn succeeded(&self, app: &AppHandle, group_id: &str) {
+  pub fn succeeded(&self, app: &AppHandle, id: &str, group_id: &str) {
     if self.fetch_managed {
       return;
     }
     self.log_anonymous_success(app, group_id);
+    if self.report_anonymous_success(app, id, group_id) {
+      return;
+    }
     if self.success_patch().is_some() {
       if self.just_accepted {
         EXPLICIT_SITES.lock().unwrap().insert(self.host.clone());

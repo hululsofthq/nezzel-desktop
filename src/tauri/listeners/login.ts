@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { ROW_EVENTS } from '../../generated/contract';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
-import type { LoginNeeded, LoginNotice, LoginUsing } from '../types/login';
+import type { LoginNeeded, LoginNotice, LoginUsingUpdate } from '../types/login';
 
 export const listenForLogin = (handler: (payload: LoginNeeded) => void) =>
   listen<LoginNeeded>(ROW_EVENTS.mediaLoginNeeded, event => handler(event.payload));
@@ -27,7 +27,7 @@ export async function registerLoginListeners() {
   const loginStore = useLoginStore();
   await Promise.all([
     listenForLogin(payload => loginStore.receive(payload)),
-    listen<LoginUsing>(ROW_EVENTS.mediaLoginUsing, event => loginStore.receiveUsing(event.payload)),
+    listen<LoginUsingUpdate>(ROW_EVENTS.mediaLoginUsing, event => loginStore.receiveUsing(event.payload)),
     listen<LoginNotice>(ROW_EVENTS.mediaLoginNotice, event => loginStore.receiveNotice(event.payload)),
     listen<{ id: string; groupId: string }>(ROW_EVENTS.mediaFatal, event => loginStore.onFatal(event.payload)),
   ]);

@@ -13,6 +13,9 @@ export type UrlImportToast = {
 };
 
 const URL_MATCHER = /https?:\/\/[^\s<>"'`]+/gi;
+const LOCAL_FILE = /^(?:file:|[a-z]:[\\/]|\\\\|\/(?!\/)|(?:\.{1,2}|~)\/)/i;
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const BARE_HOST = /^(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.?(?=[:/?#]|$)/u;
 
 function unique(urls: string[]): string[] {
   return [...new Set(urls)];
@@ -22,16 +25,53 @@ function normalizeUrlCandidate(value: string): string {
   return normalizePastedUrl(value.trim().replace(/[),.;!?]+$/g, ''));
 }
 
-export function parseUrlInputText(text: string): ParsedUrlImport {
-  const tokens = text
+/** A single-line input strips newlines, so repair wrapped links before flattening the paste. */
+export function flattenUrlInput(text: string): string {
+  if (!/[\r\n]/.test(text)) return text;
+  const parts = text.split(/([\s,]+)/);
+  for (let i = 1; i < parts.length - 1; i += 2) {
+    if (!/^(?:\r\n?|\n)$/.test(parts[i])) continue;
+    const before = parts[i - 1];
+    const after = parts[i + 1];
+    if (!after || SCHEME.test(after) || isValidUrl(after)) continue;
+    // A leading slash can be a URL path. Recognizable local paths are still separate items.
+    if (LOCAL_FILE.test(after) && (!after.startsWith('/') || /^\/(?:Users|home|Volumes)\//.test(after))) continue;
+    if ((!/^https?:\/\//i.test(before) && !before.includes('.')) || LOCAL_FILE.test(before)) continue;
+
+    const joined = before + after;
+    const hostPrefix = /^(?:https?:\/\/)?([^/:?#\\]+)$/i.exec(before)?.[1];
+    // A lone label after www. can be a wrapped supported host, as in www.you + tube.com/watch.
+    const splitHost = hostPrefix !== undefined && (
+      (!BARE_HOST.test(hostPrefix) && BARE_HOST.test(hostPrefix + after) && !isValidUrl(before))
+      || (/^www\.[^.]+$/i.test(hostPrefix) && !isValidUrl(hostPrefix) && isValidUrl(hostPrefix + after))
+    );
+    const continuation = /^(?:[/?#&=.]|%[\da-f]{2})/i.test(after) || /[=&?/-]$/.test(before);
+    if (!splitHost && (BARE_HOST.test(after) || !continuation)) continue;
+    if (!isValidUrl(joined)) continue;
+    parts[i - 1] = parts[i] = '';
+    parts[i + 1] = joined;
+  }
+  return parts.join('').replace(/[\r\n]+/g, ' ');
+}
+
+export type UrlSkipReason = 'invalid' | 'localFile' | 'unsupportedScheme';
+
+export function parseUrlInputText(text: string): ParsedUrlImport & { skipReasons: UrlSkipReason[] } {
+  const tokens = flattenUrlInput(text)
     .split(/[\s,]+/)
     .map(token => normalizePastedUrl(token))
     .filter(Boolean);
 
-  const urls = unique(tokens.filter(token => isValidUrl(token)));
-  const skipped = tokens.filter(token => !isValidUrl(token)).length;
+  const urls = new Set<string>();
+  const skipReasons: UrlSkipReason[] = [];
+  for (const token of tokens) {
+    if (LOCAL_FILE.test(token)) skipReasons.push('localFile');
+    else if (isValidUrl(token)) urls.add(token);
+    else if (SCHEME.test(token) && !/^https?:|^[\w.-]+:\d+(?:[/?#]|$)/i.test(token)) skipReasons.push('unsupportedScheme');
+    else skipReasons.push('invalid');
+  }
 
-  return { urls, skipped };
+  return { urls: [...urls], skipped: skipReasons.length, skipReasons };
 }
 
 export function parseUrlFileText(text: string): ParsedUrlImport {

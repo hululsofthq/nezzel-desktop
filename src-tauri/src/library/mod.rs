@@ -174,13 +174,19 @@ fn persist_completion<R: Runtime>(
   let root = configured_root(app)
     .and_then(|root| safe_library_root(&root, home.as_deref(), downloads.as_deref()));
   let index = load_index(&mut data, &index_path(app), root.as_deref())?;
-  let title = metadata.title.unwrap_or_else(|| {
-    paths[0]
-      .file_name()
-      .unwrap_or_default()
-      .to_string_lossy()
-      .into_owned()
-  });
+  let title = metadata
+    .title
+    .or_else(|| {
+      entry.catch.as_ref()?;
+      entry.template_context.values.get("title").cloned()
+    })
+    .unwrap_or_else(|| {
+      paths[0]
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+    });
   let size = paths
     .iter()
     .filter_map(|p| regular_file(p))

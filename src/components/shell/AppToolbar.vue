@@ -1,14 +1,14 @@
 <template>
   <header
-    class="relative flex shrink-0 items-center gap-3 px-4"
-    :class="isSettings ? [rtlInset ? 'h-[38px]' : 'h-3', 'overflow-hidden'] : 'h-[52px] border-b border-hairline'"
+    class="relative shrink-0 items-center gap-x-3 px-4"
+    :class="isSettings ? [rtlInset ? 'h-[38px]' : 'h-3', 'flex overflow-hidden'] : 'grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[51px_auto] border-b border-hairline'"
     :style="lightsInset ? { paddingLeft: `${lightsInset}px` } : undefined"
     data-tauri-drag-region
   >
     <!-- The sidebar already names the view (and Settings has its own page heading): the title is for screen readers. -->
     <h1 class="sr-only">{{ title }}</h1>
     <!-- v-show, not v-if: the field owns clipboard watching, which must keep running on Settings. -->
-    <link-field v-show="!isSettings" ref="field" />
+    <link-field v-show="!isSettings" ref="field" class="row-span-2 w-full grid-rows-subgrid self-stretch" />
     <template v-if="!isSettings">
       <dropdown-menu>
         <dropdown-menu-trigger as-child>

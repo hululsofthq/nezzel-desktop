@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { nextTick, onScopeDispose, ref } from 'vue';
 import { acceptBrowserLogin, acknowledgeLoginNotice, browserLoginChoices, dismissBrowserLogin } from '../tauri/listeners/login';
-import type { LoginNeeded, LoginNotice, LoginUsing } from '../tauri/types/login';
+import type { LoginNeeded, LoginNotice, LoginUsing, LoginUsingUpdate } from '../tauri/types/login';
 import { useMediaDiagnosticsStore } from './media/diagnostics';
 import { useMediaGroupStore } from './media/group';
 import { useToastStore } from './toast';
@@ -102,7 +102,11 @@ export const useLoginStore = defineStore('login', () => {
     void nextTick().then(() => acknowledgeLoginNotice(notice.token)).catch(() => {});
   }
 
-  function receiveUsing(payload: LoginUsing) {
+  function receiveUsing(payload: LoginUsingUpdate) {
+    if (payload.candidate === null) {
+      if (using.value[payload.groupId]?.id === payload.id) delete using.value[payload.groupId];
+      return;
+    }
     using.value[payload.groupId] = payload;
     if (!payload.selectedOnly) delete failed.value[payload.groupId];
   }
@@ -193,12 +197,13 @@ export const useLoginStore = defineStore('login', () => {
     const groups = useMediaGroupStore();
     for (const r of batch) {
       if (!groups.findGroupById(r.groupId)) continue;
+      // The user's own "No" is not a failure to report.
       diagnostics.processMediaFatalPayload({
         id: r.id, groupId: r.groupId, exitCode: null, internal: true,
         // The synthetic failure must keep the engine error reachable in the row's Details.
         details: diagnostics.findLastDiagnosticByGroupId(r.groupId)?.raw ?? null,
         message: 'Login required', timestamp: Date.now(),
-      });
+      }, { report: false });
     }
   }
 

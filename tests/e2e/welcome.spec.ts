@@ -74,7 +74,9 @@ test('fresh profile: welcome, Get started, then the main list', async ({ page, c
   await page.getByTestId('welcome-start-button').click();
   await expect(welcome).toBeHidden();
   await expect(page.locator('#queue-url-input')).toBeVisible();
-  await expect(page.getByText('Paste or drop a link. To add links from a file, open the … menu.')).toBeVisible();
+  // The empty list offers the two ways in: a copied link, or a website in the Nezzel browser.
+  await expect(page.getByTestId('empty-way-paste')).toBeVisible();
+  await expect(page.getByTestId('empty-way-site')).toBeVisible();
 });
 
 test('keyboard: Tab ends on Get started, with a visible focus ring', async ({ page }) => {

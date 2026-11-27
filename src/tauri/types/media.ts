@@ -222,6 +222,8 @@ export interface MediaItem {
   fetchEngine?: 'gallery' | 'ytdlp' | 'files' | 'reader';
   resolvedUrl?: string;
   mediaKind?: SourceMediaKind;
+  /** The pasted page, when it only embeds this media from another site (a film page with a YouTube trailer). */
+  embeddedIn?: string;
   attachments?: MediaAttachment[];
   url: string;
   overrides?: DownloadOverrides;
@@ -246,6 +248,7 @@ export interface MediaItem {
   isLeader?: boolean;
   groupId?: string;
   filesize: number;
+  presetSizes?: { best?: number; small?: number; audio?: number; output?: (string | boolean)[] };
   chapters?: Chapter[];
   entries?: EntryItem[];
   playlistId?: string;

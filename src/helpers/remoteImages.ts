@@ -1,3 +1,8 @@
+/** A caught video's picture: only the small JPEG Rust built itself, never an SVG or other data: URL. */
+export function isCaughtThumbnail(src?: string | null): src is string {
+  return !!src?.startsWith('data:image/jpeg;base64,');
+}
+
 interface ImageNetworkSettings {
   enableProxy?: boolean | null;
   proxy?: string | null;

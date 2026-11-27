@@ -31,9 +31,13 @@ fn expired(expires: i64, now: i64) -> bool {
   let expires = if expires == 0 {
     0
   } else {
-    expires / 1_000_000 - CHROMIUM_EPOCH
+    chromium_expiry_seconds(expires)
   };
   expires != 0 && expires <= now
+}
+
+pub(crate) fn chromium_expiry_seconds(micros: i64) -> i64 {
+  micros / 1_000_000 - CHROMIUM_EPOCH
 }
 
 fn access_micros(access: i64) -> i64 {

@@ -1,4 +1,5 @@
 import type { CaptureChoice } from '@/generated/contract';
+import type { CatchAutoState } from './tauri/types/catch';
 
 export interface CaptureDetails {
   title?: string | null;
@@ -19,6 +20,8 @@ export interface CaptureDetails {
   smallSize: number | null;
   /** The copied-link card's format menu (Rust `CardChoice`): heights (+60 fps tiers), then audio bitrates. */
   choices?: CardChoice[];
+  /** The link's page only embeds this media from another site: offer to open the page in the Nezzel browser. */
+  embedded?: boolean;
 }
 
 /** One format the link offers, as plain facts (never a raw format id): what picking it sends, and its size. */
@@ -44,6 +47,8 @@ export interface CaptureOffer {
   feed: boolean;
   /** macOS refused reading the browser tab (Automation off): the bar links to the setting. */
   automationDenied?: boolean;
+  /** The automatic catch for this link's download group (contract v2), when one runs or ran. */
+  auto?: CatchAutoState | null;
 }
 
 export const emptyDetails = (): CaptureDetails => ({

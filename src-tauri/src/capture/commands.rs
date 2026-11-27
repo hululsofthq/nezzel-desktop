@@ -28,12 +28,17 @@ fn main_only(window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn capture_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+pub fn capture_ready(
+  app: AppHandle,
+  window: WebviewWindow,
+  skip_options_sheet: bool,
+) -> Result<(), String> {
   main_only(&window)?;
-  app
-    .state::<CaptureState>()
-    .ready
-    .store(true, Ordering::Relaxed);
+  let state = app.state::<CaptureState>();
+  state
+    .skip_options_sheet
+    .store(skip_options_sheet, Ordering::Relaxed);
+  state.ready.store(true, Ordering::Release);
   Ok(())
 }
 
@@ -43,10 +48,14 @@ pub fn capture_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String
 #[tauri::command]
 pub async fn capture_read_clipboard(
   app: AppHandle,
-  window: WebviewWindow,
+  caller: tauri::Webview,
   supported_only: Option<bool>,
 ) -> Result<String, String> {
-  main_only(&window)?;
+  // The main window, and the Nezzel browser's own shell (its Paste button; not a WebviewWindow).
+  let label = caller.label();
+  if label != "main" && !crate::catch::commands::bar_command(label, "capture_read_clipboard") {
+    return Err("unavailable".into());
+  }
   let read = read_current(&app).await;
   if supported_only.unwrap_or(false) {
     return Ok(

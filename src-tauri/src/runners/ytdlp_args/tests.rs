@@ -953,6 +953,57 @@ fn location_args_use_track_specific_preferences() {
   assert!(args[1].contains("/tmp/video"));
 }
 
+/// Titles and playlist names come from pages and sites: yt-dlp must read them as plain text, never
+/// as fields of the `-o` template (`%(url)s` would write the signed media address into the name).
+#[test]
+fn page_and_site_text_stays_literal_in_the_output_template() {
+  let output = OutputSettings::default();
+  let prefs = PathPreferences {
+    video_directory_template: "%(playlist_title)s".into(),
+    ..PathPreferences::default()
+  };
+  for (text, literal) in [
+    ("Watch %(url)s now", "Watch %%(url)s now"),
+    ("%(cookies)s", "%%(cookies)s"),
+    ("%(http_headers)j", "%%(http_headers)j"),
+    ("50% off", "50%% off"),
+    ("100%% real", "100%%%% real"),
+    ("%", "%%"),
+    ("Plain title (2011)", "Plain title (2011)"),
+  ] {
+    let context = TemplateContext {
+      values: HashMap::from([
+        ("title".into(), text.into()),
+        ("fulltitle".into(), text.into()),
+        ("playlist_title".into(), text.into()),
+      ]),
+    };
+    let args = build_location_args(
+      &TrackType::Video,
+      &context,
+      &output,
+      &prefs,
+      PathBuf::from("/dl"),
+    );
+    assert_eq!(
+      args[1],
+      format!("/dl/{literal}/{literal}%(nezzel_quality|)s.%(ext)s"),
+      "{text}"
+    );
+  }
+  // A title yt-dlp fills in itself is not touched here, so nothing is escaped twice.
+  let args = build_location_args(
+    &TrackType::Video,
+    &TemplateContext {
+      values: HashMap::new(),
+    },
+    &output,
+    &PathPreferences::default(),
+    PathBuf::from("/dl"),
+  );
+  assert_eq!(args[1], "/dl/%(title).200B%(nezzel_quality|)s.%(ext)s");
+}
+
 #[test]
 fn location_default_download_dir_uses_platform_home_then_fallback() {
   for (downloads, home, expected) in [
