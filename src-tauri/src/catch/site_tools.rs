@@ -536,11 +536,12 @@ pub(super) fn signin_wall(url: &Url, has_candidate: bool, password_visible: bool
       .is_some_and(|mut parts| parts.any(words))
 }
 
-/// First-visit import, prepared and off (DECISIONS.md 2026-11-25: import only when the page asks).
-/// `true`: a known sign-in site (YouTube, Facebook…) takes its sign-in on its first visit in this
+/// First-visit import, on (DECISIONS.md 2026-11-28: the owner, signed in to Chrome, expects the
+/// Nezzel browser to open YouTube signed in; replaces 2026-11-25 "only when the page asks").
+/// A known sign-in site (YouTube, Facebook…) takes its sign-in on its first visit in this
 /// app run when the switch is on, without waiting for a sign-in wall. The switch, private tabs and
 /// "a browser is signed in" still apply; a site without a known session cookie waits for a wall.
-pub(super) const IMPORT_ON_FIRST_VISIT: bool = false;
+pub(super) const IMPORT_ON_FIRST_VISIT: bool = true;
 
 /// Why a drained page looks for a signed-in browser profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -596,6 +597,10 @@ pub(super) fn claim(
     return None;
   }
   let look = look_for(page, first_visit)?;
+  // A known site's later pages are first visits too: skip the settings read once it looked.
+  if look == Look::FirstVisit && LOOKED.lock().ok()?.run.contains(site) {
+    return None;
+  }
   if off() {
     return None;
   }
@@ -613,12 +618,17 @@ pub(super) fn claim(
 /// A look is over. Without an offer shown it was not the window's one offer for the site: a first
 /// visit leaves a later real wall its look, and a look whose page moved on before the offer (a
 /// login redirect) leaves it to the next page. A wall with no signed-in browser (`found` false)
-/// keeps its mark: the same wall is not scanned for again on every read.
+/// keeps its mark: the same wall is not scanned for again on every read. A first visit that found
+/// a signed-in browser but whose page moved on (YouTube's consent or redirect page) also frees
+/// the run's mark, so the page it landed on gets the first visit; with none found it stays marked.
 fn look_ended(window: &str, site: &str, look: Look, found: bool, offered: bool) {
   if !offered && (found || look == Look::FirstVisit) {
     if let Ok(mut looked) = LOOKED.lock() {
       if let Some(sites) = looked.windows.get_mut(window) {
         sites.remove(site);
+      }
+      if look == Look::FirstVisit && found {
+        looked.run.remove(site);
       }
     }
   }

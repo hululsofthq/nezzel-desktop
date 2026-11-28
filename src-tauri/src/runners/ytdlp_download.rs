@@ -924,10 +924,17 @@ fn stage_thumbnails(
     .map_err(|e| YtdlpDownloadError::RunnerError(format!("{e:?}")))?;
   // Explicit retention makes MoveFiles move the sidecar to our owned path, even if
   // an embedding postprocessor skips it. Staging removes it when the attempt ends.
+  // The id is capped in bytes: a generic extractor's id can carry a smuggled URL of several
+  // hundred bytes, past the 255-byte file name limit (a gazzetta.it article: 373 bytes). 64 bytes
+  // leave room for yt-dlp's sanitizing (`/` becomes a 3-byte glyph after the cut), and the item
+  // number keeps two entries whose ids share those bytes from sharing one thumbnail.
   args.extend([
     "--write-thumbnail".into(),
     "--output".into(),
-    format!("thumbnail:{}/%(id)s.%(ext)s", stage.path.display()),
+    format!(
+      "thumbnail:{}/%(autonumber)s-%(id).64B.%(ext)s",
+      stage.path.display()
+    ),
   ]);
   Ok(Some(stage))
 }
@@ -2740,7 +2747,10 @@ mod tests {
       assert_eq!(args[args.len() - 2], "--output");
       assert_eq!(
         args.last().unwrap(),
-        &format!("thumbnail:{}/%(id)s.%(ext)s", directory.display())
+        &format!(
+          "thumbnail:{}/%(autonumber)s-%(id).64B.%(ext)s",
+          directory.display()
+        )
       );
       std::fs::write(directory.join("leftover.jpg"), b"thumbnail").unwrap();
     }

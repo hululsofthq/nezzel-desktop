@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- The Nezzel browser takes your browser's sign-in on the first visit of a known sign-in site (YouTube, Facebook…), so the page opens signed in instead of waiting for the site to ask. The switch, private tabs and the per-site setting still apply.
+- A video whose site gives it a very long id (some news articles) no longer fails with "File name too long" while saving its preview picture.
+
 ## 0.1.6
 
 - Catch from the page: when yt-dlp can't read a link, Nezzel opens the page in the background, catches the video it plays and offers every quality. If the page needs a click, a sign-in or a captcha, the row says so and opens the page.

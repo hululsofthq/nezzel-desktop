@@ -461,6 +461,24 @@ fn a_first_visit_looks_once_per_site_per_run_never_for_an_off_site_or_a_private_
 }
 
 #[test]
+fn a_first_visit_whose_page_moved_on_leaves_the_look_to_the_landed_page() {
+  let (site, page) = ("facebook.com", page_at("https://www.facebook.com/", false));
+  let on = || false;
+  let first = |window| claim(window, site, &page, false, true, on);
+  // A signed-in browser was found, but the page moved on before the offer: the next page looks.
+  assert_eq!(first("fv-m"), Some(Look::FirstVisit));
+  look_ended("fv-m", site, Look::FirstVisit, true, false);
+  assert_eq!(first("fv-m"), Some(Look::FirstVisit));
+  // No signed-in browser: the run keeps its mark, no rescan on every page.
+  look_ended("fv-m", site, Look::FirstVisit, false, false);
+  assert_eq!(first("fv-m"), None);
+  assert_eq!(first("fv-n"), None);
+  forget_window("fv-m");
+  forget_window("fv-n");
+  forget_run(&[site]);
+}
+
+#[test]
 fn a_mirror_or_short_link_domain_never_takes_the_mirrored_sites_sign_in() {
   // The export folds these into the mirrored site (and would skip that site's off switch).
   for mirror in ["fxtwitter.com", "vxtwitter.com", "www.youtube-nocookie.com"] {

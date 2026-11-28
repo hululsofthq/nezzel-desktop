@@ -1,4 +1,27 @@
 {
+  "0.1.7": {
+    "en": {
+      "summary": [
+        "The Nezzel browser opens YouTube and other sign-in sites already signed in, using your browser's sign-in",
+        "Videos from some news sites no longer fail with \"File name too long\""
+      ],
+      "groups": []
+    },
+    "ar": {
+      "summary": [
+        "متصفح Nezzel يفتح YouTube ومواقع تسجيل الدخول الأخرى وأنت مسجّل الدخول، باستخدام تسجيل الدخول من متصفحك",
+        "فيديوهات بعض المواقع الإخبارية لم تعد تفشل برسالة «اسم الملف طويل جدًا»"
+      ],
+      "groups": []
+    },
+    "fr": {
+      "summary": [
+        "Le navigateur Nezzel ouvre YouTube et les autres sites à connexion déjà connecté, avec la connexion de votre navigateur",
+        "Les vidéos de certains sites d'actualité n'échouent plus avec « Nom de fichier trop long »"
+      ],
+      "groups": []
+    }
+  },
   "0.1.6": {
     "en": {
       "summary": [
